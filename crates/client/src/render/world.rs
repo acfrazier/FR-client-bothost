@@ -846,7 +846,7 @@ impl RenderWorld {
         loop_cycle: i32,
     ) -> Option<SceneModel> {
         let loc = loc?;
-        if loc.anim == -1 {
+        if loc.anim == -1 && !cache.loc_has_morph_377(loc_id as usize) {
             let model = loc.get_model_shared(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1);
             if crate::render_debug_enabled() {
                 if let Some(m) = &model {
@@ -867,17 +867,7 @@ impl RenderWorld {
             model.map(SceneModel::Shared)
         } else {
             Some(SceneModel::LocAnim(ClientLocAnim::new(
-                cache,
-                loc_id,
-                shape,
-                angle,
-                h_sw,
-                h_se,
-                h_ne,
-                h_nw,
-                loc.anim as usize,
-                true,
-                loop_cycle,
+                cache, loc_id, shape, angle, h_sw, h_se, h_ne, h_nw, loc.anim, true, loop_cycle,
             )))
         }
     }
@@ -968,7 +958,7 @@ impl RenderWorld {
                         h_se,
                         h_ne,
                         h_nw,
-                        wall.anim_seq as usize,
+                        wall.anim_seq,
                         false,
                         loop_cycle,
                     ))),
@@ -981,7 +971,7 @@ impl RenderWorld {
                         h_se,
                         h_ne,
                         h_nw,
-                        wall.anim_seq as usize,
+                        wall.anim_seq,
                         false,
                         loop_cycle,
                     ))),
@@ -997,7 +987,7 @@ impl RenderWorld {
                         h_se,
                         h_ne,
                         h_nw,
-                        wall.anim_seq as usize,
+                        wall.anim_seq,
                         false,
                         loop_cycle,
                     ))),
@@ -1071,7 +1061,7 @@ impl RenderWorld {
                 decor.h_se,
                 decor.h_ne,
                 decor.h_nw,
-                decor.anim_seq as usize,
+                decor.anim_seq,
                 false,
                 loop_cycle,
             )))
@@ -1112,12 +1102,12 @@ impl RenderWorld {
                 gd.h_se,
                 gd.h_ne,
                 gd.h_nw,
-                gd.anim_seq as usize,
+                gd.anim_seq,
                 false,
                 loop_cycle,
             )))
         } else if let Some(loc) = Self::loc_at(cache, loc_id) {
-            if loc.anim == -1 {
+            if loc.anim == -1 && !cache.loc_has_morph_377(loc_id as usize) {
                 loc.get_model_shared(
                     cache,
                     LocShape::GROUND_DECOR,
@@ -1130,18 +1120,23 @@ impl RenderWorld {
                 )
                 .map(SceneModel::Shared)
             } else {
-                // [sic] `addLoc` passes the shape as the `ClientLocAnim`
-                // angle for animated ground decor.
+                // The legacy port passes shape as angle here; Java 377
+                // uses the placement angle for dynamic ground decor.
+                let anim_angle = if cache.revision_377.is_some() {
+                    angle
+                } else {
+                    LocShape::GROUND_DECOR
+                };
                 Some(SceneModel::LocAnim(ClientLocAnim::new(
                     cache,
                     loc_id,
                     LocShape::GROUND_DECOR,
-                    LocShape::GROUND_DECOR,
+                    anim_angle,
                     gd.h_sw,
                     gd.h_se,
                     gd.h_ne,
                     gd.h_nw,
-                    loc.anim as usize,
+                    loc.anim,
                     true,
                     loop_cycle,
                 )))
@@ -1213,7 +1208,7 @@ impl RenderWorld {
                 sprite.h_se,
                 sprite.h_ne,
                 sprite.h_nw,
-                sprite.anim_seq as usize,
+                sprite.anim_seq,
                 false,
                 loop_cycle,
             )))
@@ -1369,13 +1364,28 @@ impl RenderWorld {
         tile_z: i32,
         loc_id: i32,
     ) -> Option<(i32, i32, i32, i32, Model)> {
+        self.loc_model_at_with_varps(world, cache, loop_cycle, &[], level, tile_x, tile_z, loc_id)
+    }
+
+    /// Resolve a live hull using this client's current location selectors.
+    pub fn loc_model_at_with_varps(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        varps: &[i32],
+        level: i32,
+        tile_x: i32,
+        tile_z: i32,
+        loc_id: i32,
+    ) -> Option<(i32, i32, i32, i32, Model)> {
         let tile = tile_at(&world.squares, level, tile_x, tile_z)?;
         if let Some(wall) = tile.wall.as_deref() {
             if (wall.typecode >> 14) & 0x7fff == loc_id {
                 let (model1, model2) =
                     self.wall_models_mut(world, cache, loop_cycle, level, tile_x, tile_z);
                 for model in [model1, model2].into_iter().flatten() {
-                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                    if let Some(model) = model.get_temp_model_with_varps(cache, loop_cycle, varps) {
                         return Some((wall.x, wall.y, wall.z, 0, model));
                     }
                 }
@@ -1387,7 +1397,7 @@ impl RenderWorld {
                     .decor_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)
                     .as_mut()
                 {
-                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                    if let Some(model) = model.get_temp_model_with_varps(cache, loop_cycle, varps) {
                         return Some((decor.x, decor.y, decor.z, decor.angle, model));
                     }
                 }
@@ -1399,7 +1409,7 @@ impl RenderWorld {
                     .gd_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)
                     .as_mut()
                 {
-                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                    if let Some(model) = model.get_temp_model_with_varps(cache, loop_cycle, varps) {
                         return Some((gd.x, gd.y, gd.z, 0, model));
                     }
                 }
@@ -1422,7 +1432,7 @@ impl RenderWorld {
                 .sprite_model_mut(world, cache, loop_cycle, index)
                 .as_mut()
             {
-                if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                if let Some(model) = model.get_temp_model_with_varps(cache, loop_cycle, varps) {
                     return Some((sx, sy, sz, yaw, model));
                 }
             }
@@ -2521,6 +2531,39 @@ impl RenderWorld {
         eye_yaw: i32,
         eye_pitch: i32,
     ) {
+        self.render_all_with_varps(
+            world,
+            pix,
+            surface,
+            cache,
+            loop_cycle,
+            &[],
+            eye_x,
+            eye_y,
+            eye_z,
+            max_level,
+            eye_yaw,
+            eye_pitch,
+        );
+    }
+
+    /// The live-client pass borrows varps; immutable cache tables remain
+    /// shared between heads, and no per-frame selector snapshot is copied.
+    pub fn render_all_with_varps(
+        &mut self,
+        world: &mut World,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        cache: &Cache,
+        loop_cycle: i32,
+        varps: &[i32],
+        eye_x: i32,
+        eye_y: i32,
+        eye_z: i32,
+        max_level: i32,
+        eye_yaw: i32,
+        eye_pitch: i32,
+    ) {
         // The pre-fill state (task 7): the build/share-light check, camera
         // fields, viewport bounds and the per-tile draw-front marking. The
         // wgpu backend runs this alone and rasterizes the marked tiles
@@ -2548,12 +2591,13 @@ impl RenderWorld {
                         if forward_tile_z >= self.min_z {
                             let tile = tile_at(&world.squares, level, right_tile_x, forward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(
+                                self.fill_with_varps(
                                     world,
                                     pix,
                                     surface,
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     (level, right_tile_x, forward_tile_z),
                                     true,
                                 );
@@ -2564,12 +2608,13 @@ impl RenderWorld {
                             let tile =
                                 tile_at(&world.squares, level, right_tile_x, backward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(
+                                self.fill_with_varps(
                                     world,
                                     pix,
                                     surface,
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     (level, right_tile_x, backward_tile_z),
                                     true,
                                 );
@@ -2581,12 +2626,13 @@ impl RenderWorld {
                         if forward_tile_z >= self.min_z {
                             let tile = tile_at(&world.squares, level, left_tile_x, forward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(
+                                self.fill_with_varps(
                                     world,
                                     pix,
                                     surface,
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     (level, left_tile_x, forward_tile_z),
                                     true,
                                 );
@@ -2596,12 +2642,13 @@ impl RenderWorld {
                         if backward_tile_z < self.max_z {
                             let tile = tile_at(&world.squares, level, left_tile_x, backward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(
+                                self.fill_with_varps(
                                     world,
                                     pix,
                                     surface,
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     (level, left_tile_x, backward_tile_z),
                                     true,
                                 );
@@ -2634,12 +2681,13 @@ impl RenderWorld {
                         if forward_tile_z >= self.min_z {
                             let tile = tile_at(&world.squares, level, right_tile_x, forward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(
+                                self.fill_with_varps(
                                     world,
                                     pix,
                                     surface,
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     (level, right_tile_x, forward_tile_z),
                                     false,
                                 );
@@ -2650,12 +2698,13 @@ impl RenderWorld {
                             let tile =
                                 tile_at(&world.squares, level, right_tile_x, backward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(
+                                self.fill_with_varps(
                                     world,
                                     pix,
                                     surface,
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     (level, right_tile_x, backward_tile_z),
                                     false,
                                 );
@@ -2667,12 +2716,13 @@ impl RenderWorld {
                         if forward_tile_z >= self.min_z {
                             let tile = tile_at(&world.squares, level, left_tile_x, forward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(
+                                self.fill_with_varps(
                                     world,
                                     pix,
                                     surface,
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     (level, left_tile_x, forward_tile_z),
                                     false,
                                 );
@@ -2682,12 +2732,13 @@ impl RenderWorld {
                         if backward_tile_z < self.max_z {
                             let tile = tile_at(&world.squares, level, left_tile_x, backward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(
+                                self.fill_with_varps(
                                     world,
                                     pix,
                                     surface,
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     (level, left_tile_x, backward_tile_z),
                                     false,
                                 );
@@ -2736,17 +2787,50 @@ impl RenderWorld {
         eye_pitch: i32,
         mesh: &mut SceneMesh,
     ) {
+        self.capture_scene_with_varps(
+            world,
+            pix,
+            cache,
+            loop_cycle,
+            &[],
+            eye_x,
+            eye_y,
+            eye_z,
+            max_level,
+            eye_yaw,
+            eye_pitch,
+            mesh,
+        );
+    }
+
+    /// The GPU capture uses the same current location forms as CPU paint.
+    pub fn capture_scene_with_varps(
+        &mut self,
+        world: &mut World,
+        pix: &mut Pix3DDraw,
+        cache: &Cache,
+        loop_cycle: i32,
+        varps: &[i32],
+        eye_x: i32,
+        eye_y: i32,
+        eye_z: i32,
+        max_level: i32,
+        eye_yaw: i32,
+        eye_pitch: i32,
+        mesh: &mut SceneMesh,
+    ) {
         mesh.clear();
         pix.capture = Some(std::mem::take(mesh));
         // The scene viewport bounds `world_render` culls against. Nothing
         // is written through it while the capture is bound.
         let mut surface = Pix2D::with_pixels(&mut [], SCENE_VIEW_W, SCENE_VIEW_H);
-        self.render_all(
+        self.render_all_with_varps(
             world,
             pix,
             &mut surface,
             cache,
             loop_cycle,
+            varps,
             eye_x,
             eye_y,
             eye_z,
@@ -3012,7 +3096,7 @@ impl RenderWorld {
     /// `fill(next, checkAdjacent)` from client-ts 1389-1923. Queue entries
     /// are `(level, x, z, stamp)`; tiles are re-fetched by coordinate.
     /// Java/TS `LinkList.push` moves an already-queued Square to the tail.
-    #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     fn fill(
         &mut self,
         world: &mut World,
@@ -3020,6 +3104,30 @@ impl RenderWorld {
         surface: &mut Pix2D,
         cache: &Cache,
         loop_cycle: i32,
+        next: (i32, i32, i32),
+        check_adjacent: bool,
+    ) {
+        self.fill_with_varps(
+            world,
+            pix,
+            surface,
+            cache,
+            loop_cycle,
+            &[],
+            next,
+            check_adjacent,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fill_with_varps(
+        &mut self,
+        world: &mut World,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        cache: &Cache,
+        loop_cycle: i32,
+        varps: &[i32],
         next: (i32, i32, i32),
         mut check_adjacent: bool,
     ) {
@@ -3188,8 +3296,8 @@ impl RenderWorld {
                             .as_mut()
                         {
                             model.world_render(
-                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
-                                cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                cache, loop_cycle, varps, pix, surface, 0, sin_pitch, cos_pitch,
+                                sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                             );
                         }
                     }
@@ -3214,6 +3322,7 @@ impl RenderWorld {
                             model.world_render(
                                 cache,
                                 loop_cycle,
+                                varps,
                                 pix,
                                 surface,
                                 yaw,
@@ -3346,8 +3455,8 @@ impl RenderWorld {
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                                 model.world_render(
-                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                    cache, loop_cycle, varps, pix, surface, 0, sin_pitch,
+                                    cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
                                 submitted = true;
                             }
@@ -3371,8 +3480,8 @@ impl RenderWorld {
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
                                 model.world_render(
-                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                    cache, loop_cycle, varps, pix, surface, 0, sin_pitch,
+                                    cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
                                 submitted = true;
                             }
@@ -3407,8 +3516,8 @@ impl RenderWorld {
                         {
                             dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                             decor.world_render(
-                                cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
-                                sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
+                                cache, loop_cycle, varps, pix, surface, angle, sin_pitch,
+                                cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
                             );
                             "resolved"
                         } else {
@@ -3460,6 +3569,7 @@ impl RenderWorld {
                                 decor.world_render(
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     pix,
                                     surface,
                                     angle * 512 + 256,
@@ -3489,6 +3599,7 @@ impl RenderWorld {
                                 decor.world_render(
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     pix,
                                     surface,
                                     (angle * 512 + 1280) & 0x7ff,
@@ -3550,8 +3661,8 @@ impl RenderWorld {
                             .as_mut()
                         {
                             model.world_render(
-                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
-                                cos_yaw, gd_x, gd_y, gd_z, typecode,
+                                cache, loop_cycle, varps, pix, surface, 0, sin_pitch, cos_pitch,
+                                sin_yaw, cos_yaw, gd_x, gd_y, gd_z, typecode,
                             );
                         }
                     }
@@ -3568,22 +3679,22 @@ impl RenderWorld {
                                 self.obj_models_mut(&*world, level, tile_x, tile_z);
                             if let Some(model) = bottom.as_mut() {
                                 model.world_render(
-                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, ox, oy, oz, typecode,
+                                    cache, loop_cycle, varps, pix, surface, 0, sin_pitch,
+                                    cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode,
                                 );
                             }
 
                             if let Some(model) = middle.as_mut() {
                                 model.world_render(
-                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, ox, oy, oz, typecode,
+                                    cache, loop_cycle, varps, pix, surface, 0, sin_pitch,
+                                    cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode,
                                 );
                             }
 
                             if let Some(model) = top.as_mut() {
                                 model.world_render(
-                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, ox, oy, oz, typecode,
+                                    cache, loop_cycle, varps, pix, surface, 0, sin_pitch,
+                                    cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode,
                                 );
                             }
                         }
@@ -3671,8 +3782,8 @@ impl RenderWorld {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 model.world_render(
-                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                    cache, loop_cycle, varps, pix, surface, 0, sin_pitch,
+                                    cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
                             }
                         }
@@ -3921,6 +4032,7 @@ impl RenderWorld {
                             model.world_render(
                                 cache,
                                 loop_cycle,
+                                varps,
                                 pix,
                                 surface,
                                 yaw,
@@ -4037,6 +4149,7 @@ impl RenderWorld {
                         model.world_render(
                             cache,
                             loop_cycle,
+                            varps,
                             pix,
                             surface,
                             0,
@@ -4055,6 +4168,7 @@ impl RenderWorld {
                         model.world_render(
                             cache,
                             loop_cycle,
+                            varps,
                             pix,
                             surface,
                             0,
@@ -4073,6 +4187,7 @@ impl RenderWorld {
                         model.world_render(
                             cache,
                             loop_cycle,
+                            varps,
                             pix,
                             surface,
                             0,
@@ -4118,8 +4233,8 @@ impl RenderWorld {
                         {
                             dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                             decor.world_render(
-                                cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
-                                sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
+                                cache, loop_cycle, varps, pix, surface, angle, sin_pitch,
+                                cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
                             );
                             "resolved"
                         } else {
@@ -4171,6 +4286,7 @@ impl RenderWorld {
                                 decor.world_render(
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     pix,
                                     surface,
                                     angle * 512 + 256,
@@ -4200,6 +4316,7 @@ impl RenderWorld {
                                 decor.world_render(
                                     cache,
                                     loop_cycle,
+                                    varps,
                                     pix,
                                     surface,
                                     (angle * 512 + 1280) & 0x7ff,
@@ -4269,8 +4386,8 @@ impl RenderWorld {
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
                                 model.world_render(
-                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                    cache, loop_cycle, varps, pix, surface, 0, sin_pitch,
+                                    cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
                                 submitted = true;
                             }
@@ -4294,8 +4411,8 @@ impl RenderWorld {
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                                 model.world_render(
-                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                    cache, loop_cycle, varps, pix, surface, 0, sin_pitch,
+                                    cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
                                 submitted = true;
                             }
