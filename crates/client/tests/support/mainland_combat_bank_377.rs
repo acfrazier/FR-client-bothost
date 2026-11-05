@@ -77,6 +77,21 @@ fn stage(c: &mut Client, r: &mut Renderer, root: &Path, name: &str, stages: &mut
         image::ColorType::Rgb8,
     )
     .unwrap();
+    if let Some(minimap) = &r.minimap {
+        let rgb: Vec<u8> = minimap
+            .data
+            .iter()
+            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8])
+            .collect();
+        image::save_buffer(
+            root.join(format!("rust-{name}-minimap-raw.png")),
+            &rgb,
+            minimap.wi as u32,
+            minimap.hi as u32,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+    }
     let icons = (0..r.active_map_function_count as usize)
         .map(|index| {
             json!({"x":r.active_map_function_x[index],"z":r.active_map_function_z[index],
@@ -163,8 +178,11 @@ fn choose_attack_style(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value
         .expect("actual weapon Accurate attack style")
         .id;
     let varp = c.if_(button as usize).unwrap().scripts.as_ref().unwrap()[0][1] as usize;
+    let generation = c.gens.player_info;
     click_component(c, r, root, button, (553, 205));
-    pump_until(c, r, 10, |c| c.var.get(varp) == Some(&0));
+    pump_until(c, r, 10, |c| {
+        c.var.get(varp) == Some(&0) && c.gens.player_info >= generation + 2
+    });
     actions.push(
         json!({"component":button,"interface":root,"style":"Accurate",
         "varp":varp,"value":0,"input":"rendered attack-style component click"}),
@@ -220,6 +238,7 @@ fn fight_goblin(
     let mut saw_zero_health = false;
     let mut events = Vec::new();
     let mut last = Value::Null;
+    let mut food_tick = c.gens.player_info;
     while Instant::now() < deadline {
         c.shell.latch_click();
         c.mainloop();
@@ -234,7 +253,7 @@ fn fight_goblin(
             .map(|npc| actor_state(&npc.entity));
         let event = json!({"player_info":c.gens.player_info,"cycle":c.loop_cycle,
             "npc":actor,"attack_xp":c.stat_xp[0],"levels":c.stat_base_level,
-            "player_health":c.stat_level[3]});
+            "player_health":c.stat_effective_level[3]});
         if event["npc"] != last["npc"]
             || event["attack_xp"] != last["attack_xp"]
             || event["levels"] != last["levels"]
@@ -261,7 +280,7 @@ fn fight_goblin(
         } else if saw_zero_health && c.stat_xp[0] > xp_before && ground_item(c, BONES).is_some() {
             break;
         }
-        if c.stat_level[3] <= 4 {
+        if c.stat_effective_level[3] <= 4 && c.gens.player_info >= food_tick + 4 {
             if let Some(food) = [315, 2309]
                 .into_iter()
                 .find(|object| inventory_count(c, *object) > 0)
@@ -272,6 +291,7 @@ fn fight_goblin(
                 c.menu_param_b[0] = food_slot;
                 c.menu_param_c[0] = 3214;
                 c.doAction(0);
+                food_tick = c.gens.player_info;
                 actions.push(json!({"object":food,"slot":food_slot,"option":"Eat",
                     "input":"production inventory action on naturally earned tutorial food"}));
             }
@@ -322,16 +342,18 @@ fn combat(
 ) -> Vec<Value> {
     stage(c, r, root, "lumbridge-minimap", stages);
     tutorial_lesson_377::tab(c, r, 3);
-    if !worn(c, BRONZE_SWORD) {
-        let slot = inventory_slot(c, BRONZE_SWORD);
-        c.menu_action[0] = MiniMenuAction::OP_HELD2;
-        c.menu_param_a[0] = BRONZE_SWORD;
-        c.menu_param_b[0] = slot;
-        c.menu_param_c[0] = 3214;
-        c.doAction(0);
-        pump_until(c, r, 10, |c| worn(c, BRONZE_SWORD));
-        actions.push(json!({"object":BRONZE_SWORD,"slot":slot,"option":"Wield",
-            "input":"production inventory action on naturally earned tutorial sword"}));
+    for object in [BRONZE_SWORD, 1171] {
+        if !worn(c, object) {
+            let slot = inventory_slot(c, object);
+            c.menu_action[0] = MiniMenuAction::OP_HELD2;
+            c.menu_param_a[0] = object;
+            c.menu_param_b[0] = slot;
+            c.menu_param_c[0] = 3214;
+            c.doAction(0);
+            pump_until(c, r, 10, |c| worn(c, object));
+            actions.push(json!({"object":object,"slot":slot,"option":"Wield",
+                "input":"production inventory action on naturally earned tutorial equipment"}));
+        }
     }
     choose_attack_style(c, r, actions);
     stage(c, r, root, "mainland-attack-styles", stages);
@@ -346,7 +368,6 @@ fn combat(
         if c.stat_base_level[0] > initial_level {
             break;
         }
-        choose_attack_style(c, r, actions);
     }
     assert!(
         c.stat_base_level[0] > initial_level,
@@ -391,6 +412,9 @@ fn bank(
         (3097, 3244),
     ] {
         walk_route(c, r, point, actions);
+        if point == (3222, 3226) {
+            stage(c, r, root, "lumbridge-minimap", stages);
+        }
     }
     stage(c, r, root, "draynor-minimap", stages);
     let banker = npc_type(c, "banker", "Bank");
@@ -406,8 +430,8 @@ fn bank(
     let object = BONES;
     let held_before = inventory_count(c, object);
     assert!(
-        held_before > 0,
-        "combat loot is naturally held for the bank proof"
+        held_before > 1,
+        "multiple natural combat drops distinguish Deposit All from Deposit 1"
     );
     let bank_before = bank_count(c, bank_component, object);
     actions.push(inventory_option(
