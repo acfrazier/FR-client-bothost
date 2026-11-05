@@ -601,7 +601,10 @@ fn bank_shop_amount_drag_live_377() {
     c.set_login_deadline(Instant::now() + Duration::from_secs(10));
     c.login(&user, "t2apass", false).unwrap();
     pump_until(&mut c, &mut r, 90, |c| {
-        c.scene_state == 2 && c.local_player.is_some() && c.side_icon[0] >= 0
+        c.scene_state == 2
+            && c.local_player.is_some()
+            && c.side_icon[0] >= 0
+            && inventory_count(c, BUCKET) > 0
     });
     let start_tile = tile(&c);
     assert!(
