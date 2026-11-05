@@ -61,7 +61,8 @@ pub struct ClientPlayer {
     pub name: Option<String>,
     pub ready: bool,
     pub gender: i32,
-    pub headicons: i32,
+    /// Legacy 274/289 `g1` headicon bitmask.
+    pub headicons: u8,
     /// Java 377 signed PK icon index (`field1678`); -1 means absent.
     pub pk_icon_377: i8,
     /// Java 377 signed prayer icon index (`field1670`); -1 means absent.
@@ -154,7 +155,7 @@ impl ClientPlayer {
         buf.pos = 0;
 
         self.gender = buf.g1();
-        self.headicons = buf.g1();
+        self.headicons = buf.g1() as u8;
         self.transmog = None;
 
         for part in 0..12 {
