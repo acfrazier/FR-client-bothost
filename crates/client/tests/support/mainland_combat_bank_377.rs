@@ -680,6 +680,7 @@ fn walk_waypoint(
     // bounded to its existing one-tile nearest fallback. No route is assigned.
     // The final Varrock landmark still uses the exact-arrival lesson helper.
     use client::graphics::Pix3D;
+    pump_until(c, r, 30, |c| c.scene_state == 2);
     assert_eq!(c.minimap_state, 0);
     let before = tile(c);
     if before == requested {
@@ -710,20 +711,44 @@ fn walk_waypoint(
     let pixel = (648 + x, 83 + y);
     assert!(Client::minimap_hit(pixel.0, pixel.1).is_some());
     let generation = c.gens.player_info;
-    click(c, r, pixel.0, pixel.1, 1);
-    let endpoint = c
-        .try_move_path
-        .last()
-        .copied()
-        .expect("production walk path");
-    let target = (
-        endpoint.0 + c.map_build_base_x,
-        endpoint.1 + c.map_build_base_z,
-    );
-    if c.try_move_nearest == 0 {
+    // Observe the path in the input frame. The release frame can receive the
+    // preceding walk's UNSET_MAP_FLAG and legitimately clear this debug path.
+    c.shell.apply_mouse_move(pixel.0, pixel.1);
+    drop(r.mainredraw(c));
+    c.shell.apply_mouse_down(1, pixel.0, pixel.1);
+    c.shell.latch_click();
+    c.mainloop();
+    assert!(c.ingame, "waypoint input ended the live session");
+    let selected = c.try_move_path.last().map(|endpoint| {
+        (
+            (
+                endpoint.0 + c.map_build_base_x,
+                endpoint.1 + c.map_build_base_z,
+            ),
+            c.try_move_nearest,
+        )
+    });
+    drop(r.mainredraw(c));
+    c.shell.apply_mouse_up();
+    c.shell.latch_click();
+    c.mainloop();
+    assert!(c.ingame, "waypoint release ended the live session");
+    let (target, nearest) = selected.unwrap_or_else(|| {
+        let root = PathBuf::from(std::env::var("CLIENT_377_LIVE_DIR").unwrap());
+        std::fs::write(
+            root.join("waypoint-no-path.json"),
+            serde_json::to_vec_pretty(&json!({"from":before,"requested":requested,
+                "pixel":pixel,"scene_state":c.scene_state,"state":state(c)}))
+            .unwrap(),
+        )
+        .unwrap();
+        screenshot(&root.join("waypoint-no-path.jpg"), r.mainredraw(c));
+        panic!("no production path from {before:?} to {requested:?}");
+    });
+    if nearest == 0 {
         assert_eq!(target, requested);
     } else {
-        assert_eq!(c.try_move_nearest, 1);
+        assert_eq!(nearest, 1);
         assert!(
             (target.0 - requested.0)
                 .abs()
@@ -732,7 +757,7 @@ fn walk_waypoint(
         );
     }
     let receipt = json!({"input":"rendered minimap click","from":before,"requested":requested,
-        "target":target,"pixel":pixel,"production_nearest":c.try_move_nearest});
+        "target":target,"pixel":pixel,"production_nearest":nearest});
     eprintln!("377 stage11 waypoint {receipt}");
     actions.push(receipt);
     pump_until(c, r, 90, |c| {
