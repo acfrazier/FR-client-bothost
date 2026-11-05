@@ -1324,8 +1324,9 @@ fn apply_appearance_377(
     player.gender = appearance.gender;
     // Java 377 keeps independent signed PK/prayer indexes, not a legacy bitset.
     player.headicons = 0;
-    player.pk_icon_377 = appearance.head_icon;
-    player.prayer_icon_377 = appearance.skull_icon;
+    // The appearance cursor reads g1b; ObjType.team is decoded with g1.
+    player.pk_icon_377 = appearance.head_icon as i8;
+    player.prayer_icon_377 = appearance.skull_icon as i8;
     player.team_377 = 0;
     for item in appearance.equipment.iter().flatten().copied() {
         let Some(item_id) = item
@@ -1336,7 +1337,7 @@ fn apply_appearance_377(
         };
         if let Some(obj) = cache.objs.get(item_id) {
             if obj.team != 0 {
-                player.team_377 = obj.team;
+                player.team_377 = obj.team as u8;
             }
         }
     }
@@ -1530,6 +1531,45 @@ mod tests {
         assert_eq!(player.prayer_icon_377, 8);
         assert_eq!(player.team_377, 9);
         assert_eq!(&player.appearance[..4], &[512, 513, 514, 65_535]);
+    }
+
+    #[test]
+    fn appearance_scalar_storage_preserves_complete_byte_domains() {
+        use crate::client::packet_377::entity_377::{
+            DataTransform377, TransformedBytes377,
+        };
+        use crate::config::ObjType;
+
+        let cache = Cache {
+            objs: vec![ObjType {
+                team: 255,
+                ..ObjType::default()
+            }],
+            ..Cache::default()
+        };
+        let mut equipment = [None; 12];
+        equipment[0] = Some(512);
+        let appearance = PlayerAppearance377 {
+            raw: TransformedBytes377 {
+                wire: &[],
+                transform: DataTransform377::Reverse,
+            },
+            gender: 0,
+            head_icon: -128,
+            skull_icon: 127,
+            equipment,
+            npc_transform: None,
+            body_colours: [0; 5],
+            sequences: [None; 7],
+            username_base37: 1,
+            combat_level: 1,
+            skill_level: 0,
+        };
+        let mut player = ClientPlayer::default();
+        apply_appearance_377(&mut player, &appearance, &cache);
+        assert_eq!(player.pk_icon_377, -128);
+        assert_eq!(player.prayer_icon_377, 127);
+        assert_eq!(player.team_377, 255);
     }
 
     #[test]
