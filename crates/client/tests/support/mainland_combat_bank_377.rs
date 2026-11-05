@@ -669,6 +669,83 @@ fn bank(
         "side_component":side_component,"direct_open_without_keypad":true,"pin_settings":pin_state})
 }
 
+fn walk_waypoint(
+    c: &mut Client,
+    r: &mut Renderer,
+    requested: (i32, i32),
+    actions: &mut Vec<Value>,
+) {
+    // Intermediate forest landmarks can be scenery. Keep the real minimap
+    // click and wait for the production pathfinder's recorded endpoint,
+    // bounded to its existing one-tile nearest fallback. No route is assigned.
+    // The final Varrock landmark still uses the exact-arrival lesson helper.
+    use client::graphics::Pix3D;
+    assert_eq!(c.minimap_state, 0);
+    let before = tile(c);
+    if before == requested {
+        return;
+    }
+    let fine = (
+        (requested.0 - c.map_build_base_x) * 128 + 64,
+        (requested.1 - c.map_build_base_z) * 128 + 64,
+    );
+    let p = c.local_player.as_ref().unwrap();
+    let (px, pz) = (p.x, p.z);
+    let yaw = ((c.orbit_camera_yaw + c.macro_minimap_angle) & 0x7ff) as usize;
+    let sin = (Pix3D::sin_table()[yaw] * (c.macro_minimap_zoom + 256)) >> 8;
+    let cos = (Pix3D::cos_table()[yaw] * (c.macro_minimap_zoom + 256)) >> 8;
+    let (s, t) = (f64::from(sin), f64::from(cos));
+    let denominator = s * s + t * t;
+    let (dx, dz) = (f64::from(fine.0 - px), f64::from(fine.1 - pz));
+    let mx = ((dx * t + dz * s) * 2048.0 / denominator).round() as i32;
+    let my = ((dx * s - dz * t) * 2048.0 / denominator).round() as i32;
+    let (x, y) = (-2..=2)
+        .flat_map(|dy| (-2..=2).map(move |dx| (mx + dx, my + dy)))
+        .find(|&(x, y)| {
+            x * x + y * y < 70 * 70
+                && ((px + ((y * sin + x * cos) >> 11)) >> 7) + c.map_build_base_x == requested.0
+                && ((pz - ((y * cos - x * sin) >> 11)) >> 7) + c.map_build_base_z == requested.1
+        })
+        .expect("visible minimap pixel maps to the requested waypoint");
+    let pixel = (648 + x, 83 + y);
+    assert!(Client::minimap_hit(pixel.0, pixel.1).is_some());
+    let generation = c.gens.player_info;
+    click(c, r, pixel.0, pixel.1, 1);
+    let endpoint = c
+        .try_move_path
+        .last()
+        .copied()
+        .expect("production walk path");
+    let target = (
+        endpoint.0 + c.map_build_base_x,
+        endpoint.1 + c.map_build_base_z,
+    );
+    if c.try_move_nearest == 0 {
+        assert_eq!(target, requested);
+    } else {
+        assert_eq!(c.try_move_nearest, 1);
+        assert!(
+            (target.0 - requested.0)
+                .abs()
+                .max((target.1 - requested.1).abs())
+                <= 1
+        );
+    }
+    let receipt = json!({"input":"rendered minimap click","from":before,"requested":requested,
+        "target":target,"pixel":pixel,"production_nearest":c.try_move_nearest});
+    eprintln!("377 stage11 waypoint {receipt}");
+    actions.push(receipt);
+    pump_until(c, r, 90, |c| {
+        let fine = (
+            (target.0 - c.map_build_base_x) * 128 + 64,
+            (target.1 - c.map_build_base_z) * 128 + 64,
+        );
+        c.gens.player_info > generation
+            && tile(c) == target
+            && c.local_player.as_ref().is_some_and(|p| (p.x, p.z) == fine)
+    });
+}
+
 fn varrock(
     c: &mut Client,
     r: &mut Renderer,
@@ -677,7 +754,7 @@ fn varrock(
     actions: &mut Vec<Value>,
 ) {
     let route = [
-        (3103, 3244),
+        (3102, 3245),
         (3103, 3253),
         (3103, 3263),
         (3118, 3263),
@@ -712,7 +789,11 @@ fn varrock(
         .unwrap()
         .0;
     for &point in &route[start..] {
-        tutorial_lesson_377::walk_to(c, r, point, actions);
+        if point == (3222, 3400) {
+            tutorial_lesson_377::walk_to(c, r, point, actions);
+        } else {
+            walk_waypoint(c, r, point, actions);
+        }
     }
     stage(c, r, root, "varrock-minimap", stages);
 }
