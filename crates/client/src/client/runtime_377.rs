@@ -81,6 +81,7 @@ impl Client {
                 | 40
                 | 49
                 | 50
+                | 58
                 | 59
                 | 61
                 | 63
@@ -596,6 +597,13 @@ impl Client {
                         if let Some(com) = self.iface_mut(component as usize) {
                             com.hide = hidden;
                         }
+                    }
+                    I::CountDialog => {
+                        // Java Client.java:7865-7872: server-opened amount prompt.
+                        self.social_input_open = false;
+                        self.dialog_input_open = true;
+                        self.dialog_input.clear();
+                        self.redraw_chat = true;
                     }
                     I::Close => {
                         self.unload_interface_377(self.side_modal_id);
@@ -1611,6 +1619,37 @@ mod tests {
             assert_eq!(client.ptype, 233);
             assert!(client.ingame);
         }
+    }
+
+    #[test]
+    fn count_dialog_applies_java_prompt_state_only_after_frame_validation() {
+        let mut client = client();
+        client.social_input_open = true;
+        client.dialog_input = "old amount".into();
+        client.redraw_chat = false;
+        let generation = client.gens.iface;
+        let mut invalid = Packet::new(vec![1]);
+        invalid.set_frame_end(1);
+        client.ptype = 58;
+        assert!(client.dispatch_packet_377(58, &mut invalid).is_err());
+        assert!(client.social_input_open);
+        assert!(!client.dialog_input_open);
+        assert_eq!(client.dialog_input, "old amount");
+        assert!(!client.redraw_chat);
+        assert_eq!(client.gens.iface, generation);
+        assert_eq!(invalid.pos, 0);
+        assert_eq!(client.ptype, 58);
+        assert!(client.ingame);
+
+        let mut valid = Packet::new(vec![]);
+        client.dispatch_packet_377(58, &mut valid).unwrap();
+        assert!(!client.social_input_open);
+        assert!(client.dialog_input_open);
+        assert!(client.dialog_input.is_empty());
+        assert!(client.redraw_chat);
+        assert_eq!(client.gens.iface, generation + 1);
+        assert_eq!(client.ptype, -1);
+        assert!(client.ingame);
     }
 
     #[test]
