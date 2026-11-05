@@ -1692,12 +1692,26 @@ mod tests {
     #[test]
     fn bank_all_action_routes_377_and_preserves_legacy_layouts() {
         for (revision, expected) in [
-            (ClientRevision::R377, [231, 0xd6, 0x34, 0x45, 0x23, 0x12, 0x34]),
+            (
+                ClientRevision::R377,
+                [231, 0xd6, 0x34, 0x45, 0x23, 0x12, 0x34],
+            ),
             (
                 ClientRevision::R274,
-                [ClientProt::INV_BUTTON4.id as u8, 0x12, 0x34, 0x23, 0x45, 0x34, 0x56],
+                [
+                    ClientProt::INV_BUTTON4.id as u8,
+                    0x12,
+                    0x34,
+                    0x23,
+                    0x45,
+                    0x34,
+                    0x56,
+                ],
             ),
-            (ClientRevision::R289, [248, 0x12, 0x34, 0x23, 0x45, 0x34, 0x56]),
+            (
+                ClientRevision::R289,
+                [248, 0x12, 0x34, 0x23, 0x45, 0x34, 0x56],
+            ),
         ] {
             let mut client = client_with_revision(revision);
             set_menu_action(
@@ -1710,7 +1724,11 @@ mod tests {
             client.doAction(0);
             assert_eq!(&client.out.data()[..client.out.pos], &expected);
             assert_eq!(
-                (client.selected_item, client.selected_com_id, client.selected_area),
+                (
+                    client.selected_item,
+                    client.selected_com_id,
+                    client.selected_area
+                ),
                 (0x2345, 0x3456, 2)
             );
         }
