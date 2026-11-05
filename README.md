@@ -112,6 +112,30 @@ local 377 engine. It requires `ENGINE_DIR`, `CLIENT_377_RUNTIME_CACHE_DIR`,
 `CLIENT_377_LIVE_DIR` and a `CLIENT_377_LIVE_USER` starting with `t2a`.
 It proves loading and login, not audible playback or PCM parity.
 
+The optional mainland proof in `live_interactions_377` continues a naturally
+completed tutorial account. It selects revision 377 explicitly, walks to
+Lumbridge goblins, records attack styles, damage, health bars, XP, a level
+and loot pickup, then walks to Draynor for Deposit All, Withdraw 1,
+Deposit 1 and the no-PIN bank path. It also captures minimaps at Lumbridge,
+Draynor and Varrock. No account state is seeded.
+
+Use the same four environment variables as `live_sound_377`. Set
+`CLIENT_377_STAGE11` to `combat`, `bank` or `varrock` for separate,
+server-logged-out phases, or `full` for the complete route:
+
+```bash
+cargo test -p client --no-default-features --test live_interactions_377 \
+  mainland_lesson_377::mainland_combat_bank_377::natural_mainland_combat_and_bank_377 \
+  -- --exact --ignored --nocapture --test-threads=1
+```
+
+Lossless frames and adjacent snapshots retain the received actor poses,
+hits, component mutations, inventory counts, camera and map base for
+comparison with the original Java client. XP uses Java 377's stats and
+level presentation, not a modern floating XP overlay. Revision 377's
+bank Deposit All / Withdraw All action uses Java's transformed
+`INV_BUTTON4` body; the 274/289 layouts and default revision stay unchanged.
+
 `gpu_fountain` includes self-contained Metal/wgpu readback regressions for
 textured scanline lighting, subpixel edges, and near-clipped polygons.
 Its additional actual-model differential is opt-in and needs a versioned
