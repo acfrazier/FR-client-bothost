@@ -193,6 +193,16 @@ bodies are compatible. A still-unsupported gameplay writer logs its legacy
 opcode, discards the complete pending batch, and closes the session before
 flushing; it does not panic or leak a 274 packet onto the 377 connection.
 
+Java 377 has five menu-anticheat triggers. `OPNPC3` sums NPC slots and sends
+157 plus a zero 32-bit integer at 143. `OPOBJ2` counts actions and sends 95
+plus a zero 32-bit integer at 120. `OPOBJ3` counts actions whose object ID
+is divisible by four and sends 222 plus `11257922` at 84.
+`OPHELD4` counts actions and sends 165 plus byte 206 at 62.
+`OPHELD1` sums object IDs and sends 126 plus byte 125 at 115.
+Each preamble precedes its operation and resets its counter. Cold login
+resets the menu counters. Other menu actions do not add these Java 377
+preambles. Unsupported operation bodies remain fail-closed.
+
 The ignored proof uses password `t2apass` for its `t2a` account and explicitly
 enables drawing; ordinary headless clients keep the CPU-save draw gate off.
 
