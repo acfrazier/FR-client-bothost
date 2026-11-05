@@ -153,7 +153,9 @@ fn high_mapscene_and_mapfunction_indices_reach_minimap_rendering() {
         },
         ..ClientPlayer::default()
     });
-    client.world.set_ground_decor(0, 50, 50, 0, 1, 0, 0, 0, 0, 0);
+    client
+        .world
+        .set_ground_decor(0, 50, 50, 0, 1, 0, 0, 0, 0, 0);
 
     let mut revision_377 = Media377::empty();
     let mut scene = Pix8::new(1, 1, vec![0, 0x123456]);
@@ -168,12 +170,7 @@ fn high_mapscene_and_mapfunction_indices_reach_minimap_rendering() {
     renderer.minimap = Some(Pix32::new(512, 512));
     renderer.minimap_build_buffer(&mut client, 0);
 
-    let mapscene_color = renderer
-        .media
-        .sprites_377
-        .as_ref()
-        .unwrap()
-        .mapscene[71]
+    let mapscene_color = renderer.media.sprites_377.as_ref().unwrap().mapscene[71]
         .as_ref()
         .unwrap()
         .bpal[1];
@@ -247,12 +244,8 @@ fn player_pk_prayer_and_hint_stack_use_distinct_377_tables() {
     let mut renderer = renderer();
     renderer.media = Arc::new(media);
     let player = client.players[0].as_ref().unwrap();
-    let (player_x, player_y) = renderer.project_overlay(
-        &client,
-        player.x,
-        player.z,
-        player.height + 15,
-    );
+    let (player_x, player_y) =
+        renderer.project_overlay(&client, player.x, player.z, player.height + 15);
     let npc = client.npc[0].as_ref().unwrap();
     let (npc_x, npc_y) = renderer.project_overlay(&client, npc.x, npc.z, npc.height + 15);
 
