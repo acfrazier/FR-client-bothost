@@ -576,7 +576,7 @@ fn bank_shop_amount_drag_live_377() {
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists(), "quiet lock blocks live runs");
     }
-    let interventions = fixture_interventions();
+    let mut interventions = fixture_interventions();
     let engine = live_engine_377::require_engine(&root, &user, &cache);
     Renderer::set_prefer_gpu(false);
     let mut c = Client::new_with_revision_and_http_port(
@@ -608,6 +608,29 @@ fn bank_shop_amount_drag_live_377() {
         (start_tile.0 - 3092).abs().max((start_tile.1 - 3243).abs()) <= 15,
         "coordinated account starts near Draynor bank: {start_tile:?}"
     );
+    if std::env::var("CLIENT_377_BANK_SHOP_PREPARE").as_deref() == Ok("1") {
+        c.set_cheat_admission(client::client::CheatAdmission::Granted);
+        for (object, name, target) in [(COINS, "coins", 1000), (BUCKET, "bucket", 5)] {
+            let before = inventory_count(&c, object);
+            if before < target {
+                let command = format!("give {name} {}", target - before);
+                assert!(c.send_cheat(&command).is_sent());
+                pump_until(&mut c, &mut r, 10, |c| inventory_count(c, object) == target);
+                interventions.push(json!({
+                    "label":"Seed only the coordinated account's inventory before the tested actions",
+                    "method":"admitted CLIENT_CHEAT to the selected Fairy Ring engine",
+                    "command":command,"object":object,"before":before,
+                    "after":inventory_count(&c,object)
+                }));
+            }
+        }
+        c.set_cheat_admission(client::client::CheatAdmission::Denied);
+        std::fs::write(
+            root.join("fixture-interventions.json"),
+            serde_json::to_vec_pretty(&interventions).unwrap(),
+        )
+        .unwrap();
+    }
     assert!(
         inventory_count(&c, COINS) >= 10,
         "fixture has at least 10 coins in the player's inventory"
