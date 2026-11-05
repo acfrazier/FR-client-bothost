@@ -41,7 +41,9 @@ Fairy Ring login, terrain movement, and natural Tutorial Island operations:
 dialogue, doors, inventory and quest tabs, woodcutting, firemaking, fishing,
 cooking, mining, smelting, smithing, equipment, melee and ranged combat,
 bank deposits/withdrawals, prayer/friends/ignore tabs, Wind Strike, and the
-instructor's mainland teleport. This is not a complete 377 gameplay client.
+instructor's mainland teleport. Mainland operations include Cook's Assistant,
+its quest journal and completion scroll, general-store Buy-1/Sell-1, and
+ground-item drop/pickup. This is not a complete 377 gameplay client.
 
 Use revision 377 only with Fairy Ring's local 377 engine. The orchestrator
 starts and stops that engine. Set `ENGINE_DIR` to that engine so runtime RSA
@@ -111,12 +113,49 @@ It preserves Java's receiver guard instead of duplicating the owner's stack.
 The magic lesson approaches the chicken-facing window before casting;
 the instructor's dialogue tile can have a blocked line of sight.
 The magic lesson ends at Lumbridge (3222,3222) with the tutorial overlay closed.
-Explicit resume selections (`quest-run`, `combat-ranged`, `combat-shoot`,
-`combat-confirm`, `bank-exit`, `magic-success`) require their already-received
-natural account states. They do not set tutorial variables or grant supplies.
+Explicit resume selections (`chef-bread`, `quest-run`, `combat-ranged`,
+`combat-shoot`, `combat-confirm`, `bank-exit`, `magic-success`) require their
+already-received natural account states. They do not set tutorial variables
+or grant supplies. `chef-bread` requires the chef's flour and water bucket.
 `combat-confirm` uses the remaining natural arrows against one additional rat
 to exercise the repaired projectile and ground-stack path after a disconnect.
 Set `CLIENT_377_QUIET_LOCK` to the operator's quiet-lock path when required.
+
+The mainland proof continues the same naturally graduated account.
+`CLIENT_377_MAINLAND_LESSON=full` runs Cook's Assistant, general-store
+Buy-1/Sell-1, and ground-item drop/pickup. The `start`, `shop`, `ingredients`,
+`mill`, and `complete` selections resume only from their required real quest
+and inventory states, retaining ingredients already collected naturally.
+The route opens castle doors and farm gates, crosses the bridge, picks up a
+farm egg, milks a dairy cow with a carried bucket, and picks wheat.
+The mill route opens its real
+double doors, uses the ladders, hopper, and controls, and collects flour with
+a pot. The middle ladder's ordinary Climb option offers the real direction
+dialogue. Flour and hopper variables have temporary server scope. If a
+resumed mill lesson has no carried grain, it picks replacement wheat from
+the real field. The proof records the quest journal before acceptance,
+during collection, and after completion, plus the quest-complete scroll.
+Each selection ends with a server-acknowledged logout. No quest progress,
+inventory, player coordinates, or skill experience is assigned by the proof.
+Each `mainland-stages.json` entry records the rendered camera, map base,
+roof level, actual interfaces, and inventory alongside its screenshot.
+Cook's quest variable is server-only. Its received quest-list colours and
+journal text prove progress; the fixture does not treat client varp 29 as
+server quest state.
+The flour-bin form follows the received location varp. Map and zone loaders
+retain a model-free morphing root as a dynamic scene source. Java's opcode-77
+selection controls the rendered model and real menu options; hidden or
+out-of-range forms do not fall back to another child. Operations retain the
+original scene identity, while Examine uses the selected definition.
+
+With the live/cache/account environment above, run:
+
+```bash
+CLIENT_377_MAINLAND_LESSON=full \
+cargo test -p client --no-default-features --test live_interactions_377 \
+  mainland_lesson_377::natural_lumbridge_cook_quest_and_shop_377 \
+  -- --ignored --exact --nocapture --test-threads=1
+```
 
 The `% Done` bar reads transmitted varp 406. The server-only tutorial stage
 is not transmitted in varp 281. The first Guide conversation reaches stage 4,
@@ -140,6 +179,13 @@ that geometry rather than applying a client-only layout correction.
 Chat-interface replacement restores decoded non-inventory component state.
 Inventory components retain their contents, as in Java's component unload.
 Late text updates also invalidate their visible cached chat/tutorial layer.
+The quest-completion jingle uses the validated Java 377 `MIDI_JINGLE` packet.
+Low-memory or muted clients consume it without requesting or changing music.
+Enabled music requests the jingle and preserves the pending background song.
+Mainland map effects use Java 377's `MAP_ANIM` (59), including enclosed
+zone batches (183). The whole batch and effect resources are validated
+before any location, ground stack, or animation changes. Its height byte
+is subtracted directly from terrain height, without projectile scaling.
 
 Ordinary 377 mouse, camera, focus, idle, and Java anticheat packets use their
 own encoders and trigger points. Shared writers are admitted only when their
