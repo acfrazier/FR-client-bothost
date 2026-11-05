@@ -645,6 +645,15 @@ impl Renderer {
                 if let Some(icon) = self.media.headicons[1].as_ref() {
                     icon.plot_sprite(&mut surface, 472, 296);
                 }
+            } else if client.revision().is_377() && client.in_multizone == 1 {
+                if let Some(icon) = self
+                    .media
+                    .sprites_377
+                    .as_ref()
+                    .and_then(|sprites| sprites.overlay_multiway.as_ref())
+                {
+                    icon.plot_sprite(&mut surface, 472, 296);
+                }
             }
             // TS 4901-4911: the reboot countdown line, drawn after the
             // private-chat overlay (which reserves its row when active).
@@ -1481,13 +1490,23 @@ impl Renderer {
             for index in -1..(player_count + npc_count) {
                 // Java 8873-8881: -1 is the local player, then the players
                 // and npcs by their id lists.
-                let (entity, ready, player_chat_name, player_headicons, npc_type) = if index == -1 {
+                let (
+                    entity,
+                    ready,
+                    player_chat_name,
+                    player_headicons,
+                    player_pk_icon_377,
+                    player_prayer_icon_377,
+                    npc_type,
+                ) = if index == -1 {
                     match &client.local_player {
                         Some(p) => (
                             &p.entity,
                             p.is_ready(),
                             p.name.as_deref(),
                             p.headicons,
+                            p.pk_icon_377,
+                            p.prayer_icon_377,
                             None,
                         ),
                         None => continue,
@@ -1503,6 +1522,8 @@ impl Renderer {
                             p.is_ready(),
                             p.name.as_deref(),
                             p.headicons,
+                            p.pk_icon_377,
+                            p.prayer_icon_377,
                             None,
                         ),
                         None => continue,
@@ -1513,7 +1534,7 @@ impl Renderer {
                         .get(client.npc_ids[(index - player_count) as usize] as usize)
                         .and_then(|o| o.as_ref())
                     {
-                        Some(n) => (&n.entity, n.is_ready(), None, 0, n.r#type),
+                        Some(n) => (&n.entity, n.is_ready(), None, 0, -1, -1, n.r#type),
                         None => continue,
                     }
                 };
@@ -1527,7 +1548,9 @@ impl Renderer {
                     if let Some(npc_type) = npc_type {
                         if npc_type < client.cache.npcs.len() {
                             let headicon = client.cache.npc(npc_type).headicon;
-                            if (0..20).contains(&headicon) {
+                            let is_377 = client.revision().is_377();
+                            let icon_count = if is_377 { 32 } else { 20 };
+                            if headicon >= 0 && (headicon as usize) < icon_count {
                                 let (px, py) = self.project_overlay(
                                     client,
                                     entity.x,
@@ -1537,12 +1560,20 @@ impl Renderer {
                                 self.project_x = px;
                                 self.project_y = py;
                                 if self.project_x > -1 {
-                                    if let Some(sprite) = self
-                                        .media
-                                        .headicons
-                                        .get(headicon as usize)
-                                        .and_then(|o| o.as_ref())
-                                    {
+                                    let sprite = if is_377 {
+                                        self.media.sprites_377.as_ref().and_then(|sprites| {
+                                            sprites
+                                                .headicons_prayer
+                                                .get(headicon as usize)
+                                                .and_then(Option::as_ref)
+                                        })
+                                    } else {
+                                        self.media
+                                            .headicons
+                                            .get(headicon as usize)
+                                            .and_then(Option::as_ref)
+                                    };
+                                    if let Some(sprite) = sprite {
                                         sprite.plot_sprite(&mut surface, px - 12, py - 30);
                                     }
                                 }
@@ -1569,11 +1600,59 @@ impl Renderer {
                         }
                     }
                 } else {
-                    // Player headicons stack bottom-up from 30 then 25 px
-                    // (Java 8897-8915); the type-10 hint crown plots at the
-                    // remaining y.
+                    // Java 377 draws PK first, prayer second, then the type-10
+                    // hint crown. Legacy revisions retain their headicon bitset.
                     let mut y = 30;
-                    if player_headicons != 0 {
+                    if client.revision().is_377() {
+                        if player_pk_icon_377 != -1 || player_prayer_icon_377 != -1 {
+                            let (px, py) = self.project_overlay(
+                                client,
+                                entity.x,
+                                entity.z,
+                                entity.height + 15,
+                            );
+                            self.project_x = px;
+                            self.project_y = py;
+                            if self.project_x > -1 {
+                                if player_pk_icon_377 != -1 {
+                                    if player_pk_icon_377 >= 0 {
+                                        if let Some(sprite) = self
+                                            .media
+                                            .sprites_377
+                                            .as_ref()
+                                            .and_then(|sprites| {
+                                                sprites
+                                                    .headicons_pk
+                                                    .get(player_pk_icon_377 as usize)
+                                                    .and_then(Option::as_ref)
+                                            })
+                                        {
+                                            sprite.plot_sprite(&mut surface, px - 12, py - y);
+                                        }
+                                    }
+                                    y -= 25;
+                                }
+                                if player_prayer_icon_377 != -1 {
+                                    if player_prayer_icon_377 >= 0 {
+                                        if let Some(sprite) = self
+                                            .media
+                                            .sprites_377
+                                            .as_ref()
+                                            .and_then(|sprites| {
+                                                sprites
+                                                    .headicons_prayer
+                                                    .get(player_prayer_icon_377 as usize)
+                                                    .and_then(Option::as_ref)
+                                            })
+                                        {
+                                            sprite.plot_sprite(&mut surface, px - 12, py - y);
+                                        }
+                                    }
+                                    y -= 25;
+                                }
+                            }
+                        }
+                    } else if player_headicons != 0 {
                         let (px, py) =
                             self.project_overlay(client, entity.x, entity.z, entity.height + 15);
                         self.project_x = px;
@@ -1585,7 +1664,7 @@ impl Renderer {
                                         .media
                                         .headicons
                                         .get(icon as usize)
-                                        .and_then(|o| o.as_ref())
+                                        .and_then(|sprite| sprite.as_ref())
                                     {
                                         sprite.plot_sprite(&mut surface, px - 12, py - y);
                                     }
@@ -3540,15 +3619,16 @@ impl Renderer {
     /// functions, ground-object/npc/player dots, hint arrows, the flag
     /// marker, and the white local-player square. `minimap_state == 2`
     /// blackens the masked-out region and draws only the compass (TS
-    /// 11286-11299). Deviations: the friend split always draws `mapdots3`
-    /// (no friend list is ported), and the `areaGame.setPixels()` target
-    /// switches are no-ops (the `Pix2D` surface is bound here).
+    /// 11286-11299). R377 preserves the Java friend/team dot precedence.
+    /// The `areaGame.setPixels()` target switches are no-ops (the `Pix2D`
+    /// surface is bound here).
     pub(crate) fn minimap_draw(&mut self, client: &mut Client) {
         let Some(player) = client.local_player.as_ref() else {
             return;
         };
         let player_x = player.x;
         let player_z = player.z;
+        let local_team_377 = player.team_377;
         let Some(map) = self.area_map.as_mut() else {
             return;
         };
@@ -3625,6 +3705,12 @@ impl Renderer {
         let mapdots1 = self.media.mapdots1.as_ref();
         let mapdots2 = self.media.mapdots2.as_ref();
         let mapdots3 = self.media.mapdots3.as_ref();
+        let mapdots4 = self.media.mapdots4.as_ref();
+        let mapdots5 = self
+            .media
+            .sprites_377
+            .as_ref()
+            .and_then(|sprites| sprites.mapdots5.as_ref());
 
         // TS 11310-11316: map functions (filled by `minimap_build_buffer`;
         // a `mapfunction` entry that is `None` skips the dot).
@@ -3688,9 +3774,8 @@ impl Renderer {
                 );
             }
         }
-
-        // TS 11337-11357: players (friends split onto dots4; no friend list
-        // is ported, so everyone draws dots3).
+        // Java 377 precedence is online friend, same nonzero team, then
+        // ordinary player dot. Legacy revisions keep their original dot.
         for i in 0..client.player_count as usize {
             let player_id = client.player_ids[i];
             let Some(p) = client
@@ -3703,10 +3788,27 @@ impl Renderer {
             if p.is_ready() && p.name.is_some() {
                 let dot_x = (p.x / 32) - (player_x / 32);
                 let dot_y = (p.z / 32) - (player_z / 32);
+                let mapdot = if client.revision().is_377() {
+                    let is_online_friend = p.name.as_deref().is_some_and(|name| {
+                        (0..client.friend_count.max(0) as usize).any(|friend| {
+                            client.friend_node_id[friend] != 0
+                                && client.friend_username[friend].eq_ignore_ascii_case(name)
+                        })
+                    });
+                    if is_online_friend {
+                        mapdots4
+                    } else if local_team_377 != 0 && p.team_377 == local_team_377 {
+                        mapdots5
+                    } else {
+                        mapdots3
+                    }
+                } else {
+                    mapdots3
+                };
                 minimap_draw_dot(
                     &mut surface,
                     dot_y,
-                    mapdots3,
+                    mapdot,
                     dot_x,
                     mapback,
                     dot_angle,
@@ -4176,6 +4278,10 @@ impl Renderer {
         // TS `this.minimap.setPixels()`: bind the buffer for `draw_detail`'s
         // plots. The `areaGame.setPixels()` rebinding is a no-op here — every
         // draw helper in this port takes its surface explicitly.
+        let mapscene = self.media.sprites_377.as_ref().map_or(
+            self.media.mapscene.as_slice(),
+            |sprites| sprites.mapscene.as_slice(),
+        );
         {
             let mut surface = Pix2D::with_pixels(&mut mm.data, 512, 512);
             for z in 1..BuildArea::SIZE - 1 {
@@ -4187,7 +4293,7 @@ impl Renderer {
                         draw_detail(
                             &client.world,
                             &client.cache,
-                            &self.media.mapscene,
+                            mapscene,
                             &mut surface,
                             level,
                             x,
@@ -4205,7 +4311,7 @@ impl Renderer {
                         draw_detail(
                             &client.world,
                             &client.cache,
-                            &self.media.mapscene,
+                            mapscene,
                             &mut surface,
                             level + 1,
                             x,
@@ -4219,6 +4325,10 @@ impl Renderer {
         }
 
         self.active_map_function_count = 0;
+        let mapfunction = self.media.sprites_377.as_ref().map_or(
+            self.media.mapfunction.as_slice(),
+            |sprites| sprites.mapfunction.as_slice(),
+        );
 
         for x in 0..BuildArea::SIZE {
             for z in 0..BuildArea::SIZE {
@@ -4292,11 +4402,9 @@ impl Renderer {
                 // silently; a Rust panic here is worse, so cap the count.
                 let count = self.active_map_function_count as usize;
                 if count < self.active_map_functions.len() {
-                    self.active_map_functions[count] = self
-                        .media
-                        .mapfunction
+                    self.active_map_functions[count] = mapfunction
                         .get(func as usize)
-                        .and_then(|s| s.clone());
+                        .and_then(|sprite| sprite.clone());
                     self.active_map_function_x[count] = stx;
                     self.active_map_function_z[count] = stz;
                     self.active_map_function_count += 1;
@@ -4725,3 +4833,6 @@ mod texture_anim_tests {
         assert_eq!(renderer.pix3d.pool_size, 1);
     }
 }
+#[cfg(test)]
+#[path = "draw_377_tests.rs"]
+mod draw_377_tests;
