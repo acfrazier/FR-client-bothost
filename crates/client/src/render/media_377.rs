@@ -98,10 +98,10 @@ mod tests {
 
     #[test]
     fn depack_loads_java_377_high_map_icon_indices() {
-        let mut index = vec![0, 1, 0, 1, 2, 0x12, 0x34, 0x56];
-        let scene_index = index.len();
+        let mut index = Vec::new();
+        let scene_index = append_sprite_group_header(&mut index);
         append_sprite_metadata(&mut index, 72);
-        let function_index = index.len();
+        let function_index = append_sprite_group_header(&mut index);
         append_sprite_metadata(&mut index, 70);
 
         let mut scene_data = (scene_index as u16).to_be_bytes().to_vec();
@@ -131,6 +131,12 @@ mod tests {
     fn hint_icons_keep_java_377_array_capacity() {
         let media = crate::render::media::Media::empty();
         assert_eq!(media.headicons_hint.len(), 32);
+    }
+
+    fn append_sprite_group_header(index: &mut Vec<u8>) -> usize {
+        let offset = index.len();
+        index.extend_from_slice(&[0, 1, 0, 1, 2, 0x12, 0x34, 0x56]);
+        offset
     }
 
     fn append_sprite_metadata(index: &mut Vec<u8>, count: usize) {
