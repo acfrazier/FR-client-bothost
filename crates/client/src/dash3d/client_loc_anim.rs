@@ -29,17 +29,20 @@ impl ClientLocAnim {
         height_se: i32,
         height_ne: i32,
         height_nw: i32,
-        seq: usize,
+        seq: i32,
         random_frame: bool,
         loop_cycle: i32,
     ) -> Self {
-        let seq_type = cache.seq(seq);
-        let mut anim_cycle = loop_cycle;
+        let anim = usize::try_from(seq).ok();
+        let mut anim_cycle = loop_cycle.wrapping_sub(i32::from(cache.revision_377.is_some()));
         let mut anim_frame = 0;
 
-        if random_frame && seq_type.loops != -1 {
-            anim_frame = (random_float() * seq_type.num_frames as f64) as i32;
-            anim_cycle -= (random_float() * seq_type.get_delay(anim_frame) as f64) as i32;
+        if let Some(seq_id) = anim {
+            let seq_type = cache.seq(seq_id);
+            if random_frame && seq_type.loops != -1 {
+                anim_frame = (random_float() * seq_type.num_frames as f64) as i32;
+                anim_cycle -= (random_float() * seq_type.get_delay(anim_frame) as f64) as i32;
+            }
         }
 
         ClientLocAnim {
@@ -50,7 +53,7 @@ impl ClientLocAnim {
             height_se,
             height_ne,
             height_nw,
-            anim: Some(seq),
+            anim,
             anim_frame,
             anim_cycle,
             min_y: 1000,
@@ -59,6 +62,26 @@ impl ClientLocAnim {
 
     /// `getTempModel()` from client-ts.
     pub fn get_temp_model(&mut self, cache: &Cache, loop_cycle: i32) -> Option<Model> {
+        self.temp_model(cache, loop_cycle, None)
+    }
+
+    /// Java 377 advances the root's sequence, then selects the current
+    /// location form. A hidden form must not pause or reset the sequence.
+    pub fn get_temp_model_with_varps(
+        &mut self,
+        cache: &Cache,
+        loop_cycle: i32,
+        varps: &[i32],
+    ) -> Option<Model> {
+        self.temp_model(cache, loop_cycle, Some(varps))
+    }
+
+    fn temp_model(
+        &mut self,
+        cache: &Cache,
+        loop_cycle: i32,
+        varps: Option<&[i32]>,
+    ) -> Option<Model> {
         if let Some(seq_id) = self.anim {
             let seq = cache.seq(seq_id);
             let mut delta = loop_cycle - self.anim_cycle;
@@ -94,7 +117,11 @@ impl ClientLocAnim {
             }
         }
 
-        let mut model = cache.loc(self.index as usize).get_model(
+        let loc = match varps {
+            Some(varps) => cache.resolve_loc(self.index as usize, varps)?,
+            None => cache.locs.get(self.index as usize)?,
+        };
+        let mut model = loc.get_model(
             cache,
             self.shape,
             self.angle,
