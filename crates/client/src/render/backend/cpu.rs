@@ -253,12 +253,13 @@ impl RenderBackend for CpuBackend {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             surface.cls();
             pix3d.set_clipping(game.width, game.height);
-            world.render_all(
+            world.render_all_with_varps(
                 &mut core.world,
                 pix3d,
                 &mut surface,
                 cache,
                 loop_cycle,
+                &core.var,
                 cam_x,
                 cam_y,
                 cam_z,
