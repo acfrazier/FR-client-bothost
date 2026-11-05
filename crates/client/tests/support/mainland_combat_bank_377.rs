@@ -515,25 +515,40 @@ fn bank(
     stages: &mut Vec<Value>,
     actions: &mut Vec<Value>,
 ) -> Value {
-    for point in [
+    // Each destination is visible on the minimap. Let the real pathfinder
+    // route around scenery, rather than forcing six-tile intermediate stops
+    // that can themselves land on trees (observed at 3157,3232).
+    let route = [
         (3255, 3231),
         (3255, 3226),
+        (3243, 3226),
         (3235, 3226),
         (3230, 3226),
         (3226, 3222),
         (3220, 3222),
         // Pass south of the general store, not through its closed walls.
         (3220, 3232),
-        (3203, 3232),
+        (3208, 3232),
+        (3196, 3232),
         (3183, 3232),
-        (3163, 3232),
+        (3171, 3232),
+        (3158, 3231),
         (3143, 3232),
-        (3123, 3232),
+        (3128, 3232),
+        (3113, 3232),
         (3103, 3232),
         (3103, 3244),
         (3097, 3244),
-    ] {
-        walk_route(c, r, point, actions);
+    ];
+    let current = tile(c);
+    let start = route
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, point)| (point.0 - current.0).abs() + (point.1 - current.1).abs())
+        .unwrap()
+        .0;
+    for &point in &route[start..] {
+        tutorial_lesson_377::walk_to(c, r, point, actions);
         if point == (3220, 3222) {
             stage(c, r, root, "lumbridge-minimap", stages);
         }
