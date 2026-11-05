@@ -47,7 +47,10 @@ impl PacketObserver for Outbound {
 }
 
 fn tile(c: &Client) -> (i32, i32) {
-    let player = c.local_player.as_ref().expect("local player is server populated");
+    let player = c
+        .local_player
+        .as_ref()
+        .expect("local player is server populated");
     (
         c.map_build_base_x + player.route_x[0],
         c.map_build_base_z + player.route_z[0],
@@ -143,15 +146,17 @@ fn slot_for(c: &Client, component: i32, object: i32) -> i32 {
         .iter()
         .zip(counts)
         .position(|(id, count)| *id == object + 1 && *count > 0)
-        .unwrap_or_else(|| panic!("object {object} occupies a server-populated slot in {component}"))
-        as i32
+        .unwrap_or_else(|| {
+            panic!("object {object} occupies a server-populated slot in {component}")
+        }) as i32
 }
 
 fn component_items(c: &Client, component: i32) -> Vec<Value> {
     let Some(inventory) = c.if_(component as usize) else {
         return Vec::new();
     };
-    let (Some(objects), Some(counts)) = (&inventory.link_obj_type, &inventory.link_obj_number) else {
+    let (Some(objects), Some(counts)) = (&inventory.link_obj_type, &inventory.link_obj_number)
+    else {
         return Vec::new();
     };
     objects
@@ -231,9 +236,7 @@ fn component_rect(
     let children = component.children.as_ref()?;
     let child_x = component.child_x.as_ref()?;
     let child_y = component.child_y.as_ref()?;
-    for ((&child_id, &offset_x), &offset_y) in
-        children.iter().zip(child_x).zip(child_y)
-    {
+    for ((&child_id, &offset_x), &offset_y) in children.iter().zip(child_x).zip(child_y) {
         let Some(child) = c.if_(child_id as usize) else {
             continue;
         };
@@ -390,7 +393,10 @@ fn click(c: &mut Client, r: &mut Renderer, x: i32, y: i32) {
     c.shell.apply_mouse_up();
     c.shell.latch_click();
     c.mainloop();
-    assert!(c.ingame, "live interface release kept the session connected");
+    assert!(
+        c.ingame,
+        "live interface release kept the session connected"
+    );
     drop(r.mainredraw(c));
 }
 
@@ -442,11 +448,15 @@ fn npc_slot(c: &Client, name: &str, option: &str) -> i32 {
             let dz = (npc.route_z[0] + c.map_build_base_z - player.1).abs();
             (dx.max(dz), dx + dz)
         })
-        .unwrap_or_else(|| panic!("server-populated {name} with {option} option is visible near {player:?}"))
+        .unwrap_or_else(|| {
+            panic!("server-populated {name} with {option} option is visible near {player:?}")
+        })
 }
 
 fn operate_npc(c: &mut Client, slot: i32, action: i32, option: &str) -> Value {
-    let npc = c.npc[slot as usize].as_ref().expect("server-populated NPC slot");
+    let npc = c.npc[slot as usize]
+        .as_ref()
+        .expect("server-populated NPC slot");
     let kind = npc.r#type.expect("server-populated NPC type");
     let receipt = json!({
         "slot":slot,
@@ -468,7 +478,10 @@ fn operate_npc(c: &mut Client, slot: i32, action: i32, option: &str) -> Value {
 
 fn enter_amount(c: &mut Client, r: &mut Renderer, amount: i32) -> Value {
     pump_until(c, r, 15, |c| c.dialog_input_open);
-    assert!(c.dialog_input.is_empty(), "amount prompt starts without prefilled text");
+    assert!(
+        c.dialog_input.is_empty(),
+        "amount prompt starts without prefilled text"
+    );
     let digits = amount.to_string();
     for digit in digits.bytes() {
         c.shell.apply_key(true, 0, i32::from(digit));
@@ -477,13 +490,19 @@ fn enter_amount(c: &mut Client, r: &mut Renderer, amount: i32) -> Value {
         assert!(c.ingame, "typing an amount kept the session connected");
         drop(r.mainredraw(c));
     }
-    assert_eq!(c.dialog_input, digits, "amount was entered through queued UI keys");
+    assert_eq!(
+        c.dialog_input, digits,
+        "amount was entered through queued UI keys"
+    );
     c.shell.apply_key(true, 0, 13);
     c.shell.latch_click();
     c.mainloop();
     assert!(c.ingame, "submitting an amount kept the session connected");
     drop(r.mainredraw(c));
-    assert!(!c.dialog_input_open, "Enter submitted the actual amount prompt");
+    assert!(
+        !c.dialog_input_open,
+        "Enter submitted the actual amount prompt"
+    );
     json!({
         "prompt":"server-opened P_COUNTDIALOG",
         "input":"GameShell digit key events followed by Enter through Client::handle_chat_input",
@@ -507,17 +526,14 @@ fn capture_stage(
         .iter()
         .flat_map(|&pixel| [(pixel >> 16) as u8, (pixel >> 8) as u8, pixel as u8])
         .collect();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(
-        std::fs::File::create(&path).unwrap(),
-        90,
-    )
-    .encode(
-        &rgb,
-        map.width as u32,
-        map.height as u32,
-        image::ExtendedColorType::Rgb8,
-    )
-    .unwrap();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(std::fs::File::create(&path).unwrap(), 90)
+        .encode(
+            &rgb,
+            map.width as u32,
+            map.height as u32,
+            image::ExtendedColorType::Rgb8,
+        )
+        .unwrap();
     let record = json!({"stage":name,"screenshot":path,"state":state(c)});
     stages.push(record.clone());
     std::fs::write(
@@ -553,7 +569,10 @@ fn bank_shop_amount_drag_live_377() {
     let cache =
         std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched running cache required");
     let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account required");
-    assert_eq!(user, USER, "this fixture is reserved for the coordinated account");
+    assert_eq!(
+        user, USER,
+        "this fixture is reserved for the coordinated account"
+    );
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists(), "quiet lock blocks live runs");
     }
@@ -687,14 +706,12 @@ fn bank_shop_amount_drag_live_377() {
         inventory_count(c, COINS) == inventory_coins_start + WITHDRAW_X
             && count_component(c, bank_component, COINS) == bank_coins_start - WITHDRAW_X
     });
-    assert_packet_since(
-        &outbound,
-        start,
-        ClientProt377::RESUME_P_COUNTDIALOG.id,
-    );
-    actions.push(json!({"operation":"bank Withdraw-X","menu":action,"prompt":prompt,
+    assert_packet_since(&outbound, start, ClientProt377::RESUME_P_COUNTDIALOG.id);
+    actions.push(
+        json!({"operation":"bank Withdraw-X","menu":action,"prompt":prompt,
         "inventory_coins":[inventory_coins_start,inventory_count(&c,COINS)],
-        "bank_coins":[bank_coins_start,count_component(&c,bank_component,COINS)]}));
+        "bank_coins":[bank_coins_start,count_component(&c,bank_component,COINS)]}),
+    );
     capture_stage(&mut c, &mut r, &root, "bank-withdraw-x", &mut stages);
 
     let start = packet_count(&outbound);
@@ -718,14 +735,12 @@ fn bank_shop_amount_drag_live_377() {
             && count_component(c, bank_component, COINS)
                 == bank_coins_start - WITHDRAW_X + DEPOSIT_X
     });
-    assert_packet_since(
-        &outbound,
-        start,
-        ClientProt377::RESUME_P_COUNTDIALOG.id,
-    );
-    actions.push(json!({"operation":"bank Deposit-X","menu":action,"prompt":prompt,
+    assert_packet_since(&outbound, start, ClientProt377::RESUME_P_COUNTDIALOG.id);
+    actions.push(
+        json!({"operation":"bank Deposit-X","menu":action,"prompt":prompt,
         "inventory_coins":[inventory_coins_start+WITHDRAW_X,inventory_count(&c,COINS)],
-        "bank_coins":[bank_coins_start-WITHDRAW_X,count_component(&c,bank_component,COINS)]}));
+        "bank_coins":[bank_coins_start-WITHDRAW_X,count_component(&c,bank_component,COINS)]}),
+    );
     capture_stage(&mut c, &mut r, &root, "bank-deposit-x", &mut stages);
     let inventory_coins_after_bank = inventory_count(&c, COINS);
     let bank_coins_after = count_component(&c, bank_component, COINS);
@@ -765,7 +780,10 @@ fn bank_shop_amount_drag_live_377() {
     c.shell.latch_click();
     c.mainloop();
     assert!(c.ingame, "drag start kept the session connected");
-    assert_eq!(c.obj_drag_area, 2, "drag began in the bank's player inventory");
+    assert_eq!(
+        c.obj_drag_area, 2,
+        "drag began in the bank's player inventory"
+    );
     assert_eq!(c.obj_drag_com_id, player_component);
     assert_eq!(c.obj_drag_slot, source_slot);
     c.shell.apply_mouse_move(destination_x, destination_y);
@@ -779,7 +797,10 @@ fn bank_shop_amount_drag_live_377() {
     c.shell.apply_mouse_up();
     c.shell.latch_click();
     c.mainloop();
-    assert!(c.ingame, "inventory drag release kept the session connected");
+    assert!(
+        c.ingame,
+        "inventory drag release kept the session connected"
+    );
     drop(r.mainredraw(&mut c));
     assert_eq!(c.obj_drag_area, 0, "completed drag left no active drag");
     let (source_after, destination_after) = {
@@ -836,7 +857,10 @@ fn bank_shop_amount_drag_live_377() {
     let stock_component = inventory_component(&c, c.main_modal_id);
     let shop_player_component = side_player_inventory(&c);
     let stock_before_buy = count_component(&c, stock_component, BUCKET);
-    assert!(stock_before_buy >= 5, "actual Draynor shop stock offers Buy-5");
+    assert!(
+        stock_before_buy >= 5,
+        "actual Draynor shop stock offers Buy-5"
+    );
     let buckets_before_buy = inventory_count(&c, BUCKET);
     let coins_before_buy = inventory_count(&c, COINS);
     assert!(coins_before_buy >= MIN_SHOP_COINS);
@@ -845,7 +869,10 @@ fn bank_shop_amount_drag_live_377() {
         .and_then(|inventory| inventory.link_obj_type.as_ref())
         .map(|objects| objects.iter().filter(|object| **object == 0).count())
         .unwrap_or(0);
-    assert!(free_slots >= 5, "fixture leaves five inventory slots for Buy-5");
+    assert!(
+        free_slots >= 5,
+        "fixture leaves five inventory slots for Buy-5"
+    );
     capture_stage(&mut c, &mut r, &root, "draynor-shop-open", &mut stages);
 
     let start = packet_count(&outbound);
@@ -899,7 +926,10 @@ fn bank_shop_amount_drag_live_377() {
         "stock":[stock_before_sell,count_component(&c,stock_component,BUCKET)]}));
     capture_stage(&mut c, &mut r, &root, "draynor-shop-sell-5", &mut stages);
     close_main(&mut c, &mut r);
-    assert!(c.ingame, "account remains connected after bank and shop proof");
+    assert!(
+        c.ingame,
+        "account remains connected after bank and shop proof"
+    );
 
     let receipt = json!({
         "engine_dir":engine,
