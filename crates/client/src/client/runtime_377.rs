@@ -951,7 +951,7 @@ impl Client {
                             raw.data(),
                         )
                         .expect("previously validated 377 appearance");
-                    apply_appearance_377(&mut player, &appearance);
+                    apply_appearance_377(&mut player, &appearance, &self.cache);
                 }
                 self.players[id] = Some(player);
             }
@@ -1090,7 +1090,8 @@ impl Client {
         let cycle = self.loop_cycle;
         match block {
             P::Appearance(appearance) => {
-                apply_appearance_377(self.player_377(id), appearance);
+                let cache = self.cache.clone();
+                apply_appearance_377(self.player_377(id), appearance, &cache);
                 self.player_appearance_buffer[id] =
                     Some(Box::new(Packet::new(appearance.raw.wire.to_vec())));
             }
@@ -1315,14 +1316,30 @@ fn bind_npc_377(npc: &mut ClientNpc, id: usize, cache: &Cache) {
     npc.walkanim_r = kind.walkanim_r;
     npc.readyanim = kind.readyanim;
 }
-fn apply_appearance_377(player: &mut ClientPlayer, appearance: &PlayerAppearance377<'_>) {
+fn apply_appearance_377(
+    player: &mut ClientPlayer,
+    appearance: &PlayerAppearance377<'_>,
+    cache: &Cache,
+) {
     player.gender = appearance.gender;
-    // This renderer uses an icon bitset; Java 377 sends a signed single index.
-    player.headicons = if appearance.head_icon < 0 {
-        0
-    } else {
-        1 << appearance.head_icon
-    };
+    // Java 377 keeps independent signed PK/prayer indexes, not a legacy bitset.
+    player.headicons = 0;
+    player.pk_icon_377 = appearance.head_icon;
+    player.prayer_icon_377 = appearance.skull_icon;
+    player.team_377 = 0;
+    for item in appearance.equipment.iter().flatten().copied() {
+        let Some(item_id) = item
+            .checked_sub(512)
+            .and_then(|item_id| usize::try_from(item_id).ok())
+        else {
+            continue;
+        };
+        if let Some(obj) = cache.objs.get(item_id) {
+            if obj.team != 0 {
+                player.team_377 = obj.team;
+            }
+        }
+    }
     for (slot, value) in player.appearance.iter_mut().zip(appearance.equipment) {
         if let Some(value) = value {
             *slot = value as u16;
@@ -1455,6 +1472,64 @@ mod tests {
 
     fn client() -> Client {
         client_with_cache(Cache::default())
+    }
+
+    #[test]
+    fn appearance_keeps_signed_377_icons_and_last_nonzero_team() {
+        use crate::client::packet_377::entity_377::{
+            DataTransform377, TransformedBytes377,
+        };
+        use crate::config::ObjType;
+
+        let cache = Cache {
+            objs: vec![
+                ObjType {
+                    team: 2,
+                    ..ObjType::default()
+                },
+                ObjType::default(),
+                ObjType {
+                    team: 9,
+                    ..ObjType::default()
+                },
+            ],
+            ..Cache::default()
+        };
+
+        let mut equipment = [None; 12];
+        equipment[0] = Some(512);
+        equipment[1] = Some(513);
+        equipment[2] = Some(514);
+        equipment[3] = Some(65_535);
+        let appearance = PlayerAppearance377 {
+            raw: TransformedBytes377 {
+                wire: &[],
+                transform: DataTransform377::Reverse,
+            },
+            gender: 0,
+            head_icon: -1,
+            skull_icon: 8,
+            equipment,
+            npc_transform: None,
+            body_colours: [0; 5],
+            sequences: [None; 7],
+            username_base37: 1,
+            combat_level: 1,
+            skill_level: 0,
+        };
+        let mut player = ClientPlayer {
+            headicons: i32::MAX,
+            team_377: 77,
+            ..ClientPlayer::default()
+        };
+
+        apply_appearance_377(&mut player, &appearance, &cache);
+
+        assert_eq!(player.headicons, 0);
+        assert_eq!(player.pk_icon_377, -1);
+        assert_eq!(player.prayer_icon_377, 8);
+        assert_eq!(player.team_377, 9);
+        assert_eq!(&player.appearance[..4], &[512, 513, 514, 65_535]);
     }
 
     #[test]
