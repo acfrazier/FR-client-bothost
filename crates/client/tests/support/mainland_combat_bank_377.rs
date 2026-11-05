@@ -553,7 +553,17 @@ fn bank(
         }
     }
     stage(c, r, root, "draynor-minimap", stages);
-    let banker = npc_type(c, "banker", "Bank");
+    let banker = c
+        .npc_ids
+        .iter()
+        .take(c.npc_count as usize)
+        .filter_map(|&slot| c.npc[slot as usize].as_ref().and_then(|npc| npc.r#type))
+        .find(|&id| {
+            let npc = &c.cache.npcs[id];
+            npc.name.eq_ignore_ascii_case("Banker")
+                && npc.op[2].as_ref().is_some_and(|option| option.as_str() == "Bank")
+        })
+        .expect("server-populated Draynor banker has the real Bank option");
     actions.push(operate_npc(c, banker, MiniMenuAction::OP_NPC3, "Bank"));
     pump_until(c, r, 30, |c| {
         c.main_modal_id >= 0
