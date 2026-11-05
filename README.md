@@ -162,6 +162,8 @@ the complete frame has been validated.
 `live_bank_shop_377` is an ignored proof for the coordinated `t2as11rv1`
 account near Draynor bank. It checks Withdraw/Deposit-10 and X, amount
 prompts, an inventory drag, and Buy/Sell-5 against received server state.
+It walks through the production pathfinder to Lumbridge General Store,
+buys and sells five hammers from its real stock, then returns to Draynor.
 It requires the same live engine/cache variables and explicit JSON labels
 in `CLIENT_377_BANK_SHOP_INTERVENTIONS` (`[]` when none).
 `CLIENT_377_BANK_SHOP_PREPARE=1` optionally gives only that account enough
