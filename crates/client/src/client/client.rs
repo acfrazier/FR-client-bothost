@@ -2075,7 +2075,7 @@ impl Client {
                         .expect("ClientSessionProfile validates UTF-8 cache_dir")
                 });
         let midi = midi_backend(resource_cache_dir);
-        let jagfx = Self::unpack_jagfx(resource_cache_dir, config.lowmem);
+        let jagfx = Self::unpack_jagfx(resource_cache_dir, config.lowmem, construction.revision);
         let groundh: LevelHeightmaps =
             vec![
                 vec![vec![0i32; (BUILD_AREA_SIZE + 1) as usize]; (BUILD_AREA_SIZE + 1) as usize];
@@ -2537,8 +2537,12 @@ impl Client {
 
     /// TS maininit 1168-1171: unpack `sounds.dat` from the `sounds` jag
     /// unless lowmem. Missing/corrupt file stays an empty table.
-    fn unpack_jagfx(cache_dir: &str, lowmem: bool) -> JagFX {
-        JagFX::load_shared(cache_dir, lowmem)
+    fn unpack_jagfx(cache_dir: &str, lowmem: bool, revision: ClientRevision) -> JagFX {
+        if revision.is_377() {
+            JagFX::load_shared_377(cache_dir, lowmem)
+        } else {
+            JagFX::load_shared(cache_dir, lowmem)
+        }
     }
 
     /// Unpack `config` (and `interface` when present) from `cache_dir`,
@@ -3054,7 +3058,7 @@ impl Client {
 
         // TS 1168-1171: unpack sounds.dat after the jag is on disk.
         if !self.config.lowmem {
-            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
+            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false, self.revision);
         }
 
         // Java unpacks textures during maininit (progress 45) before any
@@ -13829,7 +13833,7 @@ impl Client {
             self.wave_count = 0;
             self.waves.lock().unwrap().stop();
         } else {
-            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
+            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false, self.revision);
         }
         true
     }
