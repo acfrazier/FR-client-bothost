@@ -93,6 +93,25 @@ cargo test -p client
 274bot `cargo test` does **not** run these. Live engine tests stay in
 274bot (`LIVE=1 cargo test -p e2e` / `-p host-play`).
 
+Revision 377 explicitly selects Java's 5000-slot sound/delay tables; the
+274/289 default and shared 1000-slot tables are unchanged. Sound loading is
+enabled in high-memory construction, startup, and disconnected memory-mode
+changes. The real-cache regression in `revision_377_sounds` checks every
+sound's occupancy, optimized delay, loop bounds and tone timings against
+the original Java 377 loader, including IDs above 999. Regenerate its fixture:
+
+```bash
+python3 tools/generate_revision_377_sounds.py \
+  --java-root "$JAVA_377_ROOT" --cache-dir "$CLIENT_377_CACHE_DIR" \
+  --work-dir "$ORACLE_WORK_DIR"
+```
+
+`live_sound_377` is an ignored opt-in proof of profile-bound, shared-table
+high-memory construction, rendered scene2 and server logout on Fairy Ring's
+local 377 engine. It requires `ENGINE_DIR`, `CLIENT_377_RUNTIME_CACHE_DIR`,
+`CLIENT_377_LIVE_DIR` and a `CLIENT_377_LIVE_USER` starting with `t2a`.
+It proves loading and login, not audible playback or PCM parity.
+
 `gpu_fountain` includes self-contained Metal/wgpu readback regressions for
 textured scanline lighting, subpixel edges, and near-clipped polygons.
 Its additional actual-model differential is opt-in and needs a versioned
