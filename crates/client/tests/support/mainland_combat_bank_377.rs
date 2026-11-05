@@ -795,9 +795,14 @@ fn varrock(
         WEST_FARM_ROAD[3],
         WEST_FARM_ROAD[2],
         WEST_FARM_ROAD[1],
-        (3225, 3287),
-        (3234, 3295),
-        (3244, 3303),
+        // The river separates this road from Varrock's eastern approach.
+        // Cross the same complete northern bridge as the mainland cow lesson.
+        WEST_FARM_ROAD[0],
+        (3234, 3262),
+        (3243, 3262),
+        (3244, 3275),
+        (3245, 3288),
+        (3247, 3302),
         (3253, 3310),
         (3259, 3319),
         (3264, 3328),
