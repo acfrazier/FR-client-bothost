@@ -39,8 +39,8 @@ use super::Cache;
 
 /// One 377 morph selector and its ordered target list.
 ///
-/// The final target is Java's fallback entry. `-1` remains the no-target
-/// sentinel, including at arbitrary intermediate entries.
+/// Java selects an indexed target; an absent, negative or out-of-range
+/// selector, or a `-1` target, means no location. There is no fallback entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MorphTable377 {
     pub varbit: i32,
@@ -70,6 +70,42 @@ pub struct NpcFields377 {
 pub struct LocFields377 {
     /// Java opcode 77 morph selector, absent unless the opcode was present.
     pub morph: Option<MorphTable377>,
+}
+
+impl Cache {
+    /// Java 377 `LocType.method562`: resolve one current location form.
+    /// The scene typecode still identifies the original location; only its
+    /// model, menu text/options and Examine description use the selected form.
+    pub fn resolve_loc(&self, id: usize, varps: &[i32]) -> Option<&LocType> {
+        let loc = self.locs.get(id)?;
+        let Some(revision) = self.revision_377.as_ref() else {
+            return Some(loc);
+        };
+        let Some(morph) = revision.config.locs.get(id)?.morph.as_ref() else {
+            return Some(loc);
+        };
+        let selector = if morph.varbit != -1 {
+            let bit = self.varbits.get(usize::try_from(morph.varbit).ok()?)?;
+            if bit.startbit < 0 || bit.endbit < bit.startbit || bit.endbit > 31 {
+                return None;
+            }
+            let value = *varps.get(usize::try_from(bit.basevar).ok()?)?;
+            let mask = (u32::MAX >> (31 - (bit.endbit - bit.startbit))) as i32;
+            (value >> bit.startbit) & mask
+        } else {
+            *varps.get(usize::try_from(morph.varp).ok()?)?
+        };
+        let target = *morph.targets.get(usize::try_from(selector).ok()?)?;
+        self.locs.get(usize::try_from(target).ok()?)
+    }
+
+    /// Opcode 77 makes even an unanimated root a dynamic model source.
+    pub fn loc_has_morph_377(&self, id: usize) -> bool {
+        self.revision_377
+            .as_ref()
+            .and_then(|revision| revision.config.locs.get(id))
+            .is_some_and(|fields| fields.morph.is_some())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

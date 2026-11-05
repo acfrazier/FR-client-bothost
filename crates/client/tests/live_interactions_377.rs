@@ -144,6 +144,12 @@ fn state(c: &Client) -> Value {
         .expect("state snapshot is an object");
     fields.insert("plane".into(), json!(c.minusedlevel));
     fields.insert(
+        "player_route".into(),
+        json!({"length":p.route_length,"x":p.route_x,"z":p.route_z,"run":p.route_run,
+            "primary_anim":p.primary_anim,"primary_delay":p.primary_anim_delay,
+            "animation_move_delay":p.anim_delay_move}),
+    );
+    fields.insert(
         "map_base".into(),
         json!([c.map_build_base_x, c.map_build_base_z]),
     );
@@ -154,15 +160,23 @@ fn state(c: &Client) -> Value {
             "orbit_yaw": c.orbit_camera_yaw,
             "orbit_x": c.orbit_camera_x,
             "orbit_z": c.orbit_camera_z,
+            "eye": [c.cam_x, c.cam_y, c.cam_z],
+            "pitch": c.cam_pitch,
+            "yaw": c.cam_yaw,
             "minimap_angle": c.macro_minimap_angle,
             "minimap_zoom": c.macro_minimap_zoom
         }),
     );
-    fields.insert("cook_quest_varp".into(), json!(c.var.get(29)));
-    fields.insert("cook_quest_server_varp".into(), json!(c.var_serv.get(29)));
+    fields.insert(
+        "quest_interface".into(),
+        json!(mainland_lesson_377::interface_components(c, c.side_icon[2])),
+    );
     fields.insert(
         "main_interface".into(),
-        json!(mainland_lesson_377::interface_components(c, c.main_modal_id)),
+        json!(mainland_lesson_377::interface_components(
+            c,
+            c.main_modal_id
+        )),
     );
     fields.insert(
         "main_interface_text".into(),
@@ -170,7 +184,10 @@ fn state(c: &Client) -> Value {
     );
     fields.insert(
         "side_interface".into(),
-        json!(mainland_lesson_377::interface_components(c, c.side_modal_id)),
+        json!(mainland_lesson_377::interface_components(
+            c,
+            c.side_modal_id
+        )),
     );
     fields.insert(
         "side_interface_text".into(),
@@ -205,7 +222,17 @@ fn pump_until(
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("live interaction deadline: {}", state(c));
+    let failed_state = state(c);
+    if let Ok(root) = std::env::var("CLIENT_377_LIVE_DIR") {
+        let root = PathBuf::from(root);
+        screenshot(&root.join("rust-deadline.jpg"), r.mainredraw(c));
+        std::fs::write(
+            root.join("rust-deadline-state.json"),
+            serde_json::to_vec_pretty(&failed_state).unwrap(),
+        )
+        .unwrap();
+    }
+    panic!("live interaction deadline: {failed_state}");
 }
 
 fn click(c: &mut Client, r: &mut Renderer, x: i32, y: i32, button: i32) {
@@ -272,6 +299,13 @@ fn click_component(c: &mut Client, r: &mut Renderer, root: i32, target: i32, ori
     );
     c.shell.apply_mouse_move(x + w / 2, y + h / 2);
     drop(r.mainredraw(c));
+    eprintln!(
+        "377 rendered component menu {}",
+        json!((0..c.menu_num_entries as usize)
+            .map(|i| json!({"action":c.menu_action[i],"a":c.menu_param_a[i],
+            "b":c.menu_param_b[i],"component":c.menu_param_c[i]}))
+            .collect::<Vec<_>>())
+    );
     assert!(
         (0..c.menu_num_entries as usize).any(|i| c.menu_param_c[i] == target),
         "rendered button must enter real minimenu"

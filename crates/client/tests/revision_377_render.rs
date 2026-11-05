@@ -1,13 +1,24 @@
 //! Revision 377 entity-hint sprites differ from the legacy media indices.
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
+use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision, MiniMenuAction};
 use client::config::if_type::ComponentType;
-use client::config::{Cache, IfType, IfTypeMut, SeqType};
+use client::config::runtime_377::{
+    CacheFields377, InterfaceFields377, LocFields377, MorphTable377,
+};
+use client::config::{
+    Cache, CacheRevision377, IfType, IfTypeMut, LocType, SeqType, VarBitType, VarpType,
+};
+use client::core::{ClientBuild, World};
 use client::dash3d::model::ModelProvider;
-use client::dash3d::{AnimFrame, ClientNpc, Model};
+use client::dash3d::{
+    AnimFrame, ClientLocAnim, ClientNpc, CollisionMap, LocShape, Model, SceneModel,
+};
 use client::graphics::{Pix2D, Pix32, PixMap};
-use client::render::{media::Media, Renderer};
+use client::io::Packet;
+use client::render::{media::Media, RenderWorld, Renderer};
+
+static MODEL_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 
 const OLD_NPC_HINT: i32 = 0x00ff00;
 const R377_NPC_HINT: i32 = 0xff0000;
@@ -460,6 +471,7 @@ fn write_banner_raster_evidence(
 
 #[test]
 fn tutorial_banner_animation_and_projection_match_client_java_377() {
+    let _models = MODEL_FIXTURE_LOCK.lock().unwrap();
     const ROOT_ID: usize = 8680;
     const LAYER_ID: usize = 12227;
     const MODEL_ID: usize = 12228;
@@ -595,4 +607,290 @@ fn tutorial_banner_animation_and_projection_match_client_java_377() {
             "Java 377 TYPE_MODEL projection for sequence frame {frame_index}"
         );
     }
+}
+
+fn morph_cache() -> Cache {
+    Cache {
+        locs: vec![
+            LocType {
+                id: 0,
+                ..LocType::default()
+            },
+            LocType {
+                id: 1,
+                name: "Flour bin".into(),
+                model: Some(vec![5201]),
+                ..LocType::default()
+            },
+            LocType {
+                id: 2,
+                name: "Flour bin".into(),
+                model: Some(vec![5201]),
+                offsetx: 128,
+                op: vec![Some("Empty".into())],
+                ..LocType::default()
+            },
+        ],
+        varps: vec![VarpType::default()],
+        varbits: vec![VarBitType {
+            basevar: 0,
+            startbit: 1,
+            endbit: 2,
+            ..VarBitType::default()
+        }],
+        revision_377: Some(Box::new(CacheRevision377 {
+            config: CacheFields377 {
+                locs: vec![
+                    LocFields377 {
+                        morph: Some(MorphTable377 {
+                            varbit: -1,
+                            varp: 0,
+                            targets: vec![1, 2, -1],
+                        }),
+                    },
+                    LocFields377 { morph: None },
+                    LocFields377 { morph: None },
+                ],
+                ..CacheFields377::default()
+            },
+            interfaces: InterfaceFields377 {
+                client_code_layers: Default::default(),
+                type1_fields: Vec::new(),
+                null_string_masks: Vec::new(),
+                initial_overlays: Vec::new(),
+            },
+        })),
+        ..Cache::default()
+    }
+}
+
+#[test]
+fn location_morph_selectors_match_java_377_without_a_fallback() {
+    // LocType.java:172-184: an indexed target, with varbit preferred over
+    // varp and inclusive end bits through VARBIT_MASKS[end - start].
+    let mut cache = morph_cache();
+    assert_eq!(cache.resolve_loc(0, &[0]).unwrap().id, 1);
+    assert_eq!(cache.resolve_loc(0, &[1]).unwrap().id, 2);
+    for value in [-1, 2, 3, i32::MAX] {
+        assert!(cache.resolve_loc(0, &[value]).is_none(), "selector {value}");
+    }
+    assert!(cache.resolve_loc(0, &[]).is_none());
+    cache.revision_377.as_mut().unwrap().config.locs[0]
+        .morph
+        .as_mut()
+        .unwrap()
+        .varbit = 0;
+    assert_eq!(cache.resolve_loc(0, &[0]).unwrap().id, 1);
+    assert_eq!(cache.resolve_loc(0, &[2]).unwrap().id, 2);
+    assert!(
+        cache.resolve_loc(0, &[4]).is_none(),
+        "last inclusive bit selects the sentinel"
+    );
+    assert!(
+        cache.resolve_loc(0, &[6]).is_none(),
+        "out-of-range has no final-target fallback"
+    );
+    cache.varbits[0].startbit = 0;
+    cache.varbits[0].endbit = 31;
+    assert_eq!(cache.resolve_loc(0, &[1]).unwrap().id, 2);
+    assert!(cache.resolve_loc(0, &[-1]).is_none());
+    cache.varbits[0].endbit = 32;
+    assert!(cache.resolve_loc(0, &[0]).is_none());
+    cache.revision_377 = None;
+    assert_eq!(
+        cache.resolve_loc(0, &[]).unwrap().id,
+        0,
+        "legacy cache keeps its root"
+    );
+}
+
+#[test]
+fn model_free_morph_roots_survive_map_and_zone_placement() {
+    // Java World.java:127-141,804-819 stores ClientLocAnim before asking
+    // the selected form for geometry. The root need not have any models.
+    let groundh = vec![vec![vec![0; 5]; 5]; 4];
+    let mapl = vec![vec![vec![0; 5]; 5]; 4];
+    let mut world = World::new(vec![vec![vec![0; 5]; 5]; 4], 4, 4, 4);
+    let mut collisions = std::array::from_fn(|_| CollisionMap::new());
+    let mut build = ClientBuild::new();
+    build.low_mem = false;
+    for revision_377 in [false, true] {
+        let mut cache = morph_cache();
+        if !revision_377 {
+            cache.revision_377 = None;
+        }
+        for shape in 0..=22 {
+            for angle in 0..4 {
+                for changed in [false, true] {
+                    world.reset_map();
+                    if changed {
+                        ClientBuild::change_loc_unchecked(
+                            &cache, &mut world, None, &groundh, 0, 1, 1, 0, shape, angle, 0, 0,
+                        );
+                    } else {
+                        // Loc 0 at local (1,1), then placement/loc terminators.
+                        let bytes = [1, 66, ((shape << 2) | angle) as u8, 0, 0];
+                        build.load_locations(
+                            &cache,
+                            &mut world,
+                            &mut collisions,
+                            &groundh,
+                            &mapl,
+                            &bytes,
+                            0,
+                            0,
+                            0,
+                        );
+                    }
+                    let typecode = match shape {
+                        0..=3 => world.wall_type(0, 1, 1),
+                        4..=8 => world.decor_type(0, 1, 1),
+                        22 => world.gd_type(0, 1, 1),
+                        _ => world.scene_type(0, 1, 1),
+                    };
+                    assert_eq!(
+                        typecode != 0,
+                        revision_377,
+                        "377={revision_377}, changed={changed}, shape={shape}, angle={angle}",
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn location_morph_models_are_dynamic_without_an_animation() {
+    let _models = MODEL_FIXTURE_LOCK.lock().unwrap();
+    Model::reset_for_tests();
+    Model::init(5202, Box::new(NoopModelProvider));
+    Model::unpack(5201, Some(R377_BANNER_MODEL_5201));
+    AnimFrame::init(12338);
+    AnimFrame::unpack(R377_BANNER_ANIMS_399);
+    let mut cache = morph_cache();
+    let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+    let typecode = 0x4000_0000 | 1 << 7 | 1;
+    world.add_scenery(
+        0,
+        1,
+        1,
+        0,
+        typecode,
+        LocShape::CENTREPIECE_STRAIGHT,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+    );
+    let index = world.last_sprite_index().unwrap();
+    let mut render = RenderWorld::new();
+    let Some(SceneModel::LocAnim(anim)) = render.sprite_model(&world, &cache, 0, index) else {
+        panic!("opcode 77 requires a dynamic source even when the root has no models or sequence");
+    };
+    assert!(anim.anim.is_none());
+    let (_, _, _, _, empty) = render
+        .loc_model_at_with_varps(&world, &cache, 0, &[0], 0, 1, 1, 0)
+        .unwrap();
+    let (_, _, _, _, full) = render
+        .loc_model_at_with_varps(&world, &cache, 1, &[1], 0, 1, 1, 0)
+        .unwrap();
+    let expected_full: Vec<_> = vertices(&empty)
+        .into_iter()
+        .map(|[x, y, z]| [x + 128, y, z])
+        .collect();
+    assert_eq!(
+        vertices(&full),
+        expected_full,
+        "the cached scene slot follows live selectors"
+    );
+    assert!(render
+        .loc_model_at_with_varps(&world, &cache, 2, &[2], 0, 1, 1, 0)
+        .is_none());
+
+    cache.seqs.push(SeqType {
+        num_frames: 2,
+        frames: Some(vec![12334, 12335]),
+        delay: Some(vec![1, 1]),
+        loops: 2,
+        ..SeqType::default()
+    });
+    let mut animated = ClientLocAnim::new(
+        &cache,
+        0,
+        LocShape::CENTREPIECE_STRAIGHT,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        false,
+        0,
+    );
+    assert!(animated
+        .get_temp_model_with_varps(&cache, 3, &[2])
+        .is_none());
+    assert_eq!(
+        (animated.anim_frame, animated.anim_cycle),
+        (1, 2),
+        "Java advances the root sequence before hiding an absent form"
+    );
+    assert!(animated
+        .get_temp_model_with_varps(&cache, 3, &[1])
+        .is_some());
+    assert_eq!(
+        (animated.anim_frame, animated.anim_cycle),
+        (1, 2),
+        "changing the child does not restart the root sequence"
+    );
+}
+
+#[test]
+fn received_varp_changes_location_menu_but_keeps_java_scene_identity() {
+    let mut c = client(ClientRevision::R377);
+    c.cache = Arc::new(morph_cache());
+    let typecode = 0x4000_0000 | 1 << 7 | 1;
+    c.world
+        .set_ground_decor(0, 1, 1, 0, typecode, 0, 0, 0, 0, 0);
+    c.pick_count = 1;
+    c.pick_typecodes[0] = typecode;
+    c.add_world_options();
+    assert!(!c.menu_option[..c.menu_num_entries as usize]
+        .iter()
+        .any(|op| op.starts_with("Empty")));
+
+    // Client.java:7325-7340: id g2_alt2, signed value g1b_alt3.
+    c.handle_packet(182, &mut Packet::new(vec![0, 128, 127]));
+    assert!(c.ingame);
+    assert_eq!((c.var[0], c.var_serv[0]), (1, 1));
+    c.menu_num_entries = 0;
+    c.add_world_options();
+    let empty = (0..c.menu_num_entries as usize)
+        .find(|&i| c.menu_action[i] == MiniMenuAction::OP_LOC1)
+        .unwrap();
+    assert_eq!(c.menu_option[empty], "Empty @cya@Flour bin");
+    assert_eq!(
+        c.menu_param_a[empty], typecode,
+        "Java sends the original scene id for operations"
+    );
+    let examine = (0..c.menu_num_entries as usize)
+        .find(|&i| c.menu_action[i] == MiniMenuAction::OP_LOC6)
+        .unwrap();
+    assert_eq!(
+        c.menu_param_a[examine],
+        2 << 14,
+        "Examine identifies the selected definition"
+    );
+
+    c.handle_packet(182, &mut Packet::new(vec![0, 128, 126]));
+    assert!(c.ingame);
+    c.menu_num_entries = 0;
+    c.add_world_options();
+    assert_eq!(
+        c.menu_num_entries, 1,
+        "the absent target adds no location options"
+    );
 }

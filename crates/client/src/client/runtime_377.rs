@@ -81,6 +81,7 @@ impl Client {
                 | 40
                 | 49
                 | 50
+                | 59
                 | 61
                 | 63
                 | 71
@@ -209,11 +210,12 @@ impl Client {
                                 | Z::ObjCount { .. }
                                 | Z::ObjectReveal { .. }
                                 | Z::MapProjAnim { .. }
+                                | Z::MapAnim { .. }
                         )
                     }) =>
             {
                 return Err(format!(
-                    "377 zone outside tutorial location/object/projectile cohort: {frame:?}"
+                    "377 zone outside mainland location/object/animation cohort: {frame:?}"
                 ))
             }
             O::Rebuild(Rebuild377::Instance { .. }) => {
@@ -320,7 +322,8 @@ impl Client {
                         | Z::ObjDel { tile, .. }
                         | Z::ObjCount { tile, .. }
                         | Z::ObjectReveal { tile, .. }
-                        | Z::MapProjAnim { tile, .. } => tile,
+                        | Z::MapProjAnim { tile, .. }
+                        | Z::MapAnim { tile, .. } => tile,
                         _ => unreachable!("preflight rejects other zone operations"),
                     };
                     let x = self.zone_update_x + tile.x;
@@ -433,6 +436,27 @@ impl Client {
                                 projectile.bind_seq(&self.cache);
                                 self.projectiles.push(projectile);
                             }
+                        }
+                        Z::MapAnim {
+                            spotanim,
+                            height,
+                            delay,
+                            ..
+                        } => {
+                            // Java Client.java:8795-8808: tile center, plain
+                            // byte height (not projectile height * 4), and
+                            // constructor start cycle = loop cycle + delay.
+                            let (x, z) = (x * 128 + 64, z * 128 + 64);
+                            self.spotanims.push(MapSpotAnim::new(
+                                *spotanim,
+                                self.minusedlevel,
+                                x,
+                                z,
+                                get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel)
+                                    - height,
+                                self.loop_cycle,
+                                *delay,
+                            ));
                         }
                         Z::LocAddChange {
                             shape,
@@ -1506,6 +1530,97 @@ mod tests {
     }
 
     #[test]
+    fn mainland_map_animation_matches_java_and_rejects_partial_batches() {
+        let mut cache = Cache::default();
+        cache.spots.resize_with(87, Default::default);
+        let mut client = client_with_cache(cache);
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        client.loop_cycle = 100;
+        client.minusedlevel = 2;
+        for x in 10..=11 {
+            for z in 19..=20 {
+                client.groundh[2][x][z] = 300;
+            }
+        }
+        let bytes = [0x23, 0, 86, 124, 0, 4];
+        let generation = client.gens.scene;
+        for len in 0..bytes.len() {
+            let mut packet = Packet::new(bytes[..len].to_vec());
+            assert!(client.dispatch_packet_377(59, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert!(client.spotanims.head().is_none());
+            assert_eq!(client.gens.scene, generation);
+        }
+        let mut missing = bytes;
+        missing[2] = 87;
+        let mut packet = Packet::new(missing.to_vec());
+        assert!(client.dispatch_packet_377(59, &mut packet).is_err());
+        assert_eq!(packet.pos, 0);
+        assert!(client.spotanims.head().is_none());
+        assert_eq!(client.gens.scene, generation);
+        // Literal reconstruction of the observed mainland frame, not raw
+        // capture bytes: origin (24,64), offset (4,4), spot 86, height 124.
+        let observed = [24, 192, 59, 0x44, 0, 86, 124, 0, 0];
+        let mut late_invalid = observed.to_vec();
+        late_invalid.push(59);
+        late_invalid.extend(missing);
+        for invalid in [
+            late_invalid[..late_invalid.len() - 1].to_vec(),
+            late_invalid,
+        ] {
+            let mut packet = Packet::new(invalid);
+            assert!(client.dispatch_packet_377(183, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!((client.zone_update_x, client.zone_update_z), (8, 16));
+            assert!(client.spotanims.head().is_none());
+            assert_eq!(client.gens.scene, generation);
+        }
+        let mut packet = Packet::new(bytes.to_vec());
+        client.dispatch_packet_377(59, &mut packet).unwrap();
+        assert_eq!(packet.pos, bytes.len());
+        let animation = client.spotanims.head().unwrap();
+        assert_eq!((animation.spotanim, animation.level), (86, 2));
+        assert_eq!((animation.x, animation.y, animation.z), (1344, 176, 2496));
+        assert_eq!(animation.start_cycle, 104);
+        assert!(!animation.anim_complete);
+        assert_eq!(client.gens.scene, generation + 1);
+
+        let mut packet = Packet::new(observed.to_vec());
+        client.dispatch_packet_377(183, &mut packet).unwrap();
+        assert_eq!(packet.pos, observed.len());
+        assert_eq!((client.zone_update_x, client.zone_update_z), (24, 64));
+        let mut animations = Vec::new();
+        client.spotanims.for_each(|animation| {
+            animations.push((
+                animation.spotanim,
+                animation.x,
+                animation.y,
+                animation.z,
+                animation.start_cycle,
+            ));
+        });
+        animations.sort_unstable();
+        assert_eq!(
+            animations,
+            [(86, 1344, 176, 2496, 104), (86, 3648, -124, 8768, 100)]
+        );
+        assert_eq!(client.gens.scene, generation + 2);
+
+        client.zone_update_x = -8;
+        client.zone_update_z = 103;
+        let mut packet = Packet::new(vec![0x77, 0, 86, 124, 0, 4]);
+        client.dispatch_packet_377(59, &mut packet).unwrap();
+        assert_eq!(packet.pos, 6);
+        let mut count = 0;
+        client.spotanims.for_each(|_| count += 1);
+        assert_eq!(
+            count, 2,
+            "Java consumes out-of-scene effects without adding one"
+        );
+    }
+
+    #[test]
     fn tutorial_projectile_sentinel_and_outside_endpoints_are_consumed_without_entities() {
         let mut cache = Cache::default();
         cache.spots.push(Default::default());
@@ -1832,11 +1947,10 @@ mod tests {
     fn enclosed_firemaking_batch_rejects_late_invalid_and_unsupported_children() {
         let mut cache = Cache::default();
         cache.objs.push(Default::default());
-        cache.spots.push(Default::default());
         let mut client = client_with_cache(cache);
         for suffix in [
             vec![107, 0, 1, 221, 0, 129], // invalid second object
-            vec![59, 35, 0, 0, 0, 0, 2],  // valid resources, outside accepted apply cohort
+            vec![41, 35, 0, 0, 0x11],     // valid sound resource, outside accepted apply cohort
         ] {
             let mut batch = vec![8, 144, 107, 0, 0, 221, 0, 129];
             batch.extend(suffix);

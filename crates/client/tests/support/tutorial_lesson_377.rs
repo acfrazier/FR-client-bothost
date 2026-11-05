@@ -488,6 +488,10 @@ pub(super) fn close_main(c: &mut Client, r: &mut Renderer) {
         .id;
     click_component(c, r, main, close, (4, 4));
     pump_until(c, r, 10, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
+    // CLOSE_MODAL is queued by the engine. Do not let its deferred close
+    // discard a new interface opened by the next click in the same tick.
+    let generation = c.gens.player_info;
+    pump_until(c, r, 10, |c| c.gens.player_info >= generation + 2);
 }
 
 pub(super) fn walk_to(
@@ -533,8 +537,15 @@ pub(super) fn walk_to(
     eprintln!("377 lesson walk {receipt}");
     actions.push(receipt);
     click(c, r, pixel.0, pixel.1, 1);
-    pump_until(c, r, 30, |c| {
-        tile(c) == target && c.local_player.as_ref().is_some_and(|p| (p.x, p.z) == fine)
+    pump_until(c, r, 90, |c| {
+        let current_fine = (
+            (target.0 - c.map_build_base_x) * 128 + 64,
+            (target.1 - c.map_build_base_z) * 128 + 64,
+        );
+        tile(c) == target
+            && c.local_player
+                .as_ref()
+                .is_some_and(|p| (p.x, p.z) == current_fine)
     });
 }
 
