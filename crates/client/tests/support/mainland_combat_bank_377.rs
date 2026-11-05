@@ -4,6 +4,90 @@ use client::dash3d::client_entity::ClientEntity;
 
 const BONES: i32 = 526;
 
+// Same lossless PNG chunk/zlib pattern as revision_377_render. The image
+// dependency deliberately enables JPEG only; do not change production codecs.
+fn png_crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 0 {
+                crc >> 1
+            } else {
+                (crc >> 1) ^ 0xedb8_8320
+            };
+        }
+    }
+    !crc
+}
+
+fn png_chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    png.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    let start = png.len();
+    png.extend_from_slice(kind);
+    png.extend_from_slice(data);
+    png.extend_from_slice(&png_crc32(&png[start..]).to_be_bytes());
+}
+
+fn lossless_png(pixels: &[i32], width: usize, height: usize) -> Vec<u8> {
+    use std::io::Write;
+    assert_eq!(pixels.len(), width * height);
+    let mut scanlines = Vec::with_capacity(height * (width * 3 + 1));
+    for row in pixels.chunks_exact(width) {
+        scanlines.push(0);
+        for &pixel in row {
+            scanlines.extend_from_slice(&[(pixel >> 16) as u8, (pixel >> 8) as u8, pixel as u8]);
+        }
+    }
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(&scanlines).unwrap();
+    let compressed = encoder.finish().unwrap();
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut header = Vec::with_capacity(13);
+    header.extend_from_slice(&(width as u32).to_be_bytes());
+    header.extend_from_slice(&(height as u32).to_be_bytes());
+    header.extend_from_slice(&[8, 2, 0, 0, 0]);
+    png_chunk(&mut png, b"IHDR", &header);
+    png_chunk(&mut png, b"IDAT", &compressed);
+    png_chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+#[test]
+fn lossless_capture_keeps_rgb_scanlines_and_chunk_checksums() {
+    use std::io::Read;
+    let png = lossless_png(&[0x123456, 0, 0xffffff, 0xabcdef], 2, 2);
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    let mut offset = 8;
+    let mut kinds = Vec::new();
+    while offset < png.len() {
+        let length = u32::from_be_bytes(png[offset..offset + 4].try_into().unwrap()) as usize;
+        let body = &png[offset + 8..offset + 8 + length];
+        let kind = &png[offset + 4..offset + 8];
+        kinds.push(kind);
+        assert_eq!(
+            png_crc32(&png[offset + 4..offset + 8 + length]),
+            u32::from_be_bytes(
+                png[offset + 8 + length..offset + 12 + length]
+                    .try_into()
+                    .unwrap()
+            )
+        );
+        if kind == b"IDAT" {
+            let mut scanlines = Vec::new();
+            flate2::read::ZlibDecoder::new(body)
+                .read_to_end(&mut scanlines)
+                .unwrap();
+            assert_eq!(
+                scanlines,
+                [0, 0x12, 0x34, 0x56, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xab, 0xcd, 0xef]
+            );
+        }
+        offset += 12 + length;
+    }
+    assert_eq!(kinds, [b"IHDR", b"IDAT", b"IEND"]);
+}
+
 fn actor_state(e: &ClientEntity) -> Value {
     json!({"x":e.x,"z":e.z,"yaw":e.yaw,"size":e.size,"height":e.height,
         "readyanim":e.readyanim,"secondary_anim":e.secondary_anim,
@@ -63,32 +147,16 @@ fn stage(c: &mut Client, r: &mut Renderer, root: &Path, name: &str, stages: &mut
     let FrameOutput::PixMap(map) = r.mainredraw(c) else {
         panic!("CPU proof required")
     };
-    let rgb: Vec<u8> = map
-        .pixels
-        .iter()
-        .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8])
-        .collect();
     let path = root.join(format!("rust-{name}.png"));
-    image::save_buffer(
+    std::fs::write(
         &path,
-        &rgb,
-        map.width as u32,
-        map.height as u32,
-        image::ColorType::Rgb8,
+        lossless_png(&map.pixels, map.width as usize, map.height as usize),
     )
     .unwrap();
     if let Some(minimap) = &r.minimap {
-        let rgb: Vec<u8> = minimap
-            .data
-            .iter()
-            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8])
-            .collect();
-        image::save_buffer(
+        std::fs::write(
             root.join(format!("rust-{name}-minimap-raw.png")),
-            &rgb,
-            minimap.wi as u32,
-            minimap.hi as u32,
-            image::ColorType::Rgb8,
+            lossless_png(&minimap.data, minimap.wi as usize, minimap.hi as usize),
         )
         .unwrap();
     }
