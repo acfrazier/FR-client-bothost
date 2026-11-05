@@ -4087,7 +4087,15 @@ impl Client {
                     self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ1));
                 }
                 if action == MiniMenuAction::OP_OBJ2 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ2));
+                    if self.revision.is_377() {
+                        self.opobj2_packet_377(
+                            a,
+                            b + self.map_build_base_x,
+                            c + self.map_build_base_z,
+                        );
+                    } else {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ2));
+                    }
                 }
                 if action == MiniMenuAction::OP_OBJ3 {
                     if self.revision.is_377() {
@@ -4128,7 +4136,9 @@ impl Client {
                     self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
                 }
 
-                if action != MiniMenuAction::OP_OBJ3 || !self.revision.is_377() {
+                if !self.revision.is_377()
+                    || !matches!(action, MiniMenuAction::OP_OBJ2 | MiniMenuAction::OP_OBJ3)
+                {
                     self.out.p2(b + self.map_build_base_x);
                     self.out.p2(c + self.map_build_base_z);
                     self.out.p2(a);
@@ -4225,7 +4235,7 @@ impl Client {
                 } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC2 {
                     super::outbound_377::opnpc2_377(&mut self.out, a);
                 } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC3 {
-                    super::outbound_377::opnpc3_377(&mut self.out, a);
+                    self.opnpc3_packet_377(a);
                 } else {
                     let opcode = match action {
                         MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
@@ -4571,9 +4581,13 @@ impl Client {
             || action == MiniMenuAction::OP_HELD4
             || action == MiniMenuAction::OP_HELD5
         {
-            // The legacy path writes p2(obj), p2(slot), p2(com); Java 377's
-            // OPHELD2 and OPHELD5 writers use their transformed layouts.
-            if self.revision.is_377() && action == MiniMenuAction::OP_HELD2 {
+            // Revision-specific writers retain Java's transformed layouts and
+            // menu-anticheat trigger points, without entering the legacy path.
+            if self.revision.is_377() && action == MiniMenuAction::OP_HELD1 {
+                self.opheld1_packet_377(a, b, c);
+            } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD4 {
+                self.opheld4_packet_377(a, b, c);
+            } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD2 {
                 super::outbound_377::opheld2_377(&mut self.out, a, b, c);
             } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD5 {
                 super::outbound_377::opheld5_377(&mut self.out, a, b, c);
