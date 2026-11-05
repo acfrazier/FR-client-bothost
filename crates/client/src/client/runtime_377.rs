@@ -100,6 +100,7 @@ impl Client {
                 | 126
                 | 128
                 | 134
+                | 142
                 | 148
                 | 152
                 | 156
@@ -213,6 +214,7 @@ impl Client {
                                 | Z::ObjectReveal { .. }
                                 | Z::MapProjAnim { .. }
                                 | Z::MapAnim { .. }
+                                | Z::LocAnim { .. }
                         )
                     }) =>
             {
@@ -324,6 +326,7 @@ impl Client {
                         | Z::ObjDel { tile, .. }
                         | Z::ObjCount { tile, .. }
                         | Z::ObjectReveal { tile, .. }
+                        | Z::LocAnim { tile, .. }
                         | Z::MapProjAnim { tile, .. }
                         | Z::MapAnim { tile, .. } => tile,
                         _ => unreachable!("preflight rejects other zone operations"),
@@ -384,6 +387,14 @@ impl Client {
                                 }
                                 self.show_object(x, z);
                             }
+                        }
+                        Z::LocAnim {
+                            shape,
+                            angle,
+                            sequence,
+                            ..
+                        } => {
+                            self.animate_location_377(x, z, *shape, *angle, *sequence);
                         }
                         Z::MapProjAnim {
                             destination_x_offset,
@@ -918,6 +929,75 @@ impl Client {
             _ => unreachable!("operation outside captured 377 cohort"),
         }
         Some(p)
+    }
+
+    fn animate_location_377(&mut self, x: i32, z: i32, shape: i32, angle: i32, sequence: i32) {
+        // Java Client.java:8668-8716 needs all four corners strictly inside 104.
+        if !(0..103).contains(&x) || !(0..103).contains(&z) {
+            return;
+        }
+        let heights = &self.groundh[self.minusedlevel as usize];
+        let (x_index, z_index) = (x as usize, z as usize);
+        let (sw, se, ne, nw) = (
+            heights[x_index][z_index],
+            heights[x_index + 1][z_index],
+            heights[x_index + 1][z_index + 1],
+            heights[x_index][z_index + 1],
+        );
+        let layer = LOC_SHAPE_TO_LAYER[shape as usize];
+        // The shared renderer materialises each existing scene slot after its
+        // stamp changes. Record only decoded animation state, never legacy bytes.
+        match layer {
+            LocLayer::WALL => {
+                if let Some(wall) = self.world.get_wall_mut(self.minusedlevel, x, z) {
+                    wall.anim_seq = sequence;
+                    wall.anim_shape = shape;
+                    wall.anim_angle = angle;
+                    wall.h_sw = sw;
+                    wall.h_se = se;
+                    wall.h_ne = ne;
+                    wall.h_nw = nw;
+                    self.world.bump_loc_stamp(self.minusedlevel, x, z, layer);
+                }
+            }
+            LocLayer::WALL_DECOR => {
+                if let Some(decor) = self.world.get_decor_mut(self.minusedlevel, x, z) {
+                    decor.anim_seq = sequence;
+                    decor.anim_shape = 4;
+                    decor.anim_angle = 0;
+                    decor.h_sw = sw;
+                    decor.h_se = se;
+                    decor.h_ne = ne;
+                    decor.h_nw = nw;
+                    self.world.bump_loc_stamp(self.minusedlevel, x, z, layer);
+                }
+            }
+            LocLayer::GROUND => {
+                if let Some(scene) = self.world.get_scene_mut(self.minusedlevel, x, z) {
+                    scene.anim_seq = sequence;
+                    scene.anim_shape = shape;
+                    scene.anim_angle = angle;
+                    scene.h_sw = sw;
+                    scene.h_se = se;
+                    scene.h_ne = ne;
+                    scene.h_nw = nw;
+                    scene.model_stamp = scene.model_stamp.wrapping_add(1);
+                }
+            }
+            LocLayer::GROUND_DECOR => {
+                if let Some(decor) = self.world.get_gd_mut(self.minusedlevel, x, z) {
+                    decor.anim_seq = sequence;
+                    decor.anim_shape = 22;
+                    decor.anim_angle = angle;
+                    decor.h_sw = sw;
+                    decor.h_se = se;
+                    decor.h_ne = ne;
+                    decor.h_nw = nw;
+                    self.world.bump_loc_stamp(self.minusedlevel, x, z, layer);
+                }
+            }
+            _ => unreachable!("validated location shape"),
+        }
     }
 
     fn apply_players_377(&mut self, mut info: PlayerInfo377<'_>) -> R289Publication {
@@ -2747,6 +2827,172 @@ mod tests {
             Some(&[7, 8][..])
         );
         assert_eq!(client.gens.inv, generation + 1);
+    }
+
+    fn spinning_scene() -> Client {
+        let mut cache = Cache::default();
+        cache.seqs.resize_with(2, Default::default);
+        let mut client = client_with_cache(cache);
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        client.groundh[0][12][19] = 100;
+        client.groundh[0][13][19] = 200;
+        client.groundh[0][13][20] = 300;
+        client.groundh[0][12][20] = 400;
+        client
+            .world
+            .set_wall(0, 12, 19, 0, 1, 2, 0x40000000, 0, 0, 0, 0, 0);
+        client
+            .world
+            .set_decor(0, 12, 19, 0, 0, 0, 0x40000000, 0, 0, 0, 0, 0, 0, 0);
+        assert!(client
+            .world
+            .add_scenery(0, 12, 19, 0, 0x40000000, 0, 1, 1, 0, 0, 0, 0, 0));
+        client
+            .world
+            .set_ground_decor(0, 12, 19, 0, 0x40000000, 0, 0, 0, 0, 0);
+        client
+    }
+
+    #[test]
+    fn spinning_loc_animation_applies_java_shapes_angles_heights_and_stamps() {
+        let mut client = spinning_scene();
+        for (shape, angle) in [(2, 3), (7, 2), (11, 1), (22, 2)] {
+            let generation = client.gens.scene;
+            let layer = LOC_SHAPE_TO_LAYER[shape as usize];
+            let stamp = if layer == LocLayer::GROUND {
+                client.world.get_scene(0, 12, 19).unwrap().model_stamp
+            } else {
+                client.world.loc_model_stamp(0, 12, 19, layer)
+            };
+            // Java 8668-8716: BE sequence, +128 shape/angle byte, raw tile.
+            let info = ((shape << 2) | angle) as u8;
+            let mut packet = Packet::new(vec![0, 1, info.wrapping_add(128), 0x43]);
+            client.dispatch_packet_377(142, &mut packet).unwrap();
+            let actual = match layer {
+                LocLayer::WALL => {
+                    let wall = client.world.get_wall(0, 12, 19).unwrap();
+                    (
+                        wall.anim_seq,
+                        wall.anim_shape,
+                        wall.anim_angle,
+                        wall.h_sw,
+                        wall.h_se,
+                        wall.h_ne,
+                        wall.h_nw,
+                    )
+                }
+                LocLayer::WALL_DECOR => {
+                    let decor = client.world.get_decor(0, 12, 19).unwrap();
+                    (
+                        decor.anim_seq,
+                        decor.anim_shape,
+                        decor.anim_angle,
+                        decor.h_sw,
+                        decor.h_se,
+                        decor.h_ne,
+                        decor.h_nw,
+                    )
+                }
+                LocLayer::GROUND => {
+                    let scene = client.world.get_scene(0, 12, 19).unwrap();
+                    (
+                        scene.anim_seq,
+                        scene.anim_shape,
+                        scene.anim_angle,
+                        scene.h_sw,
+                        scene.h_se,
+                        scene.h_ne,
+                        scene.h_nw,
+                    )
+                }
+                LocLayer::GROUND_DECOR => {
+                    let decor = client.world.get_gd(0, 12, 19).unwrap();
+                    (
+                        decor.anim_seq,
+                        decor.anim_shape,
+                        decor.anim_angle,
+                        decor.h_sw,
+                        decor.h_se,
+                        decor.h_ne,
+                        decor.h_nw,
+                    )
+                }
+                _ => unreachable!(),
+            };
+            let expected_shape = match layer {
+                LocLayer::WALL_DECOR => 4,
+                LocLayer::GROUND => 10,
+                _ => shape,
+            };
+            let expected_angle = if layer == LocLayer::WALL_DECOR {
+                0
+            } else {
+                angle
+            };
+            assert_eq!(
+                actual,
+                (1, expected_shape, expected_angle, 100, 200, 300, 400)
+            );
+            let next_stamp = if layer == LocLayer::GROUND {
+                client.world.get_scene(0, 12, 19).unwrap().model_stamp
+            } else {
+                client.world.loc_model_stamp(0, 12, 19, layer)
+            };
+            assert_eq!(next_stamp, stamp.wrapping_add(1));
+            assert_eq!(client.gens.scene, generation + 1);
+            assert_eq!(packet.pos, 4);
+        }
+    }
+
+    #[test]
+    fn spinning_loc_animation_rejects_invalid_frames_and_late_enclosed_references() {
+        let mut client = spinning_scene();
+        client.ptype = 73;
+        let generation = client.gens.scene;
+        let stamp = client.world.get_scene(0, 12, 19).unwrap().model_stamp;
+        for bytes in [
+            vec![0, 1, 168],
+            vec![0, 1, 168, 0x43, 0],
+            vec![0, 2, 168, 0x43],
+            vec![0, 1, 220, 0x43],
+        ] {
+            let mut packet = Packet::new(bytes);
+            assert!(client.dispatch_packet_377(142, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.ptype, 73);
+            assert_eq!(client.gens.scene, generation);
+            let scene = client.world.get_scene(0, 12, 19).unwrap();
+            assert_eq!((scene.anim_seq, scene.model_stamp), (-1, stamp));
+        }
+        // A valid first child must not apply before an invalid second sequence.
+        let mut enclosed = Packet::new(vec![40, 176, 142, 0, 1, 168, 0x43, 142, 0, 2, 168, 0x43]);
+        assert!(client.dispatch_packet_377(183, &mut enclosed).is_err());
+        assert_eq!(enclosed.pos, 0);
+        assert_eq!(client.ptype, 73);
+        assert_eq!(client.gens.scene, generation);
+        assert_eq!(client.world.get_scene(0, 12, 19).unwrap().anim_seq, -1);
+        assert_eq!((client.zone_update_x, client.zone_update_z), (8, 16));
+    }
+
+    #[test]
+    fn spinning_loc_animation_consumes_missing_locations_and_java_edge_tiles() {
+        let mut client = spinning_scene();
+        client.zone_update_x = 96;
+        assert!(client
+            .world
+            .add_scenery(0, 102, 19, 0, 0x40000000, 0, 1, 1, 0, 0, 0, 0, 0));
+        assert!(client
+            .world
+            .add_scenery(0, 103, 19, 0, 0x40000000, 0, 1, 1, 0, 0, 0, 0, 0));
+        for tile in [0x03, 0x63, 0x73] {
+            let mut packet = Packet::new(vec![0, 1, 168, tile]);
+            client.dispatch_packet_377(142, &mut packet).unwrap();
+            assert_eq!(packet.pos, 4);
+        }
+        assert_eq!(client.world.get_scene(0, 102, 19).unwrap().anim_seq, 1);
+        assert_eq!(client.world.get_scene(0, 103, 19).unwrap().anim_seq, -1);
+        assert!(client.ingame);
     }
 
     #[test]
