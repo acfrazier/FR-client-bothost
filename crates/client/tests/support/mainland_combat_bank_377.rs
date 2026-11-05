@@ -425,7 +425,15 @@ fn combat(
     }
     choose_attack_style(c, r, actions);
     stage(c, r, root, "mainland-attack-styles", stages);
-    for point in [(3222, 3226), (3235, 3226), (3244, 3240), (3248, 3245)] {
+    // The fountain occupies (3222,3226); walk around its south side.
+    for point in [
+        (3220, 3222),
+        (3226, 3222),
+        (3230, 3226),
+        (3235, 3226),
+        (3244, 3240),
+        (3248, 3245),
+    ] {
         walk_route(c, r, point, actions);
     }
     stage(c, r, root, "goblins-approach", stages);
@@ -469,7 +477,9 @@ fn bank(
     for point in [
         (3244, 3240),
         (3235, 3226),
-        (3222, 3226),
+        (3230, 3226),
+        (3226, 3222),
+        (3220, 3222),
         (3220, 3244),
         (3203, 3244),
         (3183, 3244),
@@ -480,7 +490,7 @@ fn bank(
         (3097, 3244),
     ] {
         walk_route(c, r, point, actions);
-        if point == (3222, 3226) {
+        if point == (3220, 3222) {
             stage(c, r, root, "lumbridge-minimap", stages);
         }
     }
