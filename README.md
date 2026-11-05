@@ -155,6 +155,9 @@ including bank 10/X amounts, shop quantities, smithing and trade. Every
 Java 377 `OP*` menu packet has a revision-specific writer and dispatch;
 the 274/289 layouts and default revision stay unchanged. A cold 377 login
 clears the multiway overlay, while a reconnect preserves it as Java does.
+The bank X actions accept Java's bodyless `P_COUNTDIALOG` (58), close any
+social input, clear and open the amount prompt, and redraw chat only after
+the complete frame has been validated.
 
 `live_bank_shop_377` is an ignored proof for the coordinated `t2as11rv1`
 account near Draynor bank. It checks Withdraw/Deposit-10 and X, amount
