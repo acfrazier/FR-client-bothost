@@ -1,7 +1,5 @@
 //! Integration gates for 377-only shared-writer routing and batch rejection.
-use client::client::{
-    Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision, MiniMenuAction,
-};
+use client::client::{Client, ClientConfig, ClientRevision};
 use client::io::{
     map_client_prot, ClientProt, ClientProt377, ClientStream, Packet, PacketObserver,
 };
@@ -93,12 +91,14 @@ fn unsupported_action_discards_whole_batch_and_closes_without_wire_bytes() {
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     c.out.set_observer(Some(Arc::new(StrictObserver)));
-    c.local_player = Some(ClientPlayer::at(5, 5));
-    c.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
-    // OP_NPC2 and OP_NPC3 have dedicated 377 writers; OP_NPC4 remains rejected.
-    c.menu_action[0] = MiniMenuAction::OP_NPC4;
-    c.menu_param_a[0] = 7;
-    c.doAction(0);
+    // All OP_NPC actions now have dedicated 377 writers. Private messaging
+    // still uses an unported legacy body and must reject the whole batch.
+    c.out.p1_enc(ClientProt377::NO_TIMEOUT.id);
+    c.social_input_open = true;
+    c.social_input_type = 3;
+    c.social_input = "hello".into();
+    c.social_userhash = 1;
+    c.consume_chat_key(13);
     c.game_loop();
     assert!(!c.ingame);
     assert_eq!(c.out.pos, 0);
