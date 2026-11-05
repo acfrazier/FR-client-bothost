@@ -156,6 +156,15 @@ Java 377 `OP*` menu packet has a revision-specific writer and dispatch;
 the 274/289 layouts and default revision stay unchanged. A cold 377 login
 clears the multiway overlay, while a reconnect preserves it as Java does.
 
+`live_bank_shop_377` is an ignored proof for the coordinated `t2as11rv1`
+account near Draynor bank. It checks Withdraw/Deposit-10 and X, amount
+prompts, an inventory drag, and Buy/Sell-5 against received server state.
+It requires the same live engine/cache variables and explicit JSON labels
+in `CLIENT_377_BANK_SHOP_INTERVENTIONS` (`[]` when none).
+`CLIENT_377_BANK_SHOP_PREPARE=1` optionally gives only that account enough
+coins and buckets before the tested actions. The proof records each
+intervention. The account must already hold at least 10 banked coins.
+
 `gpu_fountain` includes self-contained Metal/wgpu readback regressions for
 textured scanline lighting, subpixel edges, and near-clipped polygons.
 Its additional actual-model differential is opt-in and needs a versioned
