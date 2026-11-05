@@ -235,6 +235,20 @@ fn inventory_option(
     receipt
 }
 
+fn operate_banker(c: &mut Client, slot: i32, action: i32, option: &str) -> Value {
+    let npc = c.npc[slot as usize].as_ref().unwrap();
+    let receipt = json!({"slot":slot,"type":npc.r#type,"option":option,"player":tile(c),
+        "npc_tile":[npc.route_x[0]+c.map_build_base_x,npc.route_z[0]+c.map_build_base_z],
+        "input":"production doAction on the exact nearest received bank teller"});
+    c.menu_action[0] = action;
+    c.menu_param_a[0] = slot;
+    c.menu_param_b[0] = 0;
+    c.menu_param_c[0] = 0;
+    c.doAction(0);
+    eprintln!("377 stage11 banker {receipt}");
+    receipt
+}
+
 fn choose_attack_style(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) {
     tutorial_lesson_377::tab(c, r, 0);
     let root = c.side_icon[0];
@@ -553,18 +567,30 @@ fn bank(
         }
     }
     stage(c, r, root, "draynor-minimap", stages);
+    let player = tile(c);
     let banker = c
         .npc_ids
         .iter()
         .take(c.npc_count as usize)
-        .filter_map(|&slot| c.npc[slot as usize].as_ref().and_then(|npc| npc.r#type))
-        .find(|&id| {
-            let npc = &c.cache.npcs[id];
-            npc.name.eq_ignore_ascii_case("Banker")
-                && npc.op[2].as_ref().is_some_and(|option| option.as_str() == "Bank")
+        .copied()
+        .filter(|&slot| {
+            c.npc[slot as usize]
+                .as_ref()
+                .and_then(|npc| npc.r#type)
+                .is_some_and(|id| {
+                    let npc = &c.cache.npcs[id];
+                    npc.name.eq_ignore_ascii_case("Banker")
+                        && npc.op[2].as_ref().is_some_and(|option| option.as_str() == "Bank")
+                })
+        })
+        .min_by_key(|&slot| {
+            let npc = c.npc[slot as usize].as_ref().unwrap();
+            let dx = (npc.route_x[0] + c.map_build_base_x - player.0).abs();
+            let dz = (npc.route_z[0] + c.map_build_base_z - player.1).abs();
+            (dx.max(dz), dx + dz)
         })
         .expect("server-populated Draynor banker has the real Bank option");
-    actions.push(operate_npc(c, banker, MiniMenuAction::OP_NPC3, "Bank"));
+    actions.push(operate_banker(c, banker, MiniMenuAction::OP_NPC3, "Bank"));
     pump_until(c, r, 30, |c| {
         c.main_modal_id >= 0
             && c.side_modal_id >= 0
@@ -617,7 +643,7 @@ fn bank(
     });
     stage(c, r, root, "bank-deposit-one", stages);
     tutorial_lesson_377::close_main(c, r);
-    actions.push(operate_npc(c, banker, MiniMenuAction::OP_NPC1, "Talk-to"));
+    actions.push(operate_banker(c, banker, MiniMenuAction::OP_NPC1, "Talk-to"));
     pump_until(c, r, 20, |c| c.chat_modal_id >= 0 && !body(c).is_empty());
     actions.push(choose_chat_option(
         c,
