@@ -787,8 +787,11 @@ fn varrock(
         (3148, 3263),
         (3163, 3263),
         (3178, 3263),
-        // Join the established western farm road, not the enclosed farm.
-        (3192, 3275),
+        // Pass west of the observed sheep fence and Fred's house, then join
+        // the established farm road on its north side.
+        (3184, 3262),
+        (3184, 3274),
+        WEST_FARM_ROAD[4],
         WEST_FARM_ROAD[3],
         WEST_FARM_ROAD[2],
         WEST_FARM_ROAD[1],
