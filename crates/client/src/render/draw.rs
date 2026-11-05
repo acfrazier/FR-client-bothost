@@ -1616,11 +1616,8 @@ impl Renderer {
                             if self.project_x > -1 {
                                 if player_pk_icon_377 != -1 {
                                     if player_pk_icon_377 >= 0 {
-                                        if let Some(sprite) = self
-                                            .media
-                                            .sprites_377
-                                            .as_ref()
-                                            .and_then(|sprites| {
+                                        if let Some(sprite) =
+                                            self.media.sprites_377.as_ref().and_then(|sprites| {
                                                 sprites
                                                     .headicons_pk
                                                     .get(player_pk_icon_377 as usize)
@@ -1634,11 +1631,8 @@ impl Renderer {
                                 }
                                 if player_prayer_icon_377 != -1 {
                                     if player_prayer_icon_377 >= 0 {
-                                        if let Some(sprite) = self
-                                            .media
-                                            .sprites_377
-                                            .as_ref()
-                                            .and_then(|sprites| {
+                                        if let Some(sprite) =
+                                            self.media.sprites_377.as_ref().and_then(|sprites| {
                                                 sprites
                                                     .headicons_prayer
                                                     .get(player_prayer_icon_377 as usize)
@@ -4278,10 +4272,13 @@ impl Renderer {
         // TS `this.minimap.setPixels()`: bind the buffer for `draw_detail`'s
         // plots. The `areaGame.setPixels()` rebinding is a no-op here — every
         // draw helper in this port takes its surface explicitly.
-        let mapscene = self.media.sprites_377.as_ref().map_or(
-            self.media.mapscene.as_slice(),
-            |sprites| sprites.mapscene.as_slice(),
-        );
+        let mapscene = self
+            .media
+            .sprites_377
+            .as_ref()
+            .map_or(self.media.mapscene.as_slice(), |sprites| {
+                sprites.mapscene.as_slice()
+            });
         {
             let mut surface = Pix2D::with_pixels(&mut mm.data, 512, 512);
             for z in 1..BuildArea::SIZE - 1 {
@@ -4325,10 +4322,13 @@ impl Renderer {
         }
 
         self.active_map_function_count = 0;
-        let mapfunction = self.media.sprites_377.as_ref().map_or(
-            self.media.mapfunction.as_slice(),
-            |sprites| sprites.mapfunction.as_slice(),
-        );
+        let mapfunction = self
+            .media
+            .sprites_377
+            .as_ref()
+            .map_or(self.media.mapfunction.as_slice(), |sprites| {
+                sprites.mapfunction.as_slice()
+            });
 
         for x in 0..BuildArea::SIZE {
             for z in 0..BuildArea::SIZE {
