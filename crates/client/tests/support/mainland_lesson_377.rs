@@ -1239,3 +1239,6 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
         "PASS: natural mainland lesson {lesson}, received-state assertions and server logout"
     );
 }
+
+#[path = "mainland_combat_bank_377.rs"]
+mod mainland_combat_bank_377;
