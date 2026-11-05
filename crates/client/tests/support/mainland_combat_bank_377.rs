@@ -631,7 +631,12 @@ fn natural_mainland_combat_and_bank_377() {
     c.set_login_deadline(Instant::now() + Duration::from_secs(10));
     c.login(&user, "t2apass", false).unwrap();
     pump_until(&mut c, &mut r, 90, |c| {
-        c.scene_state == 2 && c.npc_count > 0 && c.side_icon[0] >= 0
+        c.scene_state == 2
+            && c.npc_count > 0
+            && c.side_icon[0] >= 0
+            && inventory_count(c, 1351) == 1
+            && c.stat_base_level[0] > 0
+            && c.stat_base_level[3] > 0
     });
     assert_eq!(c.minusedlevel, 0);
     let mut stages = Vec::new();
