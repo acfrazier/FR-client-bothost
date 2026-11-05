@@ -120,6 +120,8 @@ fifth (team) dot and multiway overlay. The default 274 profile and the
 The PK and prayer indices use signed bytes. The equipment-team value and
 legacy headicon bitmask use unsigned bytes, preserving the existing inline
 player layout and all wire values.
+The 377 runtime validates `SET_MULTIWAY` before applying its unsigned byte
+to the Java multiway overlay state.
 
 The optional mainland proof in `live_interactions_377` continues a naturally
 completed tutorial account. It selects revision 377 explicitly, walks to
