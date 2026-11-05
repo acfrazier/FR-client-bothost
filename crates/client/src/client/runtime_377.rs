@@ -1480,9 +1480,7 @@ mod tests {
 
     #[test]
     fn appearance_keeps_signed_377_icons_and_last_nonzero_team() {
-        use crate::client::packet_377::entity_377::{
-            DataTransform377, TransformedBytes377,
-        };
+        use crate::client::packet_377::entity_377::{DataTransform377, TransformedBytes377};
         use crate::config::ObjType;
 
         let cache = Cache {
@@ -1538,9 +1536,7 @@ mod tests {
 
     #[test]
     fn appearance_scalar_storage_preserves_complete_byte_domains() {
-        use crate::client::packet_377::entity_377::{
-            DataTransform377, TransformedBytes377,
-        };
+        use crate::client::packet_377::entity_377::{DataTransform377, TransformedBytes377};
         use crate::config::ObjType;
 
         let cache = Cache {
