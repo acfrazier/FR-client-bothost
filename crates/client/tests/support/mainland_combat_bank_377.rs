@@ -633,25 +633,43 @@ fn varrock(
     stages: &mut Vec<Value>,
     actions: &mut Vec<Value>,
 ) {
-    for point in [
+    let route = [
         (3103, 3244),
+        (3103, 3253),
         (3103, 3263),
-        (3123, 3263),
-        (3143, 3263),
+        (3118, 3263),
+        (3133, 3263),
+        (3148, 3263),
         (3163, 3263),
-        (3183, 3263),
-        (3203, 3263),
+        (3178, 3263),
+        (3193, 3263),
+        (3208, 3263),
         (3216, 3263),
         (3216, 3279),
+        (3225, 3287),
         (3234, 3295),
+        (3244, 3303),
         (3253, 3310),
+        (3259, 3319),
         (3264, 3328),
+        (3264, 3338),
         (3264, 3347),
+        (3258, 3355),
         (3251, 3364),
+        (3245, 3372),
         (3240, 3380),
+        (3231, 3390),
         (3222, 3400),
-    ] {
-        walk_route(c, r, point, actions);
+    ];
+    let current = tile(c);
+    let start = route
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, point)| (point.0 - current.0).abs() + (point.1 - current.1).abs())
+        .unwrap()
+        .0;
+    for &point in &route[start..] {
+        tutorial_lesson_377::walk_to(c, r, point, actions);
     }
     stage(c, r, root, "varrock-minimap", stages);
 }
