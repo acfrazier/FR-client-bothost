@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use super::Renderer;
-use crate::client::client::{Client, ClientConfig};
+use crate::client::client::Client;
+use crate::client::config::ClientConfig;
 use crate::config::{Cache, LocType, NpcType};
 use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::graphics::{Pix32, Pix8, PixMap};
