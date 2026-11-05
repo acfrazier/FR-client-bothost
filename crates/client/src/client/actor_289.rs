@@ -165,7 +165,7 @@ impl Appearance {
 
     fn apply(self, player: &mut ClientPlayer, cache: &Cache) -> Packet {
         player.gender = self.gender;
-        player.headicons = self.icons;
+        player.headicons = self.icons as u8;
         player.appearance[..self.parts.len()].copy_from_slice(&self.parts);
         player.transmog = self.transmog.filter(|&id| id < cache.npcs.len());
         player.colour = self.colours;
