@@ -4733,12 +4733,13 @@ impl Client {
             || action == MiniMenuAction::INV_BUTTON4
             || action == MiniMenuAction::INV_BUTTON5
         {
-            // The legacy path writes p2(obj), p2(slot), p2(com); Java 377's
-            // INV_BUTTON1 and INV_BUTTON2 writers use their transformed layouts.
+            // Java 377's inventory buttons use their own transformed layouts.
             if action == MiniMenuAction::INV_BUTTON1 && self.revision.is_377() {
                 super::outbound_377::inv_button1_377(&mut self.out, a, b, c);
             } else if action == MiniMenuAction::INV_BUTTON2 && self.revision.is_377() {
                 super::outbound_377::inv_button2_377(&mut self.out, a, b, c);
+            } else if action == MiniMenuAction::INV_BUTTON4 && self.revision.is_377() {
+                super::outbound_377::inv_button4_377(&mut self.out, a, b, c);
             } else {
                 if action == MiniMenuAction::INV_BUTTON1 {
                     if (a & 0x3) == 0 {
