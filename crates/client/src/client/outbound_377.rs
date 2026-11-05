@@ -467,6 +467,16 @@ pub(crate) fn inv_button2_377(packet: &mut Packet, object_id: i32, slot: i32, co
     p2_alt1(packet, component_id);
 }
 
+/// Emit Java `INV_BUTTON4` for the bank's Deposit-All / Withdraw-All option.
+///
+/// Java: `Client.java:10394-10410`.
+pub(crate) fn inv_button4_377(packet: &mut Packet, object_id: i32, slot: i32, component_id: i32) {
+    packet.p1_enc(ClientProt377::INV_BUTTON4.id);
+    p2_alt3(packet, component_id);
+    p2_alt1(packet, slot);
+    packet.p2(object_id);
+}
+
 /// Emit Java `RESUME_PAUSEBUTTON`: plain component id.
 ///
 /// Java: `Client.java:10252-10256`.
@@ -1666,6 +1676,44 @@ mod tests {
             &[177, 0x23, 0xc5, 0x34, 0x12, 0x56, 0x34]
         );
         assert_eq!(ClientProt377::INV_BUTTON2.length, 6);
+    }
+
+    #[test]
+    fn bank_all_writer_matches_java_literal_bytes() {
+        let mut packet = Packet::alloc_outbound(1);
+        inv_button4_377(&mut packet, 0x1234, 0x2345, 0x3456);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[231, 0xd6, 0x34, 0x45, 0x23, 0x12, 0x34]
+        );
+        assert_eq!(ClientProt377::INV_BUTTON4.length, 6);
+    }
+
+    #[test]
+    fn bank_all_action_routes_377_and_preserves_legacy_layouts() {
+        for (revision, expected) in [
+            (ClientRevision::R377, [231, 0xd6, 0x34, 0x45, 0x23, 0x12, 0x34]),
+            (
+                ClientRevision::R274,
+                [ClientProt::INV_BUTTON4.id as u8, 0x12, 0x34, 0x23, 0x45, 0x34, 0x56],
+            ),
+            (ClientRevision::R289, [248, 0x12, 0x34, 0x23, 0x45, 0x34, 0x56]),
+        ] {
+            let mut client = client_with_revision(revision);
+            set_menu_action(
+                &mut client,
+                MiniMenuAction::INV_BUTTON4,
+                0x1234,
+                0x2345,
+                0x3456,
+            );
+            client.doAction(0);
+            assert_eq!(&client.out.data()[..client.out.pos], &expected);
+            assert_eq!(
+                (client.selected_item, client.selected_com_id, client.selected_area),
+                (0x2345, 0x3456, 2)
+            );
+        }
     }
 
     #[test]
