@@ -56,7 +56,7 @@ fn pixel(pixels: &[i32], width: usize, x: i32, y: i32) -> i32 {
     pixels[y as usize * width + x as usize]
 }
 
-fn player(name: &str, x: i32, z: i32, team: i32) -> ClientPlayer {
+fn player(name: &str, x: i32, z: i32, team: u8) -> ClientPlayer {
     ClientPlayer {
         entity: crate::dash3d::client_entity::ClientEntity {
             x,
@@ -111,6 +111,8 @@ fn minimap_377_uses_friend_then_team_then_ordinary_dots() {
     let mut renderer_377 = renderer();
     renderer_377.media = media.clone();
     let mut client_377 = player_dot_client(ClientRevision::R377);
+    // Production `prepare_game` sizes the scanline masks before this draw.
+    renderer_377.build_minimap_masks(&mut client_377);
     renderer_377.minimap_draw(&mut client_377);
     let pixels_377 = &renderer_377.area_map.as_ref().unwrap().pixels;
     assert_eq!(pixel(pixels_377, 172, 103, 79), 0x333333);
@@ -121,6 +123,7 @@ fn minimap_377_uses_friend_then_team_then_ordinary_dots() {
         let mut renderer_legacy = renderer();
         renderer_legacy.media = media.clone();
         let mut client_legacy = player_dot_client(revision);
+        renderer_legacy.build_minimap_masks(&mut client_legacy);
         renderer_legacy.minimap_draw(&mut client_legacy);
         let pixels_legacy = &renderer_legacy.area_map.as_ref().unwrap().pixels;
         assert_eq!(pixel(pixels_legacy, 172, 103, 79), 0x222222);
