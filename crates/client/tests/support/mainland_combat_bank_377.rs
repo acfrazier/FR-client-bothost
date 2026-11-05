@@ -433,7 +433,7 @@ fn combat(
         (3235, 3226),
         // Cross the whole bridge before turning north into the goblin field.
         (3255, 3226),
-        (3255, 3234),
+        (3255, 3231),
     ];
     // A phased retry starts at the saved, naturally reached waypoint, not back
     // across the church/fountain on a new diagonal through solid scenery.
@@ -486,18 +486,20 @@ fn bank(
     actions: &mut Vec<Value>,
 ) -> Value {
     for point in [
-        (3255, 3234),
+        (3255, 3231),
         (3255, 3226),
         (3235, 3226),
         (3230, 3226),
         (3226, 3222),
         (3220, 3222),
-        (3220, 3244),
-        (3203, 3244),
-        (3183, 3244),
-        (3163, 3244),
-        (3143, 3244),
-        (3123, 3244),
+        // Pass south of the general store, not through its closed walls.
+        (3220, 3232),
+        (3203, 3232),
+        (3183, 3232),
+        (3163, 3232),
+        (3143, 3232),
+        (3123, 3232),
+        (3103, 3232),
         (3103, 3244),
         (3097, 3244),
     ] {
