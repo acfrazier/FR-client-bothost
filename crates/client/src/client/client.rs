@@ -11867,10 +11867,15 @@ impl Client {
 
             if entity_type == 2 && self.world.type_code2(self.minusedlevel, x, z, typecode) >= 0 {
                 // loc: ops 4..0, then Examine; Use/TGT replace them
-                let loc = self.cache.locs.get(type_id as usize);
+                let loc = self.cache.resolve_loc(type_id as usize, &self.var);
                 if let Some(loc) = loc {
                     let loc_name = loc.name.clone();
                     let loc_ops = loc.op.clone();
+                    let examine_code = if self.revision().is_377() {
+                        loc.id << 14
+                    } else {
+                        typecode
+                    };
                     if self.use_mode == 1 {
                         let option =
                             format!("Use {} with @cya@{}", self.obj_selected_name, loc_name);
@@ -11888,7 +11893,7 @@ impl Client {
                             }
                         }
                         let option = format!("Examine @cya@{loc_name}");
-                        self.push_option(option, MiniMenuAction::OP_LOC6, typecode, x, z);
+                        self.push_option(option, MiniMenuAction::OP_LOC6, examine_code, x, z);
                     }
                 }
             } else if entity_type == 1 {
