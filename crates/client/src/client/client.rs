@@ -4079,70 +4079,65 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                if action == MiniMenuAction::OP_OBJ1 {
-                    if (b & 0x3) == 0 {
-                        self.oplogic7 += 1;
+                if self.revision.is_377() {
+                    let x = b + self.map_build_base_x;
+                    let z = c + self.map_build_base_z;
+                    match action {
+                        MiniMenuAction::OP_OBJ1 => {
+                            super::outbound_377::opobj1_377(&mut self.out, a, x, z);
+                        }
+                        MiniMenuAction::OP_OBJ2 => self.opobj2_packet_377(a, x, z),
+                        MiniMenuAction::OP_OBJ3 => {
+                            if (a & 0x3) == 0 {
+                                self.oplogic4 += 1;
+                            }
+                            if self.oplogic4 >= 84 {
+                                super::outbound_377::anticheat_oplogic4_377(&mut self.out);
+                                self.oplogic4 = 0;
+                            }
+                            super::outbound_377::opobj3_377(&mut self.out, a, x, z);
+                        }
+                        MiniMenuAction::OP_OBJ4 => {
+                            super::outbound_377::opobj4_377(&mut self.out, a, x, z);
+                        }
+                        _ => super::outbound_377::opobj5_377(&mut self.out, a, x, z),
                     }
-                    if self.oplogic7 >= 123 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC7));
-                        self.out.p4(0);
+                } else {
+                    if action == MiniMenuAction::OP_OBJ1 {
+                        if (b & 0x3) == 0 {
+                            self.oplogic7 += 1;
+                        }
+                        if self.oplogic7 >= 123 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC7));
+                            self.out.p4(0);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ1));
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ1));
-                }
-                if action == MiniMenuAction::OP_OBJ2 {
-                    if self.revision.is_377() {
-                        self.opobj2_packet_377(
-                            a,
-                            b + self.map_build_base_x,
-                            c + self.map_build_base_z,
-                        );
-                    } else {
+                    if action == MiniMenuAction::OP_OBJ2 {
                         self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ2));
                     }
-                }
-                if action == MiniMenuAction::OP_OBJ3 {
-                    if self.revision.is_377() {
-                        // Java 377's OPOBJ3-specific counter and optional preamble.
-                        if (a & 0x3) == 0 {
-                            self.oplogic4 += 1;
-                        }
-                        if self.oplogic4 >= 84 {
-                            super::outbound_377::anticheat_oplogic4_377(&mut self.out);
-                            self.oplogic4 = 0;
-                        }
-                        super::outbound_377::opobj3_377(
-                            &mut self.out,
-                            a,
-                            b + self.map_build_base_x,
-                            c + self.map_build_base_z,
-                        );
-                    } else {
+                    if action == MiniMenuAction::OP_OBJ3 {
                         self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ3));
                     }
-                }
-                if action == MiniMenuAction::OP_OBJ4 {
-                    self.oplogic8 += c;
-                    if self.oplogic8 >= 75 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC8));
-                        self.out.p1(19);
+                    if action == MiniMenuAction::OP_OBJ4 {
+                        self.oplogic8 += c;
+                        if self.oplogic8 >= 75 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC8));
+                            self.out.p1(19);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ4));
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ4));
-                }
-                if action == MiniMenuAction::OP_OBJ5 {
-                    self.oplogic3 += self.map_build_base_z;
-                    if self.oplogic3 >= 118 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC3));
-                        self.out.p4(0);
+                    if action == MiniMenuAction::OP_OBJ5 {
+                        self.oplogic3 += self.map_build_base_z;
+                        if self.oplogic3 >= 118 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC3));
+                            self.out.p4(0);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
-                }
-
-                if !self.revision.is_377()
-                    || !matches!(action, MiniMenuAction::OP_OBJ2 | MiniMenuAction::OP_OBJ3)
-                {
                     self.out.p2(b + self.map_build_base_x);
                     self.out.p2(c + self.map_build_base_z);
                     self.out.p2(a);
@@ -4176,11 +4171,21 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPOBJT));
-                self.out.p2(b + self.map_build_base_x);
-                self.out.p2(c + self.map_build_base_z);
-                self.out.p2(a);
-                self.out.p2(self.target_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opobjt_377(
+                        &mut self.out,
+                        a,
+                        b + self.map_build_base_x,
+                        c + self.map_build_base_z,
+                        self.target_com_id,
+                    );
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJT));
+                    self.out.p2(b + self.map_build_base_x);
+                    self.out.p2(c + self.map_build_base_z);
+                    self.out.p2(a);
+                    self.out.p2(self.target_com_id);
+                }
             }
         }
 
@@ -4199,13 +4204,25 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPOBJU));
-                self.out.p2(b + self.map_build_base_x);
-                self.out.p2(c + self.map_build_base_z);
-                self.out.p2(a);
-                self.out.p2(self.obj_com_id);
-                self.out.p2(self.obj_selected_slot);
-                self.out.p2(self.obj_selected_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opobju_377(
+                        &mut self.out,
+                        a,
+                        b + self.map_build_base_x,
+                        c + self.map_build_base_z,
+                        self.obj_com_id,
+                        self.obj_selected_slot,
+                        self.obj_selected_com_id,
+                    );
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJU));
+                    self.out.p2(b + self.map_build_base_x);
+                    self.out.p2(c + self.map_build_base_z);
+                    self.out.p2(a);
+                    self.out.p2(self.obj_com_id);
+                    self.out.p2(self.obj_selected_slot);
+                    self.out.p2(self.obj_selected_com_id);
+                }
             }
         }
 
@@ -4240,6 +4257,10 @@ impl Client {
                     super::outbound_377::opnpc2_377(&mut self.out, a);
                 } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC3 {
                     self.opnpc3_packet_377(a);
+                } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC4 {
+                    super::outbound_377::opnpc4_377(&mut self.out, a);
+                } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC5 {
+                    super::outbound_377::opnpc5_377(&mut self.out, a);
                 } else {
                     let opcode = match action {
                         MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
@@ -4319,11 +4340,21 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPNPCU));
-                self.out.p2(a);
-                self.out.p2(self.obj_com_id);
-                self.out.p2(self.obj_selected_slot);
-                self.out.p2(self.obj_selected_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opnpcu_377(
+                        &mut self.out,
+                        a,
+                        self.obj_com_id,
+                        self.obj_selected_slot,
+                        self.obj_selected_com_id,
+                    );
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPNPCU));
+                    self.out.p2(a);
+                    self.out.p2(self.obj_com_id);
+                    self.out.p2(self.obj_selected_slot);
+                    self.out.p2(self.obj_selected_com_id);
+                }
             }
         }
 
@@ -4362,21 +4393,51 @@ impl Client {
         }
 
         if action == MiniMenuAction::OP_LOC3 {
-            self.oplogic2 += 1;
-            if self.oplogic2 >= 124 {
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC2));
-                self.out.p2(37954);
+            if self.revision.is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC3.id);
+                super::outbound_377::oploc3_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.oplogic2 += 1;
+                if self.oplogic2 >= 124 {
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC2));
+                    self.out.p2(37954);
+                }
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC3));
             }
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC3));
         }
 
         if action == MiniMenuAction::OP_LOC4 {
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC4));
+            if self.revision.is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC4.id);
+                super::outbound_377::oploc4_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC4));
+            }
         }
 
         if action == MiniMenuAction::OP_LOC5 {
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC5));
+            if self.revision.is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC5.id);
+                super::outbound_377::oploc5_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC5));
+            }
         }
 
         if action == MiniMenuAction::OP_LOC6 {
@@ -4393,10 +4454,20 @@ impl Client {
             }
         }
 
-        if action == MiniMenuAction::TGT_LOC
-            && self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCT))
-        {
-            self.out.p2(self.target_com_id);
+        if action == MiniMenuAction::TGT_LOC {
+            if self.revision.is_377() {
+                if self.interact_with_loc(b, c, a, ClientProt377::OPLOCT.id) {
+                    super::outbound_377::oploct_377(
+                        &mut self.out,
+                        b + self.map_build_base_x,
+                        c + self.map_build_base_z,
+                        (a >> 14) & 0x7fff,
+                        self.target_com_id,
+                    );
+                }
+            } else if self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCT)) {
+                self.out.p2(self.target_com_id);
+            }
         }
 
         if action == MiniMenuAction::USEHELD_ONLOC {
@@ -4439,34 +4510,52 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                if action == MiniMenuAction::OP_PLAYER1 {
-                    self.oplogic4 += 1;
-                    if self.oplogic4 >= 52 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
-                        self.out.p1(131);
+                if self.revision.is_377() {
+                    match action {
+                        MiniMenuAction::OP_PLAYER1 => {
+                            super::outbound_377::opplayer1_377(&mut self.out, a);
+                        }
+                        MiniMenuAction::OP_PLAYER2 => {
+                            super::outbound_377::opplayer2_377(&mut self.out, a);
+                        }
+                        MiniMenuAction::OP_PLAYER3 => {
+                            super::outbound_377::opplayer3_377(&mut self.out, a);
+                        }
+                        MiniMenuAction::OP_PLAYER4 => {
+                            super::outbound_377::opplayer4_377(&mut self.out, a);
+                        }
+                        _ => super::outbound_377::opplayer5_377(&mut self.out, a),
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
-                }
-                if action == MiniMenuAction::OP_PLAYER2 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER2));
-                }
-                if action == MiniMenuAction::OP_PLAYER3 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER3));
-                }
-                if action == MiniMenuAction::OP_PLAYER4 {
-                    self.oplogic5 += a;
-                    if self.oplogic5 >= 66 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
-                        self.out.p1(154);
+                } else {
+                    if action == MiniMenuAction::OP_PLAYER1 {
+                        self.oplogic4 += 1;
+                        if self.oplogic4 >= 52 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
+                            self.out.p1(131);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
+                    if action == MiniMenuAction::OP_PLAYER2 {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER2));
+                    }
+                    if action == MiniMenuAction::OP_PLAYER3 {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER3));
+                    }
+                    if action == MiniMenuAction::OP_PLAYER4 {
+                        self.oplogic5 += a;
+                        if self.oplogic5 >= 66 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
+                            self.out.p1(154);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
+                    }
+                    if action == MiniMenuAction::OP_PLAYER5 {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER5));
+                    }
+                    self.out.p2(a);
                 }
-                if action == MiniMenuAction::OP_PLAYER5 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER5));
-                }
-                self.out.p2(a);
             }
         }
 
@@ -4500,25 +4589,33 @@ impl Client {
                     if let (Some((tx, tz)), Some((px, pz))) = (player_route, local_route) {
                         self.tryMove(px, pz, tx, tz, false, 1, 1, 0, 0, 0, 2);
 
-                        if action == MiniMenuAction::ACCEPT_TRADEREQ {
-                            self.oplogic5 += a;
-                            if self.oplogic5 >= 66 {
-                                self.out
-                                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
-                                self.out.p1(154);
+                        if self.revision.is_377() {
+                            if action == MiniMenuAction::ACCEPT_TRADEREQ {
+                                super::outbound_377::opplayer4_377(&mut self.out, index as i32);
+                            } else {
+                                super::outbound_377::opplayer1_377(&mut self.out, index as i32);
                             }
-                            self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
-                        }
-                        if action == MiniMenuAction::ACCEPT_DUELREQ {
-                            self.oplogic4 += 1;
-                            if self.oplogic4 >= 52 {
-                                self.out
-                                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
-                                self.out.p1(131);
+                        } else {
+                            if action == MiniMenuAction::ACCEPT_TRADEREQ {
+                                self.oplogic5 += a;
+                                if self.oplogic5 >= 66 {
+                                    self.out
+                                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
+                                    self.out.p1(154);
+                                }
+                                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
                             }
-                            self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
+                            if action == MiniMenuAction::ACCEPT_DUELREQ {
+                                self.oplogic4 += 1;
+                                if self.oplogic4 >= 52 {
+                                    self.out
+                                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
+                                    self.out.p1(131);
+                                }
+                                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
+                            }
+                            self.out.p2(index as i32);
                         }
-                        self.out.p2(index as i32);
                         found = true;
                         break;
                     }
@@ -4547,9 +4644,13 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERT));
-                self.out.p2(a);
-                self.out.p2(self.target_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opplayert_377(&mut self.out, a, self.target_com_id);
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERT));
+                    self.out.p2(a);
+                    self.out.p2(self.target_com_id);
+                }
             }
         }
 
@@ -4571,11 +4672,21 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERU));
-                self.out.p2(a);
-                self.out.p2(self.obj_com_id);
-                self.out.p2(self.obj_selected_slot);
-                self.out.p2(self.obj_selected_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opplayeru_377(
+                        &mut self.out,
+                        a,
+                        self.obj_com_id,
+                        self.obj_selected_slot,
+                        self.obj_selected_com_id,
+                    );
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERU));
+                    self.out.p2(a);
+                    self.out.p2(self.obj_com_id);
+                    self.out.p2(self.obj_selected_slot);
+                    self.out.p2(self.obj_selected_com_id);
+                }
             }
         }
 
@@ -4593,6 +4704,8 @@ impl Client {
                 self.opheld4_packet_377(a, b, c);
             } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD2 {
                 super::outbound_377::opheld2_377(&mut self.out, a, b, c);
+            } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD3 {
+                super::outbound_377::opheld3_377(&mut self.out, a, b, c);
             } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD5 {
                 super::outbound_377::opheld5_377(&mut self.out, a, b, c);
             } else {
@@ -4696,11 +4809,15 @@ impl Client {
         }
 
         if action == MiniMenuAction::TGT_HELD {
-            self.out.p1_enc(self.client_opcode(ClientProt::OPHELDT));
-            self.out.p2(a);
-            self.out.p2(b);
-            self.out.p2(c);
-            self.out.p2(self.target_com_id);
+            if self.revision.is_377() {
+                super::outbound_377::opheldt_377(&mut self.out, a, b, c, self.target_com_id);
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELDT));
+                self.out.p2(a);
+                self.out.p2(b);
+                self.out.p2(c);
+                self.out.p2(self.target_com_id);
+            }
             self.mark_selected(b, c);
         }
 
@@ -4738,8 +4855,12 @@ impl Client {
                 super::outbound_377::inv_button1_377(&mut self.out, a, b, c);
             } else if action == MiniMenuAction::INV_BUTTON2 && self.revision.is_377() {
                 super::outbound_377::inv_button2_377(&mut self.out, a, b, c);
+            } else if action == MiniMenuAction::INV_BUTTON3 && self.revision.is_377() {
+                super::outbound_377::inv_button3_377(&mut self.out, a, b, c);
             } else if action == MiniMenuAction::INV_BUTTON4 && self.revision.is_377() {
                 super::outbound_377::inv_button4_377(&mut self.out, a, b, c);
+            } else if action == MiniMenuAction::INV_BUTTON5 && self.revision.is_377() {
+                super::outbound_377::inv_button5_377(&mut self.out, a, b, c);
             } else {
                 if action == MiniMenuAction::INV_BUTTON1 {
                     if (a & 0x3) == 0 {
@@ -7213,11 +7334,21 @@ impl Client {
                             com.swap_slots(src, dst);
                         }
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTOND));
-                    self.out.p2(self.obj_drag_com_id);
-                    self.out.p2(self.obj_drag_slot);
-                    self.out.p2(self.hovered_slot);
-                    self.out.p1(mode);
+                    if self.revision.is_377() {
+                        super::outbound_377::inv_buttond_377(
+                            &mut self.out,
+                            self.obj_drag_com_id,
+                            self.obj_drag_slot,
+                            self.hovered_slot,
+                            mode,
+                        );
+                    } else {
+                        self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTOND));
+                        self.out.p2(self.obj_drag_com_id);
+                        self.out.p2(self.obj_drag_slot);
+                        self.out.p2(self.hovered_slot);
+                        self.out.p1(mode);
+                    }
                 }
             }
         } else if (self.one_mouse_button == 1
