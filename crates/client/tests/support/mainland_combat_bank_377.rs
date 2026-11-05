@@ -431,8 +431,9 @@ fn combat(
         (3226, 3222),
         (3230, 3226),
         (3235, 3226),
-        (3244, 3240),
-        (3248, 3245),
+        // Cross the whole bridge before turning north into the goblin field.
+        (3255, 3226),
+        (3255, 3234),
     ] {
         walk_route(c, r, point, actions);
     }
@@ -475,7 +476,8 @@ fn bank(
     actions: &mut Vec<Value>,
 ) -> Value {
     for point in [
-        (3244, 3240),
+        (3255, 3234),
+        (3255, 3226),
         (3235, 3226),
         (3230, 3226),
         (3226, 3222),
