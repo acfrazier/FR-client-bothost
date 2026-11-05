@@ -1519,7 +1519,7 @@ mod tests {
             skill_level: 0,
         };
         let mut player = ClientPlayer {
-            headicons: i32::MAX,
+            headicons: u8::MAX,
             team_377: 77,
             ..ClientPlayer::default()
         };
