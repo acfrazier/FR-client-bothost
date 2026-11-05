@@ -98,6 +98,7 @@ fn actor_state(e: &ClientEntity) -> Value {
         "spotanim_frame":e.spotanim_frame,"spotanim_height":e.spotanim_height,
         "combat_cycle":e.combat_cycle,"health":e.health,"total_health":e.total_health,
         "damage_values":e.damage_values,"damage_types":e.damage_types,"damage_cycles":e.damage_cycles,
+        "face_entity":e.face_entity,"face_square_x":e.face_square_x,"face_square_z":e.face_square_z,
         "chat_message":e.chat_message,"chat_timer":e.chat_timer,
         "chat_colour":e.chat_colour,"chat_effect":e.chat_effect})
 }
@@ -297,6 +298,12 @@ fn fight_goblin(
         "tile":[npc.route_x[0]+c.map_build_base_x,npc.route_z[0]+c.map_build_base_z],
         "player":tile(c),"input":"production doAction(OP_NPC2), real mainland goblin"});
     actions.push(action.clone());
+    eprintln!("377 stage11 attack {action}");
+    std::fs::write(
+        root.join(format!("combat-{kill}-target.json")),
+        serde_json::to_vec_pretty(&action).unwrap(),
+    )
+    .unwrap();
     c.menu_action[0] = MiniMenuAction::OP_NPC2;
     c.menu_param_a[0] = slot;
     c.menu_param_b[0] = 0;
@@ -320,6 +327,25 @@ fn fight_goblin(
         let actor = c.npc[slot as usize]
             .as_ref()
             .map(|npc| actor_state(&npc.entity));
+        if last["attack_xp"].as_i64() != Some(i64::from(c.stat_xp[0])) {
+            let damaged = c
+                .npc_ids
+                .iter()
+                .take(c.npc_count as usize)
+                .filter_map(|id| {
+                    let npc = c.npc[*id as usize].as_ref()?;
+                    (npc.total_health > 0 && npc.combat_cycle > c.loop_cycle)
+                        .then(|| json!({"slot":id,"type":npc.r#type,"entity":actor_state(&npc.entity)}))
+                })
+                .collect::<Vec<_>>();
+            std::fs::write(
+                root.join(format!("combat-{kill}-xp-{}.json", c.stat_xp[0])),
+                serde_json::to_vec_pretty(&json!({
+                    "selected_target":slot,"player":actor_state(&c.local_player.as_ref().unwrap().entity),
+                    "map_base":[c.map_build_base_x,c.map_build_base_z],"damaged_npcs":damaged
+                })).unwrap(),
+            ).unwrap();
+        }
         let event = json!({"player_info":c.gens.player_info,"cycle":c.loop_cycle,
             "npc":actor,"attack_xp":c.stat_xp[0],"levels":c.stat_base_level,
             "player_health":c.stat_effective_level[3]});
@@ -372,6 +398,9 @@ fn fight_goblin(
         serde_json::to_vec_pretty(&events).unwrap(),
     )
     .unwrap();
+    if !hits_frame || !saw_zero_health || c.npc[slot as usize].is_some() {
+        stage(c, r, root, &format!("combat-{kill}-deadline"), stages);
+    }
     assert!(hits_frame, "received hitsplat and healthbar frame");
     assert!(
         saw_zero_health,
