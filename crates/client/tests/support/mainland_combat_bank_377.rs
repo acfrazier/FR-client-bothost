@@ -252,7 +252,7 @@ fn operate_banker(c: &mut Client, slot: i32, action: i32, option: &str) -> Value
 fn choose_attack_style(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) {
     tutorial_lesson_377::tab(c, r, 0);
     let root = c.side_icon[0];
-    let button = c
+    let accurate = c
         .ifaces_merged()
         .find(|i| {
             i.layer_id == root
@@ -261,16 +261,37 @@ fn choose_attack_style(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value
         })
         .expect("actual weapon Accurate attack style")
         .id;
-    let varp = c.if_(button as usize).unwrap().scripts.as_ref().unwrap()[0][1] as usize;
-    let generation = c.gens.player_info;
-    click_component(c, r, root, button, (553, 205));
-    pump_until(c, r, 10, |c| {
-        c.var.get(varp) == Some(&0) && c.gens.player_info >= generation + 2
-    });
-    actions.push(
-        json!({"component":button,"interface":root,"style":"Accurate",
-        "varp":varp,"value":0,"input":"rendered attack-style component click"}),
-    );
+    let varp = c.if_(accurate as usize).unwrap().scripts.as_ref().unwrap()[0][1] as usize;
+    for value in [1, 2, 3, 0] {
+        let button = c
+            .ifaces_merged()
+            .find(|i| {
+                i.layer_id == root
+                    && i.button_type == 5
+                    && i.script_operand.as_deref() == Some(&[value][..])
+                    && i.scripts.as_ref().is_some_and(|scripts| {
+                        scripts.first().is_some_and(|script| {
+                            script.first() == Some(&5) && script.get(1) == Some(&(varp as i32))
+                        })
+                    })
+            })
+            .expect("actual weapon attack-style selector")
+            .id;
+        let before = c.var_serv[varp];
+        let generation = c.gens.varp;
+        click_component(c, r, root, button, (553, 205));
+        pump_until(c, r, 10, |c| {
+            c.var.get(varp) == Some(&value)
+                && c.var_serv.get(varp) == Some(&value)
+                && c.gens.varp > generation
+        });
+        let receipt = json!({"component":button,"interface":root,"varp":varp,
+            "value":value,"received_before":before,"received_after":c.var_serv[varp],
+            "varp_generation_before":generation,"varp_generation_after":c.gens.varp,
+            "input":"rendered attack-style component click"});
+        eprintln!("377 stage11 attack-style {receipt}");
+        actions.push(receipt);
+    }
 }
 
 fn nearest_goblin(c: &Client) -> i32 {
@@ -778,6 +799,8 @@ fn varrock(
     stages: &mut Vec<Value>,
     actions: &mut Vec<Value>,
 ) {
+    choose_attack_style(c, r, actions);
+    stage(c, r, root, "varrock-attack-styles", stages);
     let route = [
         (3102, 3245),
         (3103, 3253),
