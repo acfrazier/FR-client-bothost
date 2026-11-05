@@ -673,6 +673,21 @@ fn natural_mainland_combat_and_bank_377() {
         varrock(&mut c, &mut r, &root, &mut stages, &mut actions);
     }
     let final_state = combat_bank_state(&c);
+    let mut receipt = json!({"engine_dir":engine,"user":user,"revision":377,"lesson":lesson,
+        "actions":actions,"kills":kills,"bank":bank,"stages":stages,"final_state":final_state,
+        "logout":null,"session_complete":false,"interventions":[],
+        "xp_presentation":"Java377 stat/level updates; no invented modern floating XP overlay"});
+    std::fs::write(
+        root.join("combat-bank-gameplay.json"),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+    if kills.is_some() {
+        // The real engine prevents logout for 16 server ticks after combat.
+        // Observe 17 fresh player-info generations before the one logout input.
+        let generation = c.gens.player_info;
+        pump_until(&mut c, &mut r, 30, |c| c.gens.player_info >= generation + 17);
+    }
     c.menu_action[0] = MiniMenuAction::IF_BUTTON;
     c.menu_param_c[0] = 2458;
     c.doAction(0);
@@ -686,10 +701,9 @@ fn natural_mainland_combat_and_bank_377() {
     assert!(!c.ingame, "server acknowledged logout");
     let exit = c.take_session_exit_reason().unwrap().to_string();
     assert!(exit.contains("server_logout"));
-    let receipt = json!({"engine_dir":engine,"user":user,"revision":377,"lesson":lesson,
-        "actions":actions,"kills":kills,"bank":bank,"stages":stages,"final_state":final_state,
-        "outbound":*outbound.0.lock().unwrap(),"logout":exit,
-        "interventions":[],"xp_presentation":"Java377 stat/level updates; no invented modern floating XP overlay"});
+    receipt["logout"] = json!(exit);
+    receipt["session_complete"] = json!(true);
+    receipt["outbound"] = json!(*outbound.0.lock().unwrap());
     std::fs::write(
         root.join("combat-bank.json"),
         serde_json::to_vec_pretty(&receipt).unwrap(),
