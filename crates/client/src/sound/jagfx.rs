@@ -33,8 +33,8 @@ pub struct JagFX {
     tone_buf: Vec<i32>,
 }
 
-type SoundPair = (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>);
-type SoundTables = HashMap<String, SoundPair>;
+pub(super) type SoundPair = (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>);
+pub(super) type SoundTables = HashMap<String, SoundPair>;
 
 fn empty_table() -> SoundPair {
     static EMPTY: OnceLock<SoundPair> = OnceLock::new();
@@ -55,8 +55,13 @@ fn unpacked_tables() -> &'static Mutex<SoundTables> {
 
 impl Default for JagFX {
     fn default() -> Self {
-        let (synth, delays) = empty_table();
-        JagFX {
+        Self::from_tables(empty_table())
+    }
+}
+
+impl JagFX {
+    pub(super) fn from_tables((synth, delays): SoundPair) -> Self {
+        Self {
             synth,
             delays,
             // Scratch is allocated on first `generate` — 50 unheaded
@@ -66,9 +71,7 @@ impl Default for JagFX {
             tone_buf: Vec::new(),
         }
     }
-}
 
-impl JagFX {
     fn ensure_scratch(&mut self) {
         if self.wave_buffer.length() < WAVE_BYTES {
             self.wave_buffer = Packet::new(vec![0u8; WAVE_BYTES]);
@@ -98,11 +101,20 @@ impl JagFX {
     /// Process-wide synth table for `cache_dir` (one unpack of `sounds.dat`).
     /// Lowmem / missing file stays on the shared empty table.
     pub fn load_shared(cache_dir: &str, lowmem: bool) -> Self {
+        Self::load_shared_with(cache_dir, lowmem, Self::default(), unpacked_tables())
+    }
+
+    pub(super) fn load_shared_with(
+        cache_dir: &str,
+        lowmem: bool,
+        mut jagfx: Self,
+        shared: &Mutex<SoundTables>,
+    ) -> Self {
         if lowmem {
-            return Self::default();
+            return jagfx;
         }
         {
-            let tables = unpacked_tables().lock().expect("jagfx tables");
+            let tables = shared.lock().expect("jagfx tables");
             if let Some((synth, delays)) = tables.get(cache_dir) {
                 return JagFX {
                     synth: Arc::clone(synth),
@@ -112,7 +124,6 @@ impl JagFX {
                 };
             }
         }
-        let mut jagfx = Self::default();
         let Ok(bytes) = std::fs::read(format!("{cache_dir}/sounds")) else {
             return jagfx;
         };
@@ -125,7 +136,7 @@ impl JagFX {
         };
         jagfx.init(&mut Packet::new(dat));
         {
-            let mut tables = unpacked_tables().lock().expect("jagfx tables");
+            let mut tables = shared.lock().expect("jagfx tables");
             if let Some((synth, delays)) = tables.get(cache_dir) {
                 jagfx.synth = Arc::clone(synth);
                 jagfx.delays = Arc::clone(delays);
