@@ -129,6 +129,9 @@ Lumbridge goblins, records attack styles, damage, health bars, XP, a level
 and loot pickup, then walks to Draynor for Deposit All, Withdraw 1,
 Deposit 1 and the no-PIN bank path. It also captures minimaps at Lumbridge,
 Draynor and Varrock. No account state is seeded.
+The combat and Varrock phases exercise all four weapon-style selectors and
+wait for received server varp updates, not only the local button highlight.
+Combat then uses Accurate for the measured Attack XP.
 Travel uses rendered minimap clicks and records the production-selected
 intermediate endpoints. The final Varrock landmark and received bank
 inventory changes are checked exactly.
