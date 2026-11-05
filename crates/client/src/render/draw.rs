@@ -1630,7 +1630,7 @@ impl Renderer {
                                             sprite.plot_sprite(&mut surface, px - 12, py - y);
                                         }
                                     }
-                                    y -= 25;
+                                    y += 25;
                                 }
                                 if player_prayer_icon_377 != -1 {
                                     if player_prayer_icon_377 >= 0 {
@@ -1648,7 +1648,7 @@ impl Renderer {
                                             sprite.plot_sprite(&mut surface, px - 12, py - y);
                                         }
                                     }
-                                    y -= 25;
+                                    y += 25;
                                 }
                             }
                         }
