@@ -744,10 +744,11 @@ fn append_hull(
     hull: &NavDebugHull,
     colour: i32,
 ) {
-    let Some((pos_x, pos_y, pos_z, yaw, model)) = r.world.loc_model_at(
+    let Some((pos_x, pos_y, pos_z, yaw, model)) = r.world.loc_model_at_with_varps(
         &client.world,
         &client.cache,
         client.loop_cycle,
+        &client.var,
         client.minusedlevel,
         hull.scene_x,
         hull.scene_z,
