@@ -426,7 +426,7 @@ fn combat(
     choose_attack_style(c, r, actions);
     stage(c, r, root, "mainland-attack-styles", stages);
     // The fountain occupies (3222,3226); walk around its south side.
-    for point in [
+    let route = [
         (3220, 3222),
         (3226, 3222),
         (3230, 3226),
@@ -434,7 +434,17 @@ fn combat(
         // Cross the whole bridge before turning north into the goblin field.
         (3255, 3226),
         (3255, 3234),
-    ] {
+    ];
+    // A phased retry starts at the saved, naturally reached waypoint, not back
+    // across the church/fountain on a new diagonal through solid scenery.
+    let current = tile(c);
+    let start = route
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, point)| (point.0 - current.0).abs() + (point.1 - current.1).abs())
+        .unwrap()
+        .0;
+    for &point in &route[start..] {
         walk_route(c, r, point, actions);
     }
     stage(c, r, root, "goblins-approach", stages);
