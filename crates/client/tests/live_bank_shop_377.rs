@@ -610,7 +610,7 @@ fn bank_shop_amount_drag_live_377() {
     );
     if std::env::var("CLIENT_377_BANK_SHOP_PREPARE").as_deref() == Ok("1") {
         c.set_cheat_admission(client::client::CheatAdmission::Granted);
-        for (object, name, target) in [(COINS, "coins", 1000), (BUCKET, "bucket", 5)] {
+        for (object, name, target) in [(COINS, "coins", 1000), (BUCKET, "bucket_empty", 5)] {
             let before = inventory_count(&c, object);
             if before < target {
                 let command = format!("give {name} {}", target - before);
@@ -781,13 +781,6 @@ fn bank_shop_amount_drag_live_377() {
     let (source_x, source_y) = slot_center(&c, side_root, player_component, source_slot);
     let (destination_x, destination_y) =
         slot_center(&c, side_root, player_component, destination_slot);
-    let before_drag_types = c
-        .if_(player_component as usize)
-        .unwrap()
-        .link_obj_type
-        .as_ref()
-        .unwrap()
-        .clone();
     let before_drag_counts = c
         .if_(player_component as usize)
         .unwrap()
