@@ -348,8 +348,9 @@ fn fight_goblin(
                 .take(c.npc_count as usize)
                 .filter_map(|id| {
                     let npc = c.npc[*id as usize].as_ref()?;
-                    (npc.total_health > 0 && npc.combat_cycle > c.loop_cycle)
-                        .then(|| json!({"slot":id,"type":npc.r#type,"entity":actor_state(&npc.entity)}))
+                    (npc.total_health > 0 && npc.combat_cycle > c.loop_cycle).then(
+                        || json!({"slot":id,"type":npc.r#type,"entity":actor_state(&npc.entity)}),
+                    )
                 })
                 .collect::<Vec<_>>();
             std::fs::write(
@@ -580,7 +581,9 @@ fn bank(
                 .is_some_and(|id| {
                     let npc = &c.cache.npcs[id];
                     npc.name.eq_ignore_ascii_case("Banker")
-                        && npc.op[2].as_ref().is_some_and(|option| option.as_str() == "Bank")
+                        && npc.op[2]
+                            .as_ref()
+                            .is_some_and(|option| option.as_str() == "Bank")
                 })
         })
         .min_by_key(|&slot| {
@@ -643,7 +646,12 @@ fn bank(
     });
     stage(c, r, root, "bank-deposit-one", stages);
     tutorial_lesson_377::close_main(c, r);
-    actions.push(operate_banker(c, banker, MiniMenuAction::OP_NPC1, "Talk-to"));
+    actions.push(operate_banker(
+        c,
+        banker,
+        MiniMenuAction::OP_NPC1,
+        "Talk-to",
+    ));
     pump_until(c, r, 20, |c| c.chat_modal_id >= 0 && !body(c).is_empty());
     actions.push(choose_chat_option(
         c,
@@ -784,7 +792,9 @@ fn natural_mainland_combat_and_bank_377() {
         // The real engine prevents logout for 16 server ticks after combat.
         // Observe 17 fresh player-info generations before the one logout input.
         let generation = c.gens.player_info;
-        pump_until(&mut c, &mut r, 30, |c| c.gens.player_info >= generation + 17);
+        pump_until(&mut c, &mut r, 30, |c| {
+            c.gens.player_info >= generation + 17
+        });
     }
     c.menu_action[0] = MiniMenuAction::IF_BUTTON;
     c.menu_param_c[0] = 2458;
