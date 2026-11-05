@@ -2049,11 +2049,12 @@ impl RenderBackend for GpuBackend {
                 .unwrap()
                 .ensure_model_textures(&r.pix3d);
             let mut mesh = std::mem::take(&mut self.scene_mesh);
-            r.world.capture_scene(
+            r.world.capture_scene_with_varps(
                 &mut core.world,
                 &mut r.pix3d,
                 cache,
                 loop_cycle,
+                &core.var,
                 cam_x,
                 cam_y,
                 cam_z,
