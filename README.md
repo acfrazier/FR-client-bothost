@@ -129,6 +129,9 @@ Lumbridge goblins, records attack styles, damage, health bars, XP, a level
 and loot pickup, then walks to Draynor for Deposit All, Withdraw 1,
 Deposit 1 and the no-PIN bank path. It also captures minimaps at Lumbridge,
 Draynor and Varrock. No account state is seeded.
+Travel uses rendered minimap clicks and records the production-selected
+intermediate endpoints. The final Varrock landmark and received bank
+inventory changes are checked exactly.
 
 Use the same four environment variables as `live_sound_377`. Set
 `CLIENT_377_STAGE11` to `combat`, `bank` or `varrock` for separate,
