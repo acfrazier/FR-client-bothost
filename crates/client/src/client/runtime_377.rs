@@ -1,4 +1,4 @@
-//! Standalone revision-377 runtime for captured Fairy Ring login and guide-dialogue packets.
+//! Standalone revision-377 runtime for captured Fairy Ring tutorial and mainland packets.
 //! Decode and resource validation finish before application. Unsupported families
 //! fail closed; none can enter a 274/289 wire handler. Java anchors are the
 //! corresponding `readPacket`, entity-info, and interface packet handlers.
@@ -69,7 +69,7 @@ impl Client {
         payload: &mut Packet,
     ) -> Result<(), String> {
         let opcode = u8::try_from(opcode).map_err(|_| "377 opcode outside byte range")?;
-        // Java login, tutorial and Cook's Assistant mainland cohort.
+        // Java login, tutorial and captured mainland interaction cohort.
         if !matches!(
             opcode,
             2 | 5
@@ -123,6 +123,7 @@ impl Client {
                 | 222
                 | 226
                 | 232
+                | 233
                 | 238
                 | 249
                 | 251
@@ -866,6 +867,8 @@ impl Client {
                 }
             }
             O::MinimapToggle(value) => self.minimap_state = value,
+            // Java 377 Client.java:7727-7732, SET_MULTIWAY is an unsigned byte.
+            O::Multiway(value) => self.in_multizone = value,
             O::UnsetMapFlag => {
                 self.minimap_flag_x = 0;
                 self.try_move_path.clear();
@@ -1587,6 +1590,31 @@ mod tests {
             .dispatch_packet_377(60, &mut valid_but_outside_cohort)
             .unwrap_err()
             .contains("outside captured"));
+    }
+
+    #[test]
+    fn multiway_packet_applies_exact_java_byte_only_after_frame_validation() {
+        let mut client = client();
+        for value in [0, 1, 255] {
+            let mut packet = Packet::new(vec![value]);
+            packet.set_frame_end(1);
+            client.ptype = 233;
+            client.dispatch_packet_377(233, &mut packet).unwrap();
+            assert_eq!(client.in_multizone, i32::from(value));
+            assert_eq!(packet.pos, 1);
+            assert_eq!(client.ptype, -1);
+        }
+        for bytes in [vec![], vec![1, 0]] {
+            client.in_multizone = 7;
+            client.ptype = 233;
+            let mut packet = Packet::new(bytes);
+            packet.set_frame_end(packet.length());
+            assert!(client.dispatch_packet_377(233, &mut packet).is_err());
+            assert_eq!(client.in_multizone, 7);
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.ptype, 233);
+            assert!(client.ingame);
+        }
     }
 
     #[test]
