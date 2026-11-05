@@ -832,9 +832,12 @@ fn varrock(
         (3253, 3322),
         (3264, 3328),
         (3264, 3338),
-        (3264, 3347),
-        (3258, 3355),
-        (3251, 3364),
+        // The original Java exact BFS reaches this eastern field passage
+        // before turning west along the narrow clear path by the pond.
+        (3271, 3350),
+        (3264, 3359),
+        (3251, 3359),
+        (3245, 3364),
         (3245, 3372),
         (3240, 3380),
         (3231, 3390),
