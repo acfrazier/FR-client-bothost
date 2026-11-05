@@ -31,6 +31,67 @@ pub(crate) struct Outbound377 {
 }
 
 impl Client {
+    /// Java `OPOBJ2` counts every action, including a failed approach.
+    ///
+    /// Java: `Client.java:10333-10353`.
+    pub(crate) fn opobj2_packet_377(&mut self, object: i32, x: i32, z: i32) {
+        self.oplogic1 += 1;
+        if self.oplogic1 >= 120 {
+            self.out.p1_enc(ClientProt377::ANTICHEAT_OPLOGIC1.id);
+            self.out.p4(0);
+            self.oplogic1 = 0;
+        }
+        self.out.p1_enc(ClientProt377::OPOBJ2.id);
+        self.out.p2(x);
+        p2_alt2(&mut self.out, z);
+        p2_alt3(&mut self.out, object);
+    }
+
+    /// Java `OPHELD4` counts actions, not the legacy location counter.
+    ///
+    /// Java: `Client.java:9696-9708`.
+    pub(crate) fn opheld4_packet_377(&mut self, object: i32, slot: i32, component: i32) {
+        self.oplogic2 += 1;
+        if self.oplogic2 >= 62 {
+            self.out.p1_enc(ClientProt377::ANTICHEAT_OPLOGIC2.id);
+            self.out.p1(206);
+            self.oplogic2 = 0;
+        }
+        self.out.p1_enc(ClientProt377::OPHELD4.id);
+        p2_alt1(&mut self.out, slot);
+        p2_alt2(&mut self.out, object);
+        self.out.p2(component);
+    }
+
+    /// Java `OPNPC3` sums NPC slots after the entity guard and approach attempt.
+    ///
+    /// Java: `Client.java:9960-9978`.
+    pub(crate) fn opnpc3_packet_377(&mut self, npc_index: i32) {
+        self.oplogic3 += npc_index;
+        if self.oplogic3 >= 143 {
+            self.out.p1_enc(ClientProt377::ANTICHEAT_OPLOGIC3.id);
+            self.out.p4(0);
+            self.oplogic3 = 0;
+        }
+        opnpc3_377(&mut self.out, npc_index);
+    }
+
+    /// Java `OPHELD1` sums object IDs, not inventory slots or components.
+    ///
+    /// Java: `Client.java:9746-9758`.
+    pub(crate) fn opheld1_packet_377(&mut self, object: i32, slot: i32, component: i32) {
+        self.oplogic5 += object;
+        if self.oplogic5 >= 115 {
+            self.out.p1_enc(ClientProt377::ANTICHEAT_OPLOGIC5.id);
+            self.out.p1(125);
+            self.oplogic5 = 0;
+        }
+        self.out.p1_enc(ClientProt377::OPHELD1.id);
+        p2_alt2(&mut self.out, component);
+        p2_alt1(&mut self.out, slot);
+        p2_alt1(&mut self.out, object);
+    }
+
     /// Java `getTopLevel`: count only while the camera pitch is below 310.
     ///
     /// Java: `Client.java:6227-6247`.
@@ -140,9 +201,9 @@ fn anticheat_cyclelogic5_377(packet: &mut Packet) {
 }
 
 impl Client {
-    /// Reset the Java input fields initialized after login acceptance.
+    /// Reset the Java input fields and menu counters after cold login acceptance.
     ///
-    /// Java: `Client.java:2742-2746,2761-2762`.
+    /// Java: `Client.java:2742-2746,2761-2762,2832-2841`.
     pub(crate) fn cold_login_input_377(&mut self) {
         self.outbound.r377_mut().last_click_time = 0;
         self.outbound.r377_mut().duplicates = 0;
@@ -152,6 +213,15 @@ impl Client {
         if let Some(shared) = &self.shell.mouse_samples {
             shared.lock().unwrap().samples.clear();
         }
+        self.oplogic1 = 0;
+        self.oplogic2 = 0;
+        self.oplogic3 = 0;
+        self.oplogic4 = 0;
+        self.oplogic5 = 0;
+        self.oplogic6 = 0;
+        self.oplogic7 = 0;
+        self.oplogic8 = 0;
+        self.oplogic9 = 0;
     }
 
     fn mouse_packet_377(&mut self) {
@@ -1028,6 +1098,238 @@ mod tests {
                 0x34,
                 0x56
             ]
+        );
+    }
+
+    #[test]
+    fn menu_anticheat_npc3_matches_java_threshold_and_resets() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        client.npc[42] = Some(Box::new(ClientNpc::at(5, 5)));
+        client.oplogic3 = 100;
+        set_menu_action(&mut client, MiniMenuAction::OP_NPC3, 42, 0, 0);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[247, 5, 0x85, 0, 0, 0x85, 0, 13, 0xaa, 0]
+        );
+        assert_eq!(client.oplogic3, 142);
+
+        client.out.pos = 0;
+        client.npc[1] = Some(Box::new(ClientNpc::at(5, 5)));
+        set_menu_action(&mut client, MiniMenuAction::OP_NPC3, 1, 0, 0);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[247, 5, 0x85, 0, 0, 0x85, 0, 157, 0, 0, 0, 0, 13, 0x81, 0]
+        );
+        assert_eq!(client.oplogic3, 0);
+        assert_eq!(ClientProt377::ANTICHEAT_OPLOGIC3.length, 4);
+
+        client.out.pos = 0;
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[247, 5, 0x85, 0, 0, 0x85, 0, 13, 0x81, 0]
+        );
+        assert_eq!(client.oplogic3, 1);
+
+        client.out.pos = 0;
+        client.npc[3263] = Some(Box::new(ClientNpc::at(5, 5)));
+        set_menu_action(&mut client, MiniMenuAction::OP_NPC3, 3263, 0, 0);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[247, 5, 0x85, 0, 0, 0x85, 0, 157, 0, 0, 0, 0, 13, 0x3f, 0x0c]
+        );
+        assert_eq!(client.oplogic3, 0);
+
+        client.out.pos = 0;
+        client.oplogic3 = 142;
+        client.npc[3263] = None;
+        client.doAction(0);
+        assert_eq!(client.out.pos, 0);
+        assert_eq!(client.oplogic3, 142);
+        assert!(client.outbound.r377_mut().unmapped.get().is_none());
+    }
+
+    #[test]
+    fn menu_anticheat_obj2_matches_java_threshold_and_resets() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        client.oplogic1 = 118;
+        set_menu_action(&mut client, MiniMenuAction::OP_OBJ2, 0x1234, 5, 5);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[247, 5, 0x85, 0, 0, 0x85, 0, 100, 0, 5, 0, 0x85, 0xb4, 0x12]
+        );
+        assert_eq!(client.oplogic1, 119);
+
+        client.out.pos = 0;
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[247, 5, 0x85, 0, 0, 0x85, 0, 95, 0, 0, 0, 0, 100, 0, 5, 0, 0x85, 0xb4, 0x12]
+        );
+        assert_eq!(client.oplogic1, 0);
+        assert_eq!(ClientProt377::ANTICHEAT_OPLOGIC1.length, 4);
+        assert_eq!(ClientProt377::OPOBJ2.length, 6);
+
+        client.out.pos = 0;
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[247, 5, 0x85, 0, 0, 0x85, 0, 100, 0, 5, 0, 0x85, 0xb4, 0x12]
+        );
+        assert_eq!(client.oplogic1, 1);
+        assert!(client.outbound.r377_mut().unmapped.get().is_none());
+    }
+
+    #[test]
+    fn menu_anticheat_held4_matches_java_threshold_and_resets() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.oplogic2 = 60;
+        client.oplogic9 = 115;
+        set_menu_action(
+            &mut client,
+            MiniMenuAction::OP_HELD4,
+            0x1234,
+            0x2345,
+            0x3456,
+        );
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[228, 0x45, 0x23, 0x12, 0xb4, 0x34, 0x56]
+        );
+        assert_eq!(client.oplogic2, 61);
+        assert_eq!(client.oplogic9, 115);
+
+        client.out.pos = 0;
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[165, 206, 228, 0x45, 0x23, 0x12, 0xb4, 0x34, 0x56]
+        );
+        assert_eq!(client.oplogic2, 0);
+        assert_eq!(ClientProt377::ANTICHEAT_OPLOGIC2.length, 1);
+        assert_eq!(ClientProt377::OPHELD4.length, 6);
+        assert_eq!(
+            (
+                client.selected_item,
+                client.selected_com_id,
+                client.selected_area
+            ),
+            (0x2345, 0x3456, 2)
+        );
+
+        client.out.pos = 0;
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[228, 0x45, 0x23, 0x12, 0xb4, 0x34, 0x56]
+        );
+        assert_eq!(client.oplogic2, 1);
+        assert!(client.outbound.r377_mut().unmapped.get().is_none());
+    }
+
+    #[test]
+    fn menu_anticheat_held1_matches_java_object_sum_and_resets() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        set_menu_action(&mut client, MiniMenuAction::OP_HELD1, 57, 0x2345, 0x3456);
+        for sum in [57, 114] {
+            client.out.pos = 0;
+            client.doAction(0);
+            assert_eq!(
+                &client.out.data()[..client.out.pos],
+                &[203, 0x34, 0xd6, 0x45, 0x23, 57, 0]
+            );
+            assert_eq!(client.oplogic5, sum);
+        }
+
+        client.out.pos = 0;
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[126, 125, 203, 0x34, 0xd6, 0x45, 0x23, 57, 0]
+        );
+        assert_eq!(client.oplogic5, 0);
+        assert_eq!(ClientProt377::ANTICHEAT_OPLOGIC5.length, 1);
+        assert_eq!(ClientProt377::OPHELD1.length, 6);
+
+        client.out.pos = 0;
+        client.oplogic5 = 114;
+        set_menu_action(&mut client, MiniMenuAction::OP_HELD1, 1, 0x2345, 0x3456);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[126, 125, 203, 0x34, 0xd6, 0x45, 0x23, 1, 0]
+        );
+        assert_eq!(client.oplogic5, 0);
+
+        client.out.pos = 0;
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[203, 0x34, 0xd6, 0x45, 0x23, 1, 0]
+        );
+        assert_eq!(client.oplogic5, 1);
+        assert!(client.outbound.r377_mut().unmapped.get().is_none());
+    }
+
+    #[test]
+    fn menu_anticheat_obj3_counts_only_divisible_object_ids() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        client.oplogic4 = 83;
+        set_menu_action(&mut client, MiniMenuAction::OP_OBJ3, 0x1235, 5, 5);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[247, 5, 0x85, 0, 0, 0x85, 0, 71, 0xb5, 0x12, 0x85, 0, 0, 0x85]
+        );
+        assert_eq!(client.oplogic4, 83);
+
+        client.out.pos = 0;
+        set_menu_action(&mut client, MiniMenuAction::OP_OBJ3, 0x1234, 5, 5);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[
+                247, 5, 0x85, 0, 0, 0x85, 0, 222, 0xab, 0xc8, 0x42, 71, 0xb4, 0x12, 0x85, 0, 0,
+                0x85
+            ]
+        );
+        assert_eq!(client.oplogic4, 0);
+    }
+
+    #[test]
+    fn menu_anticheat_cold_login_resets_all_shared_counters() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.oplogic1 = 119;
+        client.oplogic2 = 61;
+        client.oplogic3 = 142;
+        client.oplogic4 = 83;
+        client.oplogic5 = 114;
+        client.oplogic6 = 6;
+        client.oplogic7 = 7;
+        client.oplogic8 = 8;
+        client.oplogic9 = 9;
+        client.cold_login_input_377();
+        assert_eq!(
+            [
+                client.oplogic1,
+                client.oplogic2,
+                client.oplogic3,
+                client.oplogic4,
+                client.oplogic5,
+                client.oplogic6,
+                client.oplogic7,
+                client.oplogic8,
+                client.oplogic9,
+            ],
+            [0; 9]
         );
     }
 
