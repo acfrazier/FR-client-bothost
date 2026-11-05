@@ -150,8 +150,11 @@ Lossless frames and adjacent snapshots retain the received actor poses,
 hits, component mutations, inventory counts, camera and map base for
 comparison with the original Java client. XP uses Java 377's stats and
 level presentation, not a modern floating XP overlay. Revision 377's
-bank Deposit All / Withdraw All action uses Java's transformed
-`INV_BUTTON4` body; the 274/289 layouts and default revision stay unchanged.
+inventory buttons 1–5 and item drag use Java's transformed packet bodies,
+including bank 10/X amounts, shop quantities, smithing and trade. Every
+Java 377 `OP*` menu packet has a revision-specific writer and dispatch;
+the 274/289 layouts and default revision stay unchanged. A cold 377 login
+clears the multiway overlay, while a reconnect preserves it as Java does.
 
 `gpu_fountain` includes self-contained Metal/wgpu readback regressions for
 textured scanline lighting, subpixel edges, and near-clipped polygons.
