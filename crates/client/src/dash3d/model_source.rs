@@ -60,6 +60,18 @@ impl SceneModel {
         }
     }
 
+    pub fn get_temp_model_with_varps(
+        &mut self,
+        cache: &Cache,
+        loop_cycle: i32,
+        varps: &[i32],
+    ) -> Option<Model> {
+        match self {
+            SceneModel::LocAnim(anim) => anim.get_temp_model_with_varps(cache, loop_cycle, varps),
+            _ => self.get_temp_model(cache, loop_cycle),
+        }
+    }
+
     /// `ModelSource.minY`: the last temp model's `min_y` (1000 until the
     /// first render). `World::fill` reads it for the occlusion tests.
     pub fn min_y(&self) -> i32 {
@@ -83,6 +95,7 @@ impl SceneModel {
         &mut self,
         cache: &Cache,
         loop_cycle: i32,
+        varps: &[i32],
         pix: &mut Pix3DDraw,
         surface: &mut Pix2D,
         yaw: i32,
@@ -111,7 +124,7 @@ impl SceneModel {
             );
             return;
         }
-        if let Some(model) = self.get_temp_model(cache, loop_cycle) {
+        if let Some(model) = self.get_temp_model_with_varps(cache, loop_cycle, varps) {
             let min_y = model.min_y;
             match self {
                 SceneModel::Obj(obj) => obj.min_y = min_y,
