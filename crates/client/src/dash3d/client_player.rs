@@ -63,11 +63,11 @@ pub struct ClientPlayer {
     pub gender: i32,
     pub headicons: i32,
     /// Java 377 signed PK icon index (`field1678`); -1 means absent.
-    pub pk_icon_377: i32,
+    pub pk_icon_377: i8,
     /// Java 377 signed prayer icon index (`field1670`); -1 means absent.
-    pub prayer_icon_377: i32,
+    pub prayer_icon_377: i8,
     /// Java 377 nonzero equipment-team value (`field1688`).
-    pub team_377: i32,
+    pub team_377: u8,
     pub appearance: [u16; 12],
     pub colour: [u16; 5],
     pub combat_level: i32,
