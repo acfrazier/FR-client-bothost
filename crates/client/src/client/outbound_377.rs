@@ -371,13 +371,7 @@ pub(crate) fn oploc5_377(packet: &mut Packet, x: i32, z: i32, location: i32) {
 /// Emit Java `OPLOCT`: spell, transformed location ID and x, then z.
 ///
 /// Java: `Client.java:9981-9987`.
-pub(crate) fn oploct_377(
-    packet: &mut Packet,
-    x: i32,
-    z: i32,
-    location: i32,
-    spell: i32,
-) {
+pub(crate) fn oploct_377(packet: &mut Packet, x: i32, z: i32, location: i32, spell: i32) {
     packet.p1_enc(ClientProt377::OPLOCT.id);
     packet.p2(spell);
     p2_alt1(packet, location);
@@ -428,13 +422,7 @@ pub(crate) fn opobj5_377(packet: &mut Packet, object_id: i32, x: i32, z: i32) {
 /// Emit Java `OPOBJT`: object, z, selected spell, then transformed x.
 ///
 /// Java: `Client.java:10470-10476`.
-pub(crate) fn opobjt_377(
-    packet: &mut Packet,
-    object_id: i32,
-    x: i32,
-    z: i32,
-    spell: i32,
-) {
+pub(crate) fn opobjt_377(packet: &mut Packet, object_id: i32, x: i32, z: i32, spell: i32) {
     packet.p1_enc(ClientProt377::OPOBJT.id);
     p2_alt1(packet, object_id);
     packet.p2(z);
@@ -719,12 +707,7 @@ pub(crate) fn inv_button4_377(packet: &mut Packet, object_id: i32, slot: i32, co
 /// Emit Java `INV_BUTTON3`: transformed object and slot, then component.
 ///
 /// Java: `Client.java:10356-10371`.
-pub(crate) fn inv_button3_377(
-    packet: &mut Packet,
-    object_id: i32,
-    slot: i32,
-    component_id: i32,
-) {
+pub(crate) fn inv_button3_377(packet: &mut Packet, object_id: i32, slot: i32, component_id: i32) {
     packet.p1_enc(ClientProt377::INV_BUTTON3.id);
     p2_alt1(packet, object_id);
     p2_alt3(packet, slot);
@@ -734,12 +717,7 @@ pub(crate) fn inv_button3_377(
 /// Emit Java `INV_BUTTON5`: transformed slot and object, then component.
 ///
 /// Java: `Client.java:10158-10174`.
-pub(crate) fn inv_button5_377(
-    packet: &mut Packet,
-    object_id: i32,
-    slot: i32,
-    component_id: i32,
-) {
+pub(crate) fn inv_button5_377(packet: &mut Packet, object_id: i32, slot: i32, component_id: i32) {
     packet.p1_enc(ClientProt377::INV_BUTTON5.id);
     p2_alt3(packet, slot);
     p2_alt3(packet, object_id);
@@ -1035,8 +1013,8 @@ mod tests {
     use super::*;
 
     use super::super::{ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
-    use crate::dash3d::LocShape;
     use crate::config::if_type::{ComponentType, IfType, IfTypeMut};
+    use crate::dash3d::LocShape;
     use crate::io::{ClientProt, ClientRevision};
 
     fn client_with_revision(revision: ClientRevision) -> Client {
@@ -1087,7 +1065,10 @@ mod tests {
             bytes.ends_with(expected_packet),
             "outbound bytes {bytes:?} do not end with {expected_packet:?}"
         );
-        assert!(client.outbound.r377().unmapped.get().is_none());
+        let super::super::client::OutboundState::R377(state) = &client.outbound else {
+            panic!("377 route must retain revision-specific outbound state");
+        };
+        assert!(state.unmapped.get().is_none());
         assert_eq!(
             [
                 client.oplogic1,
@@ -1309,20 +1290,10 @@ mod tests {
         );
 
         packet.pos = 0;
-        opobju_377(
-            &mut packet,
-            0x1234,
-            0x2345,
-            0x3456,
-            0x5678,
-            0x6789,
-            0x789a,
-        );
+        opobju_377(&mut packet, 0x1234, 0x2345, 0x3456, 0x5678, 0x6789, 0x789a);
         assert_eq!(
             &packet.data()[..packet.pos],
-            &[
-                211, 0x09, 0x67, 0x56, 0xf8, 0xd6, 0x34, 0xc5, 0x23, 0x9a, 0x78, 0x34, 0x12
-            ]
+            &[211, 0x09, 0x67, 0x56, 0xf8, 0xd6, 0x34, 0xc5, 0x23, 0x9a, 0x78, 0x34, 0x12]
         );
 
         packet.pos = 0;
@@ -1390,10 +1361,7 @@ mod tests {
 
         packet.pos = 0;
         opplayert_377(&mut packet, 0x1234, 0x4567);
-        assert_eq!(
-            &packet.data()[..packet.pos],
-            &[31, 0x12, 0x34, 0x67, 0x45]
-        );
+        assert_eq!(&packet.data()[..packet.pos], &[31, 0x12, 0x34, 0x67, 0x45]);
 
         packet.pos = 0;
         opplayeru_377(&mut packet, 0x1234, 0x5678, 0x6789, 0x789a);
@@ -1445,10 +1413,7 @@ mod tests {
                 MiniMenuAction::OP_OBJ1,
                 &[77, 0, 0x85, 0, 5, 0xb4, 0x12][..],
             ),
-            (
-                MiniMenuAction::OP_OBJ4,
-                &[54, 0x12, 0xb4, 5, 0, 0, 5][..],
-            ),
+            (MiniMenuAction::OP_OBJ4, &[54, 0x12, 0xb4, 5, 0, 0, 5][..]),
             (
                 MiniMenuAction::OP_OBJ5,
                 &[230, 0x34, 0x12, 0, 0x85, 0, 5][..],
@@ -1511,14 +1476,8 @@ mod tests {
                 MiniMenuAction::OP_LOC3,
                 &[50, 0, 0x85, 0x34, 0x12, 0x85, 0][..],
             ),
-            (
-                MiniMenuAction::OP_LOC4,
-                &[136, 0, 5, 5, 0, 0x12, 0x34][..],
-            ),
-            (
-                MiniMenuAction::OP_LOC5,
-                &[55, 0x34, 0x12, 5, 0, 0, 5][..],
-            ),
+            (MiniMenuAction::OP_LOC4, &[136, 0, 5, 5, 0, 0x12, 0x34][..]),
+            (MiniMenuAction::OP_LOC5, &[55, 0x34, 0x12, 5, 0, 0, 5][..]),
             (
                 MiniMenuAction::TGT_LOC,
                 &[210, 0x45, 0x67, 0x34, 0x12, 0, 0x85, 5, 0][..],
@@ -1532,28 +1491,28 @@ mod tests {
             assert_377_route(&client, expected_packet);
         }
 
-        let held_on_loc = do_377_action(
-            MiniMenuAction::USEHELD_ONLOC,
-            typecode,
-            5,
-            5,
-            |client| {
-                install_ground_decor(client, 0x1234, 5, 5);
-                client.obj_selected_com_id = 0x789a;
-                client.obj_com_id = 0x5678;
-                client.obj_selected_slot = 0x6789;
-            },
-        );
+        let held_on_loc = do_377_action(MiniMenuAction::USEHELD_ONLOC, typecode, 5, 5, |client| {
+            client.local_player = Some(ClientPlayer::at(5, 5));
+            install_ground_decor(client, 0x1234, 5, 5);
+            client.obj_selected_com_id = 0x789a;
+            client.obj_com_id = 0x5678;
+            client.obj_selected_slot = 0x6789;
+        });
         assert_377_route(
             &held_on_loc,
-            &[152, 0x34, 0x12, 0x9a, 0x78, 0x78, 0x56, 0x85, 0, 0x67, 0x89, 5, 0x85],
+            &[
+                152, 0x34, 0x12, 0x9a, 0x78, 0x78, 0x56, 0x85, 0, 0x67, 0x89, 5, 0x85,
+            ],
         );
 
         let mut rejected = client_with_revision(ClientRevision::R377);
         set_menu_action(&mut rejected, MiniMenuAction::TGT_LOC, typecode, 5, 5);
         rejected.target_com_id = 0x4567;
         rejected.doAction(0);
-        assert_eq!(rejected.out.pos, 0, "OPLOCT needs a successful loc interaction");
+        assert_eq!(
+            rejected.out.pos, 0,
+            "OPLOCT needs a successful loc interaction"
+        );
         assert_377_route(&rejected, &[]);
     }
 
@@ -1565,10 +1524,7 @@ mod tests {
             (MiniMenuAction::OP_PLAYER3, &[194, 42, 0][..]),
             (MiniMenuAction::OP_PLAYER4, &[116, 42, 0][..]),
             (MiniMenuAction::OP_PLAYER5, &[45, 0, 0xaa][..]),
-            (
-                MiniMenuAction::TGT_PLAYER,
-                &[31, 0, 42, 0x67, 0x45][..],
-            ),
+            (MiniMenuAction::TGT_PLAYER, &[31, 0, 42, 0x67, 0x45][..]),
             (
                 MiniMenuAction::USEHELD_ONPLAYER,
                 &[143, 0x78, 0x56, 0x09, 0x67, 0x78, 0x9a, 0, 0xaa][..],
