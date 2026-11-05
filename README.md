@@ -112,6 +112,12 @@ local 377 engine. It requires `ENGINE_DIR`, `CLIENT_377_RUNTIME_CACHE_DIR`,
 `CLIENT_377_LIVE_DIR` and a `CLIENT_377_LIVE_USER` starting with `t2a`.
 It proves loading and login, not audible playback or PCM parity.
 
+Revision 377 uses separate Java-sized media tables: 100 slots each for
+mapscene and mapfunction images, with 72 and 70 images loaded. Its player
+PK, prayer and hint icons remain separate, and its minimap supports the
+fifth (team) dot and multiway overlay. The default 274 profile and the
+274/289 sprite paths keep their existing tables and behavior.
+
 The optional mainland proof in `live_interactions_377` continues a naturally
 completed tutorial account. It selects revision 377 explicitly, walks to
 Lumbridge goblins, records attack styles, damage, health bars, XP, a level
