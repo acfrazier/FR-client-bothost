@@ -543,8 +543,7 @@ fn terrain_click_guide_dialogue_and_progress() {
     );
     let cache =
         std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched running cache required");
-    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account required");
-    assert!(user.starts_with("t2a"));
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit account required");
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists(), "quiet lock blocks live runs");
     }
@@ -975,6 +974,107 @@ fn terrain_click_guide_dialogue_and_progress() {
     )
     .unwrap();
     eprintln!("PASS: natural Guide, firemaking, stats, fishing, burnt/cooked shrimp, chef ingredients, dough, bread, server varp406 1->6, server logout");
+}
+
+#[test]
+#[ignore = "requires a new account and the already-running Fairy Ring 377 engine"]
+fn local_close_unloads_guide_text_and_resets_continue_377() {
+    let root = PathBuf::from(std::env::var("CLIENT_377_LIVE_DIR").expect("explicit evidence"));
+    let cache = std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched runtime cache");
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit new account");
+    let engine = live_engine_377::require_engine(&root, &user, &cache);
+    Renderer::set_prefer_gpu(false);
+    let mut c = Client::new_with_revision_and_http_port(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43595,
+            cache_dir: cache,
+            members: true,
+            lowmem: true,
+        },
+        ClientRevision::R377,
+        81,
+    );
+    c.draw = true;
+    let mut r = Renderer::new(true);
+    c.maininit_with_progress(Some(&mut |client, message, percent| {
+        r.draw_progress(client, message, percent);
+    }));
+    assert!(!c.error_loading);
+    let outbound = Arc::new(Outbound::default());
+    c.out.set_observer(Some(outbound.clone()));
+    c.set_login_deadline(Instant::now() + Duration::from_secs(10));
+    c.login(&user, "t2apass", false).unwrap();
+    pump_until(&mut c, &mut r, 90, |c| {
+        c.scene_state == 2 && c.main_modal_id == 3559 && c.npc_count > 0
+    });
+    click_component(&mut c, &mut r, 3559, 3651, (4, 4));
+    pump_until(&mut c, &mut r, 10, |c| c.main_modal_id == -1);
+    talk_to(&mut c, 945);
+    pump_until(&mut c, &mut r, 20, |c| {
+        c.chat_modal_id >= 0 && !body(c).is_empty() && !c.resumed_pause_button
+    });
+    let layer = c.chat_modal_id;
+    let resume = c
+        .ifaces_merged()
+        .find(|i| i.layer_id == layer && i.button_type == 6)
+        .map(|i| i.id)
+        .expect("server-opened Guide Continue");
+    let initial = &c.cache.revision_377.as_ref().unwrap().interfaces.initial_overlays;
+    let changed_text: Vec<_> = c
+        .ifaces_merged()
+        .filter(|i| i.layer_id == layer)
+        .filter_map(|i| {
+            let original = initial[i.id as usize].as_ref()?;
+            (i.text != original.text).then(|| (i.id as usize, original.text.clone()))
+        })
+        .collect();
+    assert!(!changed_text.is_empty(), "Guide sent real text overrides");
+    let mut stages = Vec::new();
+    save_stage(&mut c, &mut r, &root, "guide-before-close", &mut stages);
+    // Send Continue, then Close before pumping a server reply. The debounce
+    // is set by the real pause action, never by fixture state.
+    c.menu_action[0] = MiniMenuAction::PAUSE_BUTTON;
+    c.menu_param_c[0] = resume;
+    c.doAction(0);
+    assert!(c.resumed_pause_button);
+    c.menu_action[0] = MiniMenuAction::CLOSE_BUTTON;
+    c.doAction(0);
+    assert_eq!(c.chat_modal_id, -1);
+    assert!(!c.resumed_pause_button);
+    for (id, text) in &changed_text {
+        assert_eq!(c.if_(*id).unwrap().text, text);
+    }
+    save_stage(&mut c, &mut r, &root, "guide-after-local-close", &mut stages);
+    c.menu_action[0] = MiniMenuAction::IF_BUTTON;
+    c.menu_param_c[0] = 2458;
+    c.doAction(0);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while c.ingame && Instant::now() < deadline {
+        c.shell.latch_click();
+        c.mainloop();
+        drop(r.mainredraw(&mut c));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!c.ingame, "engine acknowledged logout");
+    let exit = c.take_session_exit_reason().unwrap().to_string();
+    assert!(exit.contains("server_logout"));
+    let packets = outbound.0.lock().unwrap();
+    for opcode in [110, 226] {
+        assert!(packets.iter().any(|packet| packet["opcode"] == opcode));
+    }
+    let receipt = json!({
+        "result":"PASS", "engine":engine, "account":user, "seeds":[],
+        "layer":layer, "continue_component":resume,
+        "restored_text":changed_text, "stages":stages, "outbound":*packets,
+        "logout":exit,
+        "wall_loc_anim":"not exercised by the Guide close path"
+    });
+    std::fs::write(
+        root.join("local-close.json"),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
 }
 
 #[path = "support/mainland_lesson_377.rs"]

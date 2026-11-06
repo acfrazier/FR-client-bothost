@@ -915,14 +915,13 @@ fn chef_bread(
 }
 
 #[test]
-#[ignore = "requires orchestrator-started Fairy Ring 377 engine and naturally progressed t2a account"]
+#[ignore = "requires orchestrator-started Fairy Ring 377 engine and naturally progressed account"]
 fn natural_tutorial_lesson() {
     let root =
         PathBuf::from(std::env::var("CLIENT_377_LIVE_DIR").expect("explicit evidence directory"));
     let cache = std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched running cache");
-    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account");
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit account");
     let lesson = std::env::var("CLIENT_377_TUTORIAL_LESSON").expect("explicit natural lesson");
-    assert!(user.starts_with("t2a"));
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists());
     }

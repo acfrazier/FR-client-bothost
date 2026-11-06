@@ -18,8 +18,7 @@ fn bound_highmem_constructor_login_scene2_and_server_logout() {
     let evidence = std::env::var("CLIENT_377_LIVE_DIR").expect("explicit live evidence required");
     let cache =
         std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("fresh runtime cache required");
-    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account required");
-    assert!(user.starts_with("t2a"));
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit account required");
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists(), "quiet lock blocks live runs");
     }

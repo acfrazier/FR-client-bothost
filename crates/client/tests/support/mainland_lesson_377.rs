@@ -626,13 +626,12 @@ fn climb_windmill(
 }
 
 #[test]
-#[ignore = "requires orchestrator-started Fairy Ring 377 engine and naturally progressed Lumbridge t2a account"]
+#[ignore = "requires orchestrator-started Fairy Ring 377 engine and naturally progressed Lumbridge account"]
 fn natural_lumbridge_cook_quest_and_shop_377() {
     let root =
         PathBuf::from(std::env::var("CLIENT_377_LIVE_DIR").expect("explicit evidence directory"));
     let cache = std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched running cache");
-    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account");
-    assert!(user.starts_with("t2a"));
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit account");
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists());
     }

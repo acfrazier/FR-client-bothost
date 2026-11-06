@@ -28,6 +28,11 @@ pub fn engine_dir(value: Option<&OsStr>) -> Result<PathBuf, String> {
 }
 
 pub fn require_engine(evidence: &Path, user: &str, cache: &str) -> PathBuf {
+    let prefix = std::env::var("CLIENT_377_LIVE_PREFIX").unwrap_or_else(|_| "t2a".into());
+    assert!(
+        account_matches_prefix(user, &prefix),
+        "account must start with nonempty CLIENT_377_LIVE_PREFIX (default t2a)"
+    );
     let value = std::env::var_os("ENGINE_DIR");
     let engine = engine_dir(value.as_deref()).expect("explicit Fairy Ring ENGINE_DIR required");
     assert!(
@@ -43,6 +48,7 @@ pub fn require_engine(evidence: &Path, user: &str, cache: &str) -> PathBuf {
         "engine_dir": engine,
         "rsa_key_path": key,
         "user": user,
+        "account_prefix": prefix,
         "runtime_cache": cache,
         "host": "127.0.0.1", "http_port": 81, "game_port": 43595,
         "rsa_source": "mandatory ENGINE_DIR/data/config/private.pem; no overrides or fallback"
@@ -54,6 +60,18 @@ pub fn require_engine(evidence: &Path, user: &str, cache: &str) -> PathBuf {
     .unwrap();
     eprintln!("377 engine receipt: {receipt}");
     engine
+}
+
+fn account_matches_prefix(user: &str, prefix: &str) -> bool {
+    !prefix.is_empty() && user.starts_with(prefix)
+}
+
+#[test]
+fn live_account_prefix_is_explicit_and_nonempty() {
+    assert!(account_matches_prefix("t2atest", "t2a"));
+    assert!(account_matches_prefix("s12fclose", "s12f"));
+    assert!(!account_matches_prefix("t2atest", "s12f"));
+    assert!(!account_matches_prefix("s12fclose", ""));
 }
 
 #[test]
