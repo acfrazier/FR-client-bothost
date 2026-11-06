@@ -945,7 +945,7 @@ impl RenderWorld {
         let angle = info >> 6;
         let shape = info & 0x1f;
         let (h_sw, h_se, h_ne, h_nw) = (wall.h_sw, wall.h_se, wall.h_ne, wall.h_nw);
-        let wall_key = (wall.typecode, wall.typecode2, wall.wall_model2_377);
+        let wall_key = (wall.typecode, wall.typecode2, wall.model2_state_377());
         let cached_model2 = if cache.revision_377.is_some()
             && wall.anim_seq != -1
             && wall.anim_shape != LocShape::WALL_L
@@ -1653,7 +1653,7 @@ impl RenderWorld {
     ) {
         let wall_model_key = tile_at(&world.squares, level, x, z)
             .and_then(|tile| tile.wall.as_deref())
-            .map(|wall| (wall.typecode, wall.typecode2, wall.wall_model2_377));
+            .map(|wall| (wall.typecode, wall.typecode2, wall.model2_state_377()));
         let slot = self.slot(world, level, x, z);
         slot.wall_model_stamp = world.loc_model_stamp(level, x, z, LocLayer::WALL);
         slot.wall_model1 = model1;
@@ -6768,6 +6768,16 @@ mod wall_anim_377_tests {
     fn r377_non_l_loc_anim_preserves_static_second_wall_model() {
         let cache = cache_377();
         let mut world = wall_world(LocShape::WALL_L);
+        let model2 = Arc::new(Model::default());
+        let mut renderer = RenderWorld::new();
+        renderer.set_wall_model(
+            &world,
+            0,
+            0,
+            0,
+            None,
+            Some(SceneModel::Shared(Arc::clone(&model2))),
+        );
         world
             .get_wall_mut(0, 0, 0)
             .expect("fixture wall")
@@ -6780,16 +6790,6 @@ mod wall_anim_377_tests {
             h_nw: 40,
             start_cycle: 0,
         });
-        let model2 = Arc::new(Model::default());
-        let mut renderer = RenderWorld::new();
-        renderer.set_wall_model(
-            &world,
-            0,
-            0,
-            0,
-            None,
-            Some(SceneModel::Shared(Arc::clone(&model2))),
-        );
 
         animate_wall(&mut world, 4, LocShape::WALL_STRAIGHT, 1);
         match renderer.wall_model2(&world, &cache, 0, 0, 0, 0) {
@@ -6836,7 +6836,7 @@ mod wall_anim_377_tests {
         let mut renderer = RenderWorld::new();
         renderer.set_wall_model(&world, 0, 0, 0, None, Some(prior_model2));
 
-        animate_wall(&mut world, 9, LocShape::WALL_STRAIGHT, 3);
+        animate_wall(&mut world, 6, LocShape::WALL_STRAIGHT, 3);
         match renderer.wall_model2(&world, &cache, 120, 0, 0, 0) {
             Some(SceneModel::LocAnim(anim)) => {
                 assert_eq!(anim.anim, Some(7));
