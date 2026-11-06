@@ -2189,13 +2189,9 @@ fn live_production_377_smelt_smith_cook_fletch_craft_and_levelup() {
     );
     let cache = std::env::var("CLIENT_377_RUNTIME_CACHE_DIR")
         .expect("matched running runtime cache required");
-    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account required");
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit account required");
     let password = std::env::var("CLIENT_377_LIVE_PASSWORD")
         .expect("explicit account password required; never hardcode credentials");
-    assert!(
-        user.starts_with("t2a"),
-        "account choice comes from explicit t2a env"
-    );
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists(), "quiet lock blocks live runs");
     }

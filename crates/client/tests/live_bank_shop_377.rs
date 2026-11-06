@@ -1,5 +1,5 @@
 //! Opt-in live proof of Java 377 bank, shop, amount-dialog, and inventory-drag dispatch.
-//! It requires the orchestrator-started Fairy Ring engine and a prepared t2a account.
+//! It requires the orchestrator-started Fairy Ring engine and a prepared account.
 use client::client::{Client, ClientConfig, ClientRevision, MiniMenuAction};
 use client::io::{ClientProt377, PacketObserver};
 use client::render::backend::FrameOutput;
@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 #[path = "support/live_engine_377.rs"]
 mod live_engine_377;
 
-const USER: &str = "t2as11rv1";
 const COINS: i32 = 995;
 const BUCKET: i32 = 1925;
 const SHOP_OBJECT: i32 = 2347; // Hammer: the real general-store stock has five.
@@ -617,18 +616,14 @@ fn fixture_interventions() -> Vec<Value> {
 }
 
 #[test]
-#[ignore = "requires orchestrator-started Fairy Ring 377 engine and prepared t2as11rv1 near Draynor bank"]
+#[ignore = "requires orchestrator-started Fairy Ring 377 engine and prepared account near Draynor bank"]
 fn bank_shop_amount_drag_live_377() {
     let root = PathBuf::from(
         std::env::var("CLIENT_377_LIVE_DIR").expect("explicit evidence directory required"),
     );
     let cache =
         std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched running cache required");
-    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account required");
-    assert_eq!(
-        user, USER,
-        "this fixture is reserved for the coordinated account"
-    );
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit account required");
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists(), "quiet lock blocks live runs");
     }

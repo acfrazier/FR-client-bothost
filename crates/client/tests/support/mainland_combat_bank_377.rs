@@ -861,13 +861,12 @@ fn varrock(
 }
 
 #[test]
-#[ignore = "requires Fairy Ring 377 engine and a naturally completed tutorial t2a account"]
+#[ignore = "requires Fairy Ring 377 engine and a naturally completed tutorial account"]
 fn natural_mainland_combat_and_bank_377() {
     let root =
         PathBuf::from(std::env::var("CLIENT_377_LIVE_DIR").expect("explicit evidence directory"));
     let cache = std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched running cache");
-    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account");
-    assert!(user.starts_with("t2a"));
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit account");
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists());
     }

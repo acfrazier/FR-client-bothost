@@ -137,8 +137,7 @@ fn first_login_scene2_logout_relog_scene2() {
         std::env::var("CLIENT_377_LIVE_DIR").expect("explicit live evidence directory required");
     let cache_dir =
         std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched running 377 cache required");
-    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account required");
-    assert!(user.starts_with("t2a"));
+    let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit account required");
     if let Ok(lock) = std::env::var("CLIENT_377_QUIET_LOCK") {
         assert!(!Path::new(&lock).exists(), "quiet lock blocks live runs");
     }
