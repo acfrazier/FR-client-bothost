@@ -7832,12 +7832,13 @@ impl Client {
     /// the per-modal redraw flags mirror TS
     /// `redrawSide`/`redrawIcons`/`redrawChat`. Not to be confused with the
     /// incoming-server `apply_if_close`.
+    /// Revision 377 delegates to Java's layer-unloading close path.
     fn close_modal(&mut self) {
         if self.revision.is_377() {
-            super::outbound_377::close_modal_377(&mut self.out);
-        } else {
-            self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
+            self.close_interfaces_377();
+            return;
         }
+        self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
             self.redraw_side = true;
