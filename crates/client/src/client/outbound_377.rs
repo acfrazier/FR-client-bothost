@@ -31,6 +31,29 @@ pub(crate) struct Outbound377 {
 }
 
 impl Client {
+    /// Emit one revision-377 game-click step without probing stale local collision.
+    ///
+    /// The caller must have opened a door and checked that the destination is
+    /// an adjacent cardinal tile. Server collision still decides movement.
+    /// Other revisions and coordinates outside the unsigned wire range refuse
+    /// before writing a byte or advancing ISAAC.
+    pub fn write_pending_door_step_377(&mut self, absolute_x: i32, absolute_z: i32) -> bool {
+        if self.revision() != crate::io::ClientRevision::R377
+            || !(0..=i32::from(u16::MAX)).contains(&absolute_x)
+            || !(0..=i32::from(u16::MAX)).contains(&absolute_z)
+        {
+            return false;
+        }
+        movement_377(
+            &mut self.out,
+            0,
+            absolute_x,
+            absolute_z,
+            false,
+            std::iter::empty(),
+        )
+    }
+
     /// Java `OPOBJ2` counts every action, including a failed approach.
     ///
     /// Java: `Client.java:10333-10353`.
@@ -2302,6 +2325,38 @@ mod tests {
             &client.out.data()[1..client.out.pos],
             &[0x67, 0x89, 0x56, 0x78, 0x12, 0x34, 0x34, 0x56, 0x23, 0x45, 0x45, 0x67]
         );
+    }
+
+    #[test]
+    fn pending_door_step_377_uses_native_codec_and_refuses_without_writing() {
+        let seed = [1, 2, 3, 4];
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.out.random = Some(crate::io::Isaac::new(&seed));
+        for (x, z) in [(-1, 3206), (65536, 3206), (3205, -1), (3205, 65536)] {
+            assert!(!client.write_pending_door_step_377(x, z));
+            assert_eq!(client.out.pos, 0);
+        }
+        assert!(client.write_pending_door_step_377(3205, 3206));
+        let mut expected = Packet::alloc_outbound(1);
+        expected.random = Some(crate::io::Isaac::new(&seed));
+        assert!(movement_377(
+            &mut expected,
+            0,
+            3205,
+            3206,
+            false,
+            std::iter::empty(),
+        ));
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &expected.data()[..expected.pos],
+            "the shared codec owns both bytes and cipher progression"
+        );
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let mut client = client_with_revision(revision);
+            assert!(!client.write_pending_door_step_377(3205, 3206));
+            assert_eq!(client.out.pos, 0);
+        }
     }
 
     #[test]
