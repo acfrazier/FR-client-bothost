@@ -278,6 +278,27 @@ impl Client {
         }
     }
 
+    /// Java 377 Client.closeInterfaces (4567-4596), for a local Close button.
+    /// Unlike IF_CLOSE, only a side or chat layer resets Continue debounce.
+    pub(super) fn close_interfaces_377(&mut self) {
+        super::outbound_377::close_modal_377(&mut self.out);
+        if self.side_modal_id != -1 {
+            self.unload_interface_377(self.side_modal_id);
+            self.side_modal_id = -1;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+            self.resumed_pause_button = false;
+        }
+        if self.chat_modal_id != -1 {
+            self.unload_interface_377(self.chat_modal_id);
+            self.chat_modal_id = -1;
+            self.redraw_chat = true;
+            self.resumed_pause_button = false;
+        }
+        self.unload_interface_377(self.main_modal_id);
+        self.main_modal_id = -1;
+    }
+
     fn apply_operation_377(&mut self, operation: O<'_>) -> Option<R289Publication> {
         let mut p = R289Publication::default();
         match operation {
@@ -2336,6 +2357,105 @@ mod tests {
         client.dispatch_packet_377(109, &mut reopen).unwrap();
         assert_eq!(client.if_(301).unwrap().text, "decoded 301");
         assert_eq!(client.if_(221).unwrap().text, "decoded 221");
+    }
+
+    #[test]
+    fn close_button_377_unloads_layers_and_preserves_inventory() {
+        let mut client = client();
+        for (id, layer, kind) in [
+            (200, -1, ComponentType::TYPE_LAYER),
+            (201, 200, ComponentType::TYPE_TEXT),
+            (202, 200, ComponentType::TYPE_INV),
+            (210, -1, ComponentType::TYPE_LAYER),
+            (211, 210, ComponentType::TYPE_MODEL),
+            (220, -1, ComponentType::TYPE_LAYER),
+            (221, 220, ComponentType::TYPE_TEXT),
+        ] {
+            client.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: layer,
+                    r#type: kind,
+                    ..Default::default()
+                },
+            );
+            client.iface_mut(id).unwrap().text = format!("decoded {id}");
+        }
+        Arc::get_mut(&mut client.cache).unwrap().revision_377 =
+            Some(Box::new(crate::config::CacheRevision377 {
+                config: Default::default(),
+                interfaces: crate::config::runtime_377::InterfaceFields377 {
+                    client_code_layers: Default::default(),
+                    type1_fields: Vec::new(),
+                    null_string_masks: Vec::new(),
+                    initial_overlays: client.ifaces_mut.as_ref().clone(),
+                },
+            }));
+        for id in [201, 211, 221] {
+            let com = client.iface_mut(id).unwrap();
+            com.text = "server override".into();
+            com.hide = true;
+            com.anim_frame = 8;
+            com.anim_cycle = 9;
+            com.model1_id = 55;
+        }
+        client.iface_mut(202).unwrap().link_obj_type = Some(vec![11, 22]);
+        client.main_modal_id = 200;
+        client.side_modal_id = 210;
+        client.chat_modal_id = 220;
+        client.dialog_input_open = true;
+        client.resumed_pause_button = true;
+        client.redraw_side = false;
+        client.redraw_icons = false;
+        client.redraw_chat = false;
+        client.menu_action[0] = crate::client::MiniMenuAction::CLOSE_BUTTON;
+        client.doAction(0);
+        assert_eq!(
+            (client.main_modal_id, client.side_modal_id, client.chat_modal_id),
+            (-1, -1, -1)
+        );
+        assert!(client.redraw_side && client.redraw_icons && client.redraw_chat);
+        assert!(!client.resumed_pause_button);
+        assert!(client.dialog_input_open, "local close leaves the count prompt alone");
+        assert_eq!(&client.out.data()[..client.out.pos], &[110]);
+        for id in [201, 211, 221] {
+            let com = client.if_(id).unwrap();
+            assert_eq!(com.text, format!("decoded {id}"));
+            assert!(!com.hide);
+            assert_eq!((com.anim_frame, com.anim_cycle, com.model1_id), (0, 0, 0));
+        }
+        assert_eq!(
+            client.if_(202).unwrap().link_obj_type.as_deref(),
+            Some(&[11, 22][..])
+        );
+    }
+
+    #[test]
+    fn close_button_377_resets_continue_only_for_side_or_chat_layers() {
+        for (side, chat, main) in [
+            (-1, -1, -1),
+            (-1, -1, 200),
+            (210, -1, -1),
+            (-1, 220, -1),
+            (210, 220, 200),
+        ] {
+            let mut client = client();
+            client.side_modal_id = side;
+            client.chat_modal_id = chat;
+            client.main_modal_id = main;
+            client.resumed_pause_button = true;
+            client.menu_action[0] = crate::client::MiniMenuAction::CLOSE_BUTTON;
+            client.doAction(0);
+            assert_eq!(client.resumed_pause_button, side == -1 && chat == -1);
+        }
+        // The existing 289 local-close path always clears the debounce.
+        let mut client = client();
+        client.revision = crate::client::ClientRevision::R289;
+        client.resumed_pause_button = true;
+        client.menu_action[0] = crate::client::MiniMenuAction::CLOSE_BUTTON;
+        client.doAction(0);
+        assert!(!client.resumed_pause_button);
     }
 
     #[test]
