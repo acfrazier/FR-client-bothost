@@ -281,7 +281,7 @@ impl Client {
     /// Java 377 Client.closeInterfaces (4567-4596), for a local Close button.
     /// Unlike IF_CLOSE, only a side or chat layer resets Continue debounce.
     pub(super) fn close_interfaces_377(&mut self) {
-        super::outbound_377::close_modal_377(&mut self.out);
+        crate::client::outbound_377::close_modal_377(&mut self.out);
         if self.side_modal_id != -1 {
             self.unload_interface_377(self.side_modal_id);
             self.side_modal_id = -1;
@@ -966,11 +966,40 @@ impl Client {
             heights[x_index][z_index + 1],
         );
         let layer = LOC_SHAPE_TO_LAYER[shape as usize];
+        let loop_cycle = self.loop_cycle;
         // The shared renderer materialises each existing scene slot after its
         // stamp changes. Record only decoded animation state, never legacy bytes.
         match layer {
             LocLayer::WALL => {
                 if let Some(wall) = self.world.get_wall_mut(self.minusedlevel, x, z) {
+                    if shape == crate::dash3d::LocShape::WALL_L {
+                        wall.wall_model2_377 = Some(crate::dash3d::wall::WallModel2State377 {
+                            sequence: Some(sequence),
+                            angle: (angle + 1) & 0x3,
+                            h_sw: sw,
+                            h_se: se,
+                            h_ne: ne,
+                            h_nw: nw,
+                            start_cycle: loop_cycle,
+                        });
+                    } else if wall.anim_seq == -1
+                        && wall.wall_model2_377.is_none()
+                        && (wall.typecode2 & 0x1f) == crate::dash3d::LocShape::WALL_L
+                    {
+                        // Before a non-2 packet replaces the first model,
+                        // retain the original static second model (Java
+                        // field1538), including placement-time heights.
+                        let info = wall.typecode2 & 0xff;
+                        wall.wall_model2_377 = Some(crate::dash3d::wall::WallModel2State377 {
+                            sequence: None,
+                            angle: (((info >> 6) + 1) & 0x3),
+                            h_sw: wall.h_sw,
+                            h_se: wall.h_se,
+                            h_ne: wall.h_ne,
+                            h_nw: wall.h_nw,
+                            start_cycle: 0,
+                        });
+                    }
                     wall.anim_seq = sequence;
                     wall.anim_shape = shape;
                     wall.anim_angle = angle;
@@ -3062,6 +3091,132 @@ mod tests {
             assert_eq!(next_stamp, stamp.wrapping_add(1));
             assert_eq!(client.gens.scene, generation + 1);
             assert_eq!(packet.pos, 4);
+        }
+    }
+
+    fn wall_animation_cache_377() -> Cache {
+        let mut cache = Cache::default();
+        cache.seqs.resize_with(3, Default::default);
+        cache.revision_377 = Some(Box::new(crate::config::CacheRevision377 {
+            config: Default::default(),
+            interfaces: crate::config::runtime_377::InterfaceFields377 {
+                client_code_layers: Default::default(),
+                type1_fields: Vec::new(),
+                null_string_masks: Vec::new(),
+                initial_overlays: Vec::new(),
+            },
+        }));
+        cache
+    }
+
+    fn wall_animation_client_377(placement_shape: i32) -> Client {
+        let mut client = client_with_cache(wall_animation_cache_377());
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        client.groundh[0][12][19] = 100;
+        client.groundh[0][13][19] = 200;
+        client.groundh[0][13][20] = 300;
+        client.groundh[0][12][20] = 400;
+        client.world.set_wall(
+            0,
+            12,
+            19,
+            0,
+            1,
+            2,
+            0x40000000,
+            placement_shape,
+            10,
+            20,
+            30,
+            40,
+        );
+        client
+    }
+
+    #[test]
+    fn non_l_loc_anim_keeps_original_static_second_wall_heights() {
+        let mut client = wall_animation_client_377(crate::dash3d::LocShape::WALL_L);
+        client.loop_cycle = 100;
+        let mut packet = Packet::new(vec![0, 1, 128, 0x43]);
+        client.dispatch_packet_377(142, &mut packet).unwrap();
+
+        let wall = client.world.get_wall(0, 12, 19).unwrap();
+        assert_eq!(wall.anim_seq, 1);
+        assert_eq!(
+            wall.wall_model2_377,
+            Some(crate::dash3d::wall::WallModel2State377 {
+                sequence: None,
+                angle: 1,
+                h_sw: 10,
+                h_se: 20,
+                h_ne: 30,
+                h_nw: 40,
+                start_cycle: 0,
+            }),
+            "the original model2 is static and keeps placement heights"
+        );
+    }
+
+    #[test]
+    fn shape2_then_non2_before_render_keeps_prior_second_animation() {
+        let mut client = wall_animation_client_377(crate::dash3d::LocShape::WALL_STRAIGHT);
+        client.loop_cycle = 100;
+        let shape2_angle3 = ((crate::dash3d::LocShape::WALL_L << 2) | 3) as u8;
+        let mut first = Packet::new(vec![0, 1, shape2_angle3.wrapping_add(128), 0x43]);
+        client.dispatch_packet_377(142, &mut first).unwrap();
+        let previous = client
+            .world
+            .get_wall(0, 12, 19)
+            .unwrap()
+            .wall_model2_377
+            .expect("shape-2 packet records field1538");
+        assert_eq!(
+            previous,
+            crate::dash3d::wall::WallModel2State377 {
+                sequence: Some(1),
+                angle: 0,
+                h_sw: 100,
+                h_se: 200,
+                h_ne: 300,
+                h_nw: 400,
+                start_cycle: 100,
+            }
+        );
+
+        client.loop_cycle = 104;
+        client.groundh[0][12][19] = 500;
+        client.groundh[0][13][19] = 600;
+        client.groundh[0][13][20] = 700;
+        client.groundh[0][12][20] = 800;
+        let shape0_angle1 = 1u8;
+        let mut second = Packet::new(vec![0, 2, shape0_angle1.wrapping_add(128), 0x43]);
+        client.dispatch_packet_377(142, &mut second).unwrap();
+
+        let wall = client.world.get_wall(0, 12, 19).unwrap();
+        assert_eq!((wall.anim_seq, wall.anim_shape, wall.anim_angle), (2, 0, 1));
+        assert_eq!(wall.wall_model2_377, Some(previous));
+
+        let mut renderer = crate::render::RenderWorld::new();
+        match renderer
+            .wall_model2(&client.world, &client.cache, client.loop_cycle, 0, 12, 19)
+            .expect("cold resolution reconstructs prior field1538")
+        {
+            crate::dash3d::SceneModel::LocAnim(anim) => {
+                assert_eq!(anim.anim, Some(1));
+                assert_eq!((anim.shape, anim.angle), (2, 0));
+                assert_eq!(
+                    (
+                        anim.height_sw,
+                        anim.height_se,
+                        anim.height_ne,
+                        anim.height_nw
+                    ),
+                    (100, 200, 300, 400)
+                );
+                assert_eq!(anim.anim_cycle, 99);
+            }
+            _ => panic!("the retained second wall model must remain animated"),
         }
     }
 
