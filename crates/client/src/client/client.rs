@@ -3661,6 +3661,8 @@ impl Client {
             self.scene_state = 0;
             self.menu_num_entries = 0;
             self.last_response = Some(Instant::now());
+            // Java `Client.java` 3004: the grant clears the reboot countdown.
+            self.reboot_timer = 0;
             self.logout_timer = 0;
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
@@ -3751,6 +3753,9 @@ impl Client {
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
             self.begin_session_frames();
+            // Java `Client.java` 3127: the reconnect grant clears the
+            // countdown too.
+            self.reboot_timer = 0;
             self.menu_num_entries = 0;
             self.scene_load_start_time = Instant::now();
             self.reset_packet_observations();

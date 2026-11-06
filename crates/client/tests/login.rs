@@ -158,6 +158,47 @@ fn cold_login_clears_entity_tables() {
     server.join().unwrap();
 }
 
+/// Java `Client.java` 3004: the response-2 grant clears `rebootTimer`, so a
+/// server-update countdown (opcode 89) armed in an earlier session does not
+/// keep drawing "System update in: 0:00" after a successful login. Java
+/// clears it on the grant, never in `logout()`.
+#[test]
+fn cold_login_clears_reboot_timer() {
+    let _r = Renderer::new(false);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14); // login server probe
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap(); // response 0 → send seed
+        s.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).unwrap(); // g8 seed
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        assert_eq!(buf[0], 16); // cold login
+        s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
+    });
+
+    let mut c = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    // an opcode-89 notice armed the countdown before this login
+    c.reboot_timer = 1;
+    c.login("bob", "pw", false).unwrap();
+    assert!(c.ingame);
+    assert_eq!(c.reboot_timer, 0, "response 2 must clear reboot_timer");
+    server.join().unwrap();
+}
+
 #[test]
 fn reconnect_uses_opcode_18() {
     let _r = Renderer::new(false);
@@ -253,6 +294,63 @@ fn reconnect_response_15_keeps_game_and_local_player() {
     c.bump_gens(client::io::ServerProt::PLAYER_INFO);
     assert_eq!(c.session_start_gens().player_info, new_start.player_info);
     assert_eq!(c.gens.player_info, new_start.player_info + 1);
+    server.join().unwrap();
+}
+
+/// Java `Client.java` 3127: the response-15 reconnect grant clears
+/// `rebootTimer` the same way the response-2 grant does.
+#[test]
+fn reconnect_grant_clears_reboot_timer() {
+    let _r = Renderer::new(false);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        // cold login grant (response 2)
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14);
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap();
+        s.write_all(&[0u8; 8]).unwrap();
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        s.write_all(&[2, 0, 0]).unwrap();
+
+        // reconnect grant (response 15, Java `Client.java` 3737)
+        let (mut s2, _) = listener.accept().unwrap();
+        let mut hdr2 = [0u8; 2];
+        s2.read_exact(&mut hdr2).unwrap();
+        assert_eq!(hdr2[0], 14);
+        for _ in 0..8 {
+            let _ = s2.write_all(&[0]);
+        }
+        s2.write_all(&[0]).unwrap();
+        s2.write_all(&[0u8; 8]).unwrap();
+        let mut buf2 = [0u8; 512];
+        let n2 = s2.read(&mut buf2).unwrap();
+        assert!(n2 > 0);
+        assert_eq!(buf2[0], 18); // reconnect wrapper
+        s2.write_all(&[15]).unwrap();
+    });
+
+    let mut c = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.login("bob", "pw", false).unwrap();
+    assert!(c.ingame);
+    // a reboot notice arrived during the first session
+    c.reboot_timer = 1;
+    c.login("bob", "pw", true).unwrap();
+    assert!(c.ingame);
+    assert_eq!(c.reboot_timer, 0, "response 15 must clear reboot_timer");
     server.join().unwrap();
 }
 
