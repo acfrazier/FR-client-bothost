@@ -170,6 +170,45 @@ in `CLIENT_377_BANK_SHOP_INTERVENTIONS` (`[]` when none).
 coins and buckets before the tested actions. The proof records each
 intervention. The account must already hold at least 10 banked coins.
 
+`live_production_377` is an ignored CPU-rendered proof of the production
+interfaces offered by Fairy Ring's selected 377 content. It exercises a
+bronze furnace smelt, Varrock's anvil inventory and dagger production,
+an ungated Lumbridge range's Cook X and Cook All choices, a spinning wheel, and a
+product-earned level dialog and firework. Each phase records received
+inventories, XP, interfaces, outbound packets, fixture interventions,
+and lossless full-frame and 512×334 viewport PNGs.
+The knife-on-logs phase records the received server response, inventory
+and XP deltas, and any product or quantity interface as an observation.
+It does not assume a missing or working choice, manufacture a product
+or Make-X interface, or make a historical claim about that quantity choice.
+Revision 377 validates `LOC_ANIM` (142), including every enclosed child,
+before applying its sequence to an existing scene slot. It retains Java's
+four corner heights, wall/decoration shapes, angles, and strict edge bounds.
+The 274/289 animation paths remain unchanged.
+
+Run only against an already-running Fairy Ring engine and an explicit
+`t2a*` account that has completed the tutorial. Set `ENGINE_DIR`,
+`CLIENT_377_RUNTIME_CACHE_DIR`, `CLIENT_377_LIVE_DIR`,
+`CLIENT_377_LIVE_USER`, `CLIENT_377_LIVE_PASSWORD`, and
+`CLIENT_377_QUIET_LOCK`, then run:
+
+```bash
+cargo test -p client --no-default-features --test live_production_377 -- --ignored --nocapture
+```
+
+`CLIENT_377_PRODUCTION_PHASE` selects `all` (default), `furnace`,
+`anvil`, `cook`, `fletch`, `craft`, or `levelup`.
+`CLIENT_377_PRODUCTION_PREPARE=1` admits and records missing raw inputs
+and, only when necessary, a Smithing level-one baseline reset; the
+production outputs and level increase are always earned by real actions.
+Without that opt-in, prepare the inputs and level-one account yourself.
+XP assertions respect the server's whole-XP wire truncation.
+For a repeat run with a full inventory, `CLIENT_377_PRODUCTION_DROP_BARS=1`
+together with `PREPARE=1` separately permits real inventory Drop actions
+on prior bronze-bar outputs, only as needed to make room for the next ores.
+Every drop and its received inventory change is recorded as an intervention;
+without this explicit opt-in, the fixture does not discard outputs.
+
 `gpu_fountain` includes self-contained Metal/wgpu readback regressions for
 textured scanline lighting, subpixel edges, and near-clipped polygons.
 Its additional actual-model differential is opt-in and needs a versioned
