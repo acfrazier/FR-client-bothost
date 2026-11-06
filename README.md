@@ -109,7 +109,10 @@ python3 tools/generate_revision_377_sounds.py \
 `live_sound_377` is an ignored opt-in proof of profile-bound, shared-table
 high-memory construction, rendered scene2 and server logout on Fairy Ring's
 local 377 engine. It requires `ENGINE_DIR`, `CLIENT_377_RUNTIME_CACHE_DIR`,
-`CLIENT_377_LIVE_DIR` and a `CLIENT_377_LIVE_USER` starting with `t2a`.
+`CLIENT_377_LIVE_DIR` and an explicit `CLIENT_377_LIVE_USER`.
+Every 377 live fixture checks `CLIENT_377_LIVE_PREFIX` (default `t2a`).
+Set it to the assigned account prefix, for example `s12f`. Empty prefixes
+and accounts outside that prefix are rejected before connecting.
 It proves loading and login, not audible playback or PCM parity.
 
 Revision 377 uses separate Java-sized media tables: 100 slots each for
@@ -159,7 +162,7 @@ The bank X actions accept Java's bodyless `P_COUNTDIALOG` (58), close any
 social input, clear and open the amount prompt, and redraw chat only after
 the complete frame has been validated.
 
-`live_bank_shop_377` is an ignored proof for the coordinated `t2as11rv1`
+`live_bank_shop_377` is an ignored proof for an explicitly selected prepared
 account near Draynor bank. It checks Withdraw/Deposit-10 and X, amount
 prompts, an inventory drag, and Buy/Sell-5 against received server state.
 It walks through the production pathfinder to Lumbridge General Store,
@@ -184,10 +187,20 @@ or Make-X interface, or make a historical claim about that quantity choice.
 Revision 377 validates `LOC_ANIM` (142), including every enclosed child,
 before applying its sequence to an existing scene slot. It retains Java's
 four corner heights, wall/decoration shapes, angles, and strict edge bounds.
+A wall animation with packet shape other than 2 replaces only the first
+model. The second model keeps its static placement or earlier animation,
+including when multiple packets arrive before the first rendered frame.
 The 274/289 animation paths remain unchanged.
 
+The 377 local Close action unloads the side, chat and main layers, restoring
+decoded component defaults while retaining inventory contents. As Java 377
+does, only an open side or chat layer clears the Continue debounce.
+`live_interactions_377::local_close_unloads_guide_text_and_resets_continue_377`
+checks this on a fresh account with real Guide dialogue and no state seeds.
+Run that ignored test by its exact name to avoid the longer tutorial proof.
+
 Run only against an already-running Fairy Ring engine and an explicit
-`t2a*` account that has completed the tutorial. Set `ENGINE_DIR`,
+account that has completed the tutorial. Set `ENGINE_DIR`,
 `CLIENT_377_RUNTIME_CACHE_DIR`, `CLIENT_377_LIVE_DIR`,
 `CLIENT_377_LIVE_USER`, `CLIENT_377_LIVE_PASSWORD`, and
 `CLIENT_377_QUIET_LOCK`, then run:
