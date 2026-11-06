@@ -61,7 +61,8 @@ The ignored `live_login_377` and `live_interactions_377` proofs require an
 explicit, absolute Fairy Ring worktree `ENGINE_DIR` and its
 `data/config/private.pem`, with no RSA overrides or fallback key. They also
 require `CLIENT_377_LIVE_DIR`, `CLIENT_377_RUNTIME_CACHE_DIR`, and a
-`CLIENT_377_LIVE_USER` name that starts with `t2a`. Both record the selected
+`CLIENT_377_LIVE_USER` name that starts with `CLIENT_377_LIVE_PREFIX`
+(nonempty; default `t2a`). Both record the selected
 engine and key path in `live-config.json`; endpoints are fixed to localhost
 ports 81 and 43595. The login proof saves two scene-2 frames around a real
 server logout and relog. The interaction proof uses a rendered terrain click,
