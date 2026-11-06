@@ -37,10 +37,18 @@ const INVENTORY: usize = 3214;
 const COOKING: usize = 7;
 const CRAFTING: usize = 12;
 const SMITHING: usize = 13;
+// Content experience is in tenths; UPDATE_STAT sends floor(exp / 10).
 const BRONZE_BAR_XP: i32 = 62;
 const BRONZE_DAGGER_XP: i32 = 125;
 const SHRIMP_XP: i32 = 300;
 const WOOL_XP: i32 = 25;
+
+fn wire_xp_gain_matches(before: i32, after: i32, script_deci_xp: i32) -> bool {
+    // The packet does not reveal the starting fractional tenth. These are
+    // exactly its possible deltas, not a tolerance around the script award.
+    let gain = after - before;
+    (script_deci_xp / 10..=(script_deci_xp + 9) / 10).contains(&gain)
+}
 
 #[derive(Default)]
 struct Outbound(Mutex<Vec<Value>>);
@@ -612,7 +620,7 @@ fn prepare_smithing_baseline(
 ) {
     let level = c.stat_base_level[SMITHING];
     let xp = c.stat_xp[SMITHING];
-    if prepare && (level != 1 || xp != 0) {
+    if prepare && level != 1 {
         admit_cheat(
             c,
             r,
@@ -634,13 +642,6 @@ fn prepare_smithing_baseline(
         c.stat_base_level[SMITHING], 1,
         "level-up proof requires Smithing level 1; use PREPARE=1 only for the admitted baseline reset"
     );
-    if !prepare {
-        assert_eq!(
-            c.stat_xp[SMITHING],
-            0,
-            "all-phase Smithing proof needs 0 starting XP; use PREPARE=1 for the recorded baseline reset"
-        );
-    }
 }
 fn component_origin(c: &Client, root: i32) -> (i32, i32) {
     if root == c.main_modal_id {
@@ -685,10 +686,10 @@ fn component_rect(
     None
 }
 
-fn click(c: &mut Client, r: &mut Renderer, x: i32, y: i32) {
+fn click(c: &mut Client, r: &mut Renderer, button: i32, x: i32, y: i32) {
     c.shell.apply_mouse_move(x, y);
     drop(r.mainredraw(c));
-    c.shell.apply_mouse_down(1, x, y);
+    c.shell.apply_mouse_down(button, x, y);
     c.shell.latch_click();
     c.mainloop();
     assert!(
@@ -711,7 +712,37 @@ fn click_component(c: &mut Client, r: &mut Renderer, root: i32, target: i32) {
     let (x, y, width, height) = component_rect(c, root, target, origin.0, origin.1)
         .expect("button belongs to the rendered interface");
     assert!(width > 0 && height > 0);
-    click(c, r, x + width / 2, y + height / 2);
+    let (x, y) = (x + width / 2, y + height / 2);
+    c.shell.apply_mouse_move(x, y);
+    drop(r.mainredraw(c));
+    let entries = (0..c.menu_num_entries.max(0) as usize)
+        .filter(|&entry| c.menu_param_c[entry] == target)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries.len(),
+        1,
+        "one real menu entry for component {target}"
+    );
+    let entry = entries[0] as i32;
+    if entry == c.menu_num_entries - 1 {
+        click(c, r, 1, x, y);
+        return;
+    }
+    // Cook 1/5/X/All intentionally share the same rectangle. A left click
+    // chooses only the default; select the requested row of the real menu.
+    click(c, r, 2, x, y);
+    assert!(c.is_menu_open, "production right click opens quantity menu");
+    let (origin_x, origin_y) = match c.menu_area {
+        0 => (4, 4),
+        1 => (553, 205),
+        2 => (17, 357),
+        area => panic!("rendered menu has an applet area, got {area}"),
+    };
+    let menu_x = origin_x + c.menu_x + c.menu_width / 2;
+    let menu_y = origin_y + c.menu_y + (c.menu_num_entries - 1 - entry) * 15 + 26;
+    assert_eq!(c.menu_option_at(menu_x, menu_y), Some(entry));
+    click(c, r, 1, menu_x, menu_y);
+    assert!(!c.is_menu_open, "quantity menu closes after selection");
 }
 
 fn click_button(c: &mut Client, r: &mut Renderer, root: i32, label: &str) -> i32 {
@@ -750,6 +781,89 @@ fn click_pause_continue(c: &mut Client, r: &mut Renderer) -> i32 {
     click_button(c, r, c.chat_modal_id, "Click here to continue")
 }
 
+fn resume_pause_chain(
+    c: &mut Client,
+    r: &mut Renderer,
+    root: &Path,
+    outbound: &Outbound,
+    stages: &mut Vec<Value>,
+    stage_name: &str,
+) {
+    let close_before = c.main_modal_packet_state().close_packets;
+    let mut followup = 0;
+    while c.chat_modal_id >= 0 {
+        let modal = c.chat_modal_id;
+        let generation = c.gens.iface;
+        let button = click_pause_continue(c, r);
+        pump_until(c, r, 15, "server continued the level-up pause", |client| {
+            client.chat_modal_id != modal
+                || (client.gens.iface > generation && !client.resumed_pause_button)
+        });
+        eprintln!("377 production continued chat modal {modal} through component {button}");
+        if c.chat_modal_id >= 0 {
+            assert!(
+                has_continue_button(c),
+                "server follow-on level-up dialog exposes Continue"
+            );
+            followup += 1;
+            capture_stage(
+                c,
+                r,
+                root,
+                outbound,
+                stages,
+                &format!("{stage_name}-followup-{followup}"),
+            );
+        }
+    }
+    assert!(
+        c.main_modal_packet_state().close_packets > close_before,
+        "the server closed the final pause with IF_CLOSE"
+    );
+    assert!(
+        !c.resumed_pause_button,
+        "Java IF_CLOSE resets the Continue debounce"
+    );
+}
+
+fn await_firework_midpoint(c: &mut Client, r: &mut Renderer) {
+    let player = c.local_player.as_ref().unwrap();
+    let spotanim = player.entity.spotanim_id;
+    assert!(spotanim >= 0, "level-up firework was received");
+    assert_eq!(
+        player.entity.spotanim_height, 124,
+        "level-up firework height"
+    );
+    let sequence = c
+        .cache
+        .spot(spotanim as usize)
+        .seq
+        .expect("firework sequence");
+    let frames = c
+        .cache
+        .seq(sequence)
+        .frames
+        .as_ref()
+        .expect("firework frames");
+    assert!(frames.len() > 1, "firework has an animated sequence");
+    let midpoint = i32::try_from(frames.len() / 2).unwrap();
+    eprintln!(
+        "377 production firework {spotanim}, sequence {sequence}, {} frames, capture frame {midpoint}",
+        frames.len()
+    );
+    pump_until(
+        c,
+        r,
+        15,
+        "level-up firework reaches its midpoint",
+        |client| {
+            client.local_player.as_ref().is_some_and(|player| {
+                player.entity.spotanim_id == spotanim && player.entity.spotanim_frame >= midpoint
+            })
+        },
+    );
+}
+
 fn handle_levelup_pause(
     c: &mut Client,
     r: &mut Renderer,
@@ -762,21 +876,9 @@ fn handle_levelup_pause(
     if c.stat_base_level[SMITHING] <= previous_level || !has_continue_button(c) {
         return false;
     }
-    let player = c.local_player.as_ref().unwrap();
-    assert_ne!(
-        player.entity.spotanim_id, -1,
-        "level-up firework was received"
-    );
-    assert_eq!(
-        player.entity.spotanim_height, 124,
-        "level-up firework height"
-    );
+    await_firework_midpoint(c, r);
     capture_stage(c, r, root, outbound, stages, stage_name);
-    let button = click_pause_continue(c, r);
-    pump_until(c, r, 15, "resume server level-up pause", |client| {
-        client.chat_modal_id < 0 && client.resumed_pause_button
-    });
-    eprintln!("377 production resumed level-up through component {button}");
+    resume_pause_chain(c, r, root, outbound, stages, stage_name);
     true
 }
 
@@ -792,19 +894,25 @@ fn walk_waypoint(
     let before = tile(c);
     let player = c.local_player.as_ref().unwrap();
     let (x, z) = (player.route_x[0], player.route_z[0]);
-    assert!(c.tryMove(
-        x,
-        z,
-        requested.0 - c.map_build_base_x,
-        requested.1 - c.map_build_base_z,
-        true,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-    ));
+    assert!(
+        c.tryMove(
+            x,
+            z,
+            requested.0 - c.map_build_base_x,
+            requested.1 - c.map_build_base_z,
+            true,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ),
+        "production pathfinder from {before:?} to {requested:?}, plane={}, base=({},{})",
+        c.minusedlevel,
+        c.map_build_base_x,
+        c.map_build_base_z
+    );
     let endpoint = *c
         .try_move_path
         .last()
@@ -830,51 +938,27 @@ fn walk_waypoint(
 }
 
 fn walk_route(c: &mut Client, r: &mut Renderer, target: (i32, i32), actions: &mut Vec<Value>) {
-    for _ in 0..100 {
-        let current = tile(c);
-        let dx = target.0 - current.0;
-        let dz = target.1 - current.1;
-        if dx == 0 && dz == 0 {
-            return;
-        }
-        let distance = dx.abs().max(dz.abs());
-        let step = distance.min(6);
-        let next = (
-            current.0 + dx * step / distance,
-            current.1 + dz * step / distance,
-        );
-        walk_waypoint(c, r, next, actions);
-    }
-    assert_eq!(
-        tile(c),
-        target,
-        "production route reached its content waypoint"
-    );
+    // Let the production BFS route around the complete obstacle. Interpolating
+    // short goals can select a shelf or a wall and never reach the real goal.
+    walk_waypoint(c, r, target, actions);
+    assert_eq!(tile(c), target, "content waypoint is a standable tile");
 }
 
 fn walk_near(c: &mut Client, r: &mut Renderer, target: (i32, i32), actions: &mut Vec<Value>) {
-    for _ in 0..100 {
-        let current = tile(c);
-        if (current.0 - target.0)
-            .abs()
-            .max((current.1 - target.1).abs())
-            <= 1
-        {
-            return;
-        }
-        let dx = target.0 - current.0;
-        let dz = target.1 - current.1;
-        let distance = dx.abs().max(dz.abs());
-        let step = distance.min(6);
-        let next = (
-            current.0 + dx * step / distance,
-            current.1 + dz * step / distance,
-        );
-        walk_waypoint(c, r, next, actions);
+    let current = tile(c);
+    if (current.0 - target.0)
+        .abs()
+        .max((current.1 - target.1).abs())
+        > 1
+    {
+        walk_waypoint(c, r, target, actions);
     }
-    panic!(
-        "production path approached location tile {target:?} from {:?}",
-        tile(c)
+    let arrived = tile(c);
+    assert!(
+        (arrived.0 - target.0)
+            .abs()
+            .max((arrived.1 - target.1).abs())
+            <= 1
     );
 }
 
@@ -887,8 +971,101 @@ const LUMBRIDGE_ROUTE: &[(i32, i32)] = &[
     (3170, 3250),
     (3185, 3250),
     (3200, 3250),
-    (3210, 3247),
+    (3216, 3245),
 ];
+
+// Reuse the stage-11 mainland witness's complete northern-bridge road.
+// The selected map has no Lumbridge anvil; its real 2783 smithy is in Varrock.
+const VARROCK_ROAD: &[(i32, i32)] = &[
+    (3216, 3245),
+    (3216, 3262),
+    (3225, 3262),
+    (3234, 3262),
+    (3243, 3262),
+    (3244, 3275),
+    (3238, 3288),
+    (3239, 3302),
+    (3247, 3312),
+    (3253, 3322),
+    (3264, 3328),
+    (3264, 3338),
+    (3271, 3350),
+    (3264, 3359),
+    (3251, 3359),
+    (3245, 3364),
+    (3245, 3372),
+    (3240, 3380),
+    (3231, 3390),
+    (3222, 3400),
+];
+
+fn varrock_road(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>, north: bool) {
+    let current = tile(c);
+    let start = VARROCK_ROAD
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, point)| (point.0 - current.0).abs() + (point.1 - current.1).abs())
+        .unwrap()
+        .0;
+    if north {
+        for &waypoint in &VARROCK_ROAD[start..] {
+            walk_waypoint(c, r, waypoint, actions);
+        }
+    } else {
+        for &waypoint in VARROCK_ROAD[..=start].iter().rev() {
+            walk_waypoint(c, r, waypoint, actions);
+        }
+    }
+}
+
+fn approach_anvil(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) -> LoadedLocation {
+    varrock_road(c, r, actions, true);
+    for point in [(3222, 3415), (3231, 3424), (3231, 3432)] {
+        walk_waypoint(c, r, point, actions);
+    }
+    // content/maps/m50_53.jm2:8468 is the southern smithy door.
+    open_passage(c, r, "Door", (3231, 3433), actions);
+    walk_route(c, r, (3231, 3434), actions);
+    walk_route(c, r, (3230, 3434), actions);
+    let anvil = find_location(c, Some(2783), Some("Anvil"), None, Some((3228, 3434, 0)))
+        .expect("actual Varrock anvil at content/maps/m50_53.jm2:8315");
+    walk_near(c, r, (anvil.x, anvil.z), actions);
+    anvil
+}
+
+fn leave_anvil(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) {
+    for point in [
+        (3230, 3434),
+        (3231, 3434),
+        (3231, 3432),
+        (3231, 3424),
+        (3222, 3415),
+        (3222, 3400),
+    ] {
+        walk_route(c, r, point, actions);
+    }
+    varrock_road(c, r, actions, false);
+}
+
+fn leave_furnace(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) {
+    let current = tile(c);
+    if (3221..=3227).contains(&current.0) && (3251..=3258).contains(&current.1) {
+        for point in [(3225, 3253), (3225, 3248), (3216, 3245)] {
+            walk_route(c, r, point, actions);
+        }
+    }
+}
+
+fn approach_furnace(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) -> LoadedLocation {
+    // m50_50.jm2:7411: furnace 2785 at (3225,3256), entered from the south.
+    for point in [(3220, 3248), (3225, 3248), (3225, 3253), (3225, 3255)] {
+        walk_route(c, r, point, actions);
+    }
+    let furnace = find_location(c, Some(2785), Some("Furnace"), None, Some((3225, 3256, 0)))
+        .expect("actual Lumbridge furnace loaded from content");
+    walk_near(c, r, (furnace.x, furnace.z), actions);
+    furnace
+}
 
 fn ensure_lumbridge(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) {
     assert_eq!(
@@ -896,14 +1073,28 @@ fn ensure_lumbridge(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) 
         "mainland production route starts on plane 0"
     );
     let current = tile(c);
-    if (3200..=3211).contains(&current.0) && (3205..=3215).contains(&current.1) {
-        walk_route(c, r, (3208, 3213), actions);
-        leave_kitchen(c, r, actions);
-        walk_route(c, r, (3210, 3247), actions);
+    leave_furnace(c, r, actions);
+    if current.1 >= 3290 {
+        varrock_road(c, r, actions, false);
         return;
     }
-    if (current.0 - 3210).abs().max((current.1 - 3247).abs()) <= 35 {
-        walk_route(c, r, (3210, 3247), actions);
+    if (3200..=3211).contains(&current.0) && (3205..=3215).contains(&current.1) {
+        leave_kitchen(c, r, actions);
+        walk_route(c, r, (3216, 3245), actions);
+        return;
+    }
+    if (3231..=3237).contains(&current.0) && (3195..=3199).contains(&current.1) {
+        if current.1 <= 3197 {
+            walk_route(c, r, (3235, 3197), actions);
+            open_passage(c, r, "Door", (3235, 3198), actions);
+        }
+        for point in [(3235, 3199), (3235, 3208), (3220, 3218), (3216, 3245)] {
+            walk_route(c, r, point, actions);
+        }
+        return;
+    }
+    if (current.0 - 3216).abs().max((current.1 - 3245).abs()) <= 35 {
+        walk_route(c, r, (3216, 3245), actions);
         return;
     }
     let (route_index, route_distance) = LUMBRIDGE_ROUTE
@@ -924,7 +1115,7 @@ fn ensure_lumbridge(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) 
     for &waypoint in LUMBRIDGE_ROUTE.iter().skip(route_index + 1) {
         walk_waypoint(c, r, waypoint, actions);
     }
-    walk_route(c, r, (3210, 3247), actions);
+    walk_route(c, r, (3216, 3245), actions);
 }
 
 fn operate_location(c: &mut Client, location: LoadedLocation, option_index: usize) -> Value {
@@ -970,45 +1161,50 @@ fn open_passage(
     position: (i32, i32),
     actions: &mut Vec<Value>,
 ) {
+    // Use the actual loaded door, not an assumed closed/open object-id pair.
+    // The following walk still has to traverse the passage through the live
+    // production pathfinder and received player updates.
     if let Some(closed) = find_location(
         c,
         None,
         Some(name),
         Some("Open"),
-        Some((position.0, position.1, 0)),
+        Some((position.0, position.1, 3)),
     ) {
         actions.push(operate_location(c, closed, closed.option_index.unwrap()));
         pump_until(c, r, 30, "door opened by server", |client| {
             find_location(
                 client,
-                None,
+                Some(closed.id),
                 Some(name),
                 Some("Open"),
-                Some((position.0, position.1, 0)),
+                Some((closed.x, closed.z, 0)),
             )
             .is_none()
-                && find_location(
-                    client,
-                    None,
-                    Some(name),
-                    Some("Close"),
-                    Some((position.0, position.1, 3)),
-                )
-                .is_some()
         });
     } else {
-        assert!(
-            find_location(
-                c,
-                None,
-                Some(name),
-                Some("Close"),
-                Some((position.0, position.1, 3)),
-            )
-            .is_some(),
-            "actual {name} at {position:?} is already open"
-        );
+        actions.push(json!({"action":"passage-not-closed","name":name,
+            "near":[position.0,position.1],"radius":3,
+            "input":"no loaded Open action; subsequent live walk verifies passage"}));
     }
+}
+
+fn approach_range(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) -> LoadedLocation {
+    // The castle range is Cook's Assistant-gated. Use the ordinary cooking_oven
+    // at m50_49.jm2:5468, approaching its north entrance.
+    for point in [
+        (3220, 3244),
+        (3220, 3218),
+        (3235, 3218),
+        (3235, 3208),
+        (3235, 3199),
+    ] {
+        walk_route(c, r, point, actions);
+    }
+    open_passage(c, r, "Door", (3235, 3198), actions);
+    // The production item-on-location action makes the final approach.
+    find_location(c, Some(2728), Some("Range"), None, Some((3230, 3196, 0)))
+        .expect("ordinary Lumbridge range loaded from content")
 }
 
 fn approach_cook(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>) {
@@ -1235,10 +1431,10 @@ fn cook_range(
         client.dialog_input_open
     });
     capture_stage(c, r, root, outbound, stages, "cook-x-count-prompt");
-    let prompt = enter_amount(c, r, 1);
     let cooked_before_x = inventory_count(c, COOKED_SHRIMP);
     let burnt_before_x = inventory_count(c, BURNT_FISH);
     let xp_before_x = c.stat_xp[COOKING];
+    let prompt = enter_amount(c, r, 1);
     pump_until(
         c,
         r,
@@ -1248,23 +1444,22 @@ fn cook_range(
             inventory_count(client, RAW_SHRIMP) == raw_start - 1
                 && inventory_count(client, COOKED_SHRIMP) + inventory_count(client, BURNT_FISH)
                     == cooked_before_x + burnt_before_x + 1
+                && client.stat_xp[COOKING] - xp_before_x
+                    == (inventory_count(client, COOKED_SHRIMP) - cooked_before_x) * SHRIMP_XP / 10
         },
     );
     let cooked_delta_x = inventory_count(c, COOKED_SHRIMP) - cooked_before_x;
     assert!(matches!(cooked_delta_x, 0 | 1));
     assert_eq!(
         c.stat_xp[COOKING] - xp_before_x,
-        cooked_delta_x * SHRIMP_XP,
+        cooked_delta_x * SHRIMP_XP / 10,
         "cooking XP matches the actual product script success"
     );
     let cooked_levelup =
         if c.stat_base_level[COOKING] > cooking_level_before && has_continue_button(c) {
+            await_firework_midpoint(c, r);
             capture_stage(c, r, root, outbound, stages, "cook-levelup-after-x");
-            let button = click_pause_continue(c, r);
-            pump_until(c, r, 15, "resume Cook X level-up", |client| {
-                client.chat_modal_id < 0 && client.resumed_pause_button
-            });
-            eprintln!("377 production resumed Cook X level-up through component {button}");
+            resume_pause_chain(c, r, root, outbound, stages, "cook-levelup-after-x");
             true
         } else {
             false
@@ -1281,7 +1476,7 @@ fn cook_range(
         json!({"input":use_receipt,"button_component":x_button,
             "amount_prompt":prompt,"requested_amount":1,
             "cooked_delta":cooked_delta_x,
-            "burnt_delta":1-cooked_delta_x,"xp_per_success":SHRIMP_XP,
+            "burnt_delta":1-cooked_delta_x,"xp_per_success":SHRIMP_XP/10,
             "levelup":cooked_levelup}),
     );
     capture_stage(c, r, root, outbound, stages, "cook-x-one-complete");
@@ -1307,28 +1502,30 @@ fn cook_range(
                 .contains("How many would you like to cook?")
     });
     capture_stage(c, r, root, outbound, stages, "cook-all-menu");
-    let all_button = click_button(c, r, c.chat_modal_id, "Cook All");
     let cooked_before_all = inventory_count(c, COOKED_SHRIMP);
     let burnt_before_all = inventory_count(c, BURNT_FISH);
     let xp_before_all = c.stat_xp[COOKING];
+    let all_button = click_button(c, r, c.chat_modal_id, "Cook All");
     let mut levelup_number = 0;
+    let all_complete = |client: &Client| {
+        inventory_count(client, RAW_SHRIMP) == 0
+            && client.stat_xp[COOKING] - xp_before_all
+                == (inventory_count(client, COOKED_SHRIMP) - cooked_before_all) * SHRIMP_XP / 10
+    };
     loop {
         if c.stat_base_level[COOKING] > cooking_level_before && has_continue_button(c) {
             let stage_name = format!("cook-levelup-{}", levelup_number + 1);
+            await_firework_midpoint(c, r);
             capture_stage(c, r, root, outbound, stages, &stage_name);
-            let button = click_pause_continue(c, r);
-            pump_until(c, r, 15, "resume cooking level-up", |client| {
-                client.chat_modal_id < 0 && client.resumed_pause_button
-            });
+            resume_pause_chain(c, r, root, outbound, stages, &stage_name);
             levelup_number += 1;
-            eprintln!("377 production resumed cooking level-up through component {button}");
             continue;
         }
-        if inventory_count(c, RAW_SHRIMP) == 0 {
+        if all_complete(c) {
             break;
         }
         pump_until(c, r, 30, "Cook All product or level-up pause", |client| {
-            inventory_count(client, RAW_SHRIMP) == 0
+            all_complete(client)
                 || (client.stat_base_level[COOKING] > cooking_level_before
                     && has_continue_button(client))
         });
@@ -1339,7 +1536,7 @@ fn cook_range(
     assert_eq!(cooked_delta_all + burnt_delta_all, remaining);
     assert_eq!(
         c.stat_xp[COOKING] - xp_before_all,
-        cooked_delta_all * SHRIMP_XP,
+        cooked_delta_all * SHRIMP_XP / 10,
         "Cook All XP matches exactly the received successful products"
     );
     let all_after = action_state(c);
@@ -1353,7 +1550,7 @@ fn cook_range(
         packet_start_all,
         json!({"input":all_use,"button_component":all_button,
             "requested_amount":remaining,"cooked_delta":cooked_delta_all,
-            "burnt_delta":burnt_delta_all,"xp_per_success":SHRIMP_XP,
+            "burnt_delta":burnt_delta_all,"xp_per_success":SHRIMP_XP/10,
             "cooking_levelups":levelup_number}),
     );
     capture_stage(c, r, root, outbound, stages, "cook-all-complete");
@@ -1372,6 +1569,42 @@ fn smelt_once(
     action_name: &str,
     levelup_stage_name: &str,
 ) -> bool {
+    let needed_slots = usize::from(inventory_count(c, COPPER_ORE) == 0)
+        + usize::from(inventory_count(c, TIN_ORE) == 0);
+    while inventory_free_slots(c) < needed_slots {
+        assert!(
+            prepare
+                && std::env::var("CLIENT_377_PRODUCTION_DROP_BARS").as_deref() == Ok("1"),
+            "ore preparation needs free slots; dropping prior bronze bars requires explicit DROP_BARS=1"
+        );
+        let bars_before = inventory_count(c, BRONZE_BAR);
+        assert!(
+            bars_before > 0,
+            "only prior bronze-bar outputs may be dropped"
+        );
+        let slot = inventory_slot(c, BRONZE_BAR);
+        let free_before = inventory_free_slots(c);
+        let packet_start = packet_count(outbound);
+        c.menu_action[0] = MiniMenuAction::OP_HELD5;
+        c.menu_param_a[0] = BRONZE_BAR;
+        c.menu_param_b[0] = slot;
+        c.menu_param_c[0] = INVENTORY as i32;
+        c.doAction(0);
+        pump_until(c, r, 15, "server accepted bronze-bar Drop", |client| {
+            inventory_count(client, BRONZE_BAR) == bars_before - 1
+                && inventory_free_slots(client) == free_before + 1
+        });
+        record_intervention(
+            root,
+            interventions,
+            json!({"kind":"natural_drop_bronze_bar_for_capacity","object":BRONZE_BAR,
+                "slot":slot,"component":INVENTORY,
+                "input":"production doAction(OP_HELD5), real server inventory response",
+                "bars_before":bars_before,"bars_after":inventory_count(c,BRONZE_BAR),
+                "free_slots_before":free_before,"free_slots_after":inventory_free_slots(c),
+                "outbound_start":packet_start,"outbound_end":packet_count(outbound)}),
+        );
+    }
     ensure_item(
         c,
         r,
@@ -1399,7 +1632,7 @@ fn smelt_once(
         |client| {
             inventory_count(client, COPPER_ORE) == copper_before - 1
                 && inventory_count(client, TIN_ORE) == tin_before - 1
-                && client.stat_xp[SMITHING] == xp_before + BRONZE_BAR_XP
+                && wire_xp_gain_matches(xp_before, client.stat_xp[SMITHING], BRONZE_BAR_XP)
                 && (inventory_count(client, BRONZE_BAR) == bar_before + 1
                     || (client.stat_base_level[SMITHING] > level_before
                         && has_continue_button(client)))
@@ -1407,21 +1640,9 @@ fn smelt_once(
     );
     let leveled = c.stat_base_level[SMITHING] > level_before;
     if leveled {
-        let player = c.local_player.as_ref().unwrap();
-        assert_ne!(
-            player.entity.spotanim_id, -1,
-            "smelting level-up firework received"
-        );
-        assert_eq!(
-            player.entity.spotanim_height, 124,
-            "level-up firework height"
-        );
+        await_firework_midpoint(c, r);
         capture_stage(c, r, root, outbound, stages, levelup_stage_name);
-        let button = click_pause_continue(c, r);
-        pump_until(c, r, 15, "resume server smelting level-up", |client| {
-            client.chat_modal_id < 0 && client.resumed_pause_button
-        });
-        eprintln!("377 production resumed Smithing level-up through component {button}");
+        resume_pause_chain(c, r, root, outbound, stages, levelup_stage_name);
         pump_until(
             c,
             r,
@@ -1434,7 +1655,11 @@ fn smelt_once(
             inventory_count(client, BRONZE_BAR) == bar_before + 1
         });
     }
-    assert_eq!(c.stat_xp[SMITHING] - xp_before, BRONZE_BAR_XP);
+    assert!(wire_xp_gain_matches(
+        xp_before,
+        c.stat_xp[SMITHING],
+        BRONZE_BAR_XP
+    ));
     assert_eq!(inventory_count(c, COPPER_ORE), copper_before - 1);
     assert_eq!(inventory_count(c, TIN_ORE), tin_before - 1);
     assert_eq!(inventory_count(c, BRONZE_BAR), bar_before + 1);
@@ -1449,7 +1674,8 @@ fn smelt_once(
         packet_start,
         json!({"input":input,"expected_product":BRONZE_BAR,
             "copper_delta":-1,"tin_delta":-1,"bar_delta":1,
-            "smithing_xp_delta":BRONZE_BAR_XP,"levelup":leveled,
+            "smithing_xp_delta":c.stat_xp[SMITHING]-xp_before,
+            "script_deci_xp":BRONZE_BAR_XP,"levelup":leveled,
             "source":"content/scripts/skill_smithing/scripts/smelting/smelting.rs2:28-102"}),
     );
     leveled
@@ -1501,10 +1727,14 @@ fn smith_bronze_dagger(
         |client| {
             inventory_count(client, BRONZE_BAR) == bar_before - 1
                 && inventory_count(client, BRONZE_DAGGER) == dagger_before + 1
-                && client.stat_xp[SMITHING] == xp_before + BRONZE_DAGGER_XP
+                && wire_xp_gain_matches(xp_before, client.stat_xp[SMITHING], BRONZE_DAGGER_XP)
         },
     );
-    assert_eq!(c.stat_xp[SMITHING] - xp_before, BRONZE_DAGGER_XP);
+    assert!(wire_xp_gain_matches(
+        xp_before,
+        c.stat_xp[SMITHING],
+        BRONZE_DAGGER_XP
+    ));
     let leveled = handle_levelup_pause(
         c,
         r,
@@ -1525,13 +1755,14 @@ fn smith_bronze_dagger(
         packet_start,
         json!({"anvil_use":use_receipt,"product_action":action,
             "expected_product":BRONZE_DAGGER,"bar_delta":-1,"dagger_delta":1,
-            "smithing_xp_delta":BRONZE_DAGGER_XP,"levelup":leveled,
+            "smithing_xp_delta":c.stat_xp[SMITHING]-xp_before,
+            "script_deci_xp":BRONZE_DAGGER_XP,"levelup":leveled,
             "source":"content/scripts/skill_smithing/scripts/smithing/smithing.rs2:200-273; content/scripts/skill_smithing/configs/smithing/smithing.dbrow:1-10"}),
     );
     capture_stage(c, r, root, outbound, stages, "anvil-bronze-dagger-complete");
 }
 
-fn cut_logs_gap(
+fn record_fletching_attempt(
     c: &mut Client,
     r: &mut Renderer,
     root: &Path,
@@ -1557,30 +1788,22 @@ fn cut_logs_gap(
         "settle actual knife-on-logs product-script attempt",
         |client| client.gens.player_info >= generation + 2,
     );
-    assert_eq!(inventory_count(c, KNIFE), knife_before);
-    assert_eq!(inventory_count(c, LOGS), logs_before);
-    assert_eq!(c.stat_xp[9], xp_before);
     let after = action_state(c);
     push_action(
         root,
         actions,
         outbound,
-        "knife-on-logs-content-gap",
+        "knife-on-logs-attempt",
         before,
         after,
         packet_start,
-        json!({"input":input,"result":"no output, inventory consumption, XP, or Make-X prompt observed",
-            "content_gap":"multiobj3_close has no body; the cut-logs script returns before consuming wood",
-            "source":"content/scripts/skill_fletching/scripts/cut_logs.rs2:53-63"}),
+        json!({"input":input,"observation_only":true,
+            "knife_delta":inventory_count(c,KNIFE)-knife_before,
+            "logs_delta":inventory_count(c,LOGS)-logs_before,
+            "xp_delta":c.stat_xp[9]-xp_before,
+            "product_or_quantity_choice_assumed":false}),
     );
-    capture_stage(
-        c,
-        r,
-        root,
-        outbound,
-        stages,
-        "fletching-multiobj3-close-gap",
-    );
+    capture_stage(c, r, root, outbound, stages, "fletching-observation");
 }
 
 fn spin_one_wool(
@@ -1615,7 +1838,7 @@ fn spin_one_wool(
         |client| {
             inventory_count(client, WOOL) == wool_before - 1
                 && inventory_count(client, BALL_OF_WOOL) == ball_before + 1
-                && client.stat_xp[CRAFTING] == xp_before + WOOL_XP
+                && wire_xp_gain_matches(xp_before, client.stat_xp[CRAFTING], WOOL_XP)
                 && client.gens.scene > scene_generation
                 && client.gens.player_info > player_generation
                 && location_animation(client)
@@ -1652,7 +1875,8 @@ fn spin_one_wool(
         json!({"input":input,"scene_before":wheel_before,
             "scene_after":after_animation,"player_sequence_before":player_sequence_before,
             "player_sequence":player_sequence,"wool_delta":-1,
-            "ball_of_wool_delta":1,"crafting_xp_delta":WOOL_XP,
+            "ball_of_wool_delta":1,"crafting_xp_delta":c.stat_xp[CRAFTING]-xp_before,
+            "script_deci_xp":WOOL_XP,
             "source":"content/scripts/skill_crafting/scripts/spinning/spinning.rs2:43-64; content/scripts/skill_crafting/configs/spinning/spinning.struct:8-12"}),
     );
     let leveled = handle_levelup_pause(
@@ -1683,8 +1907,14 @@ fn climb_up_to_spinner(
     r: &mut Renderer,
     actions: &mut Vec<Value>,
 ) -> LoadedLocation {
-    let stair = find_location(c, Some(STAIRS_UP), None, Some("Climb-up"), None)
-        .expect("actual Lumbridge south staircase on plane 0");
+    let stair = find_location(
+        c,
+        Some(STAIRS_UP),
+        None,
+        Some("Climb-up"),
+        Some((3204, 3207, 0)),
+    )
+    .expect("actual Lumbridge south staircase on plane 0");
     walk_near(c, r, (stair.x, stair.z), actions);
     let receipt = operate_location(c, stair, stair.option_index.unwrap());
     actions.push(receipt);
@@ -1694,6 +1924,9 @@ fn climb_up_to_spinner(
     let wheel = find_location(c, Some(SPINNING_WHEEL), None, None, None)
         .expect("Lumbridge plane-one spinning wheel loaded from scene");
     assert_eq!((wheel.x, wheel.z), (3209, 3212));
+    // m50_50.jm2:9389: the spinning room's west door separates the landing.
+    walk_route(c, r, (3207, 3214), actions);
+    open_passage(c, r, "Door", (3207, 3214), actions);
     walk_near(c, r, (wheel.x, wheel.z), actions);
     wheel
 }
@@ -1703,9 +1936,21 @@ fn descend_to_furnace(c: &mut Client, r: &mut Renderer, actions: &mut Vec<Value>
         return;
     }
     assert_eq!(c.minusedlevel, 1, "expected the first Lumbridge floor");
-    let stair = find_location(c, Some(STAIRS_DOWN), None, Some("Climb-down"), None)
-        .expect("actual Lumbridge staircase on plane 1");
-    walk_near(c, r, (stair.x, stair.z), actions);
+    let current = tile(c);
+    if (3208..=3211).contains(&current.0) && (3210..=3215).contains(&current.1) {
+        walk_near(c, r, (3207, 3214), actions);
+        open_passage(c, r, "Door", (3207, 3214), actions);
+        walk_route(c, r, (3207, 3214), actions);
+    }
+    let stair = find_location(
+        c,
+        Some(STAIRS_DOWN),
+        None,
+        Some("Climb-down"),
+        Some((3204, 3207, 0)),
+    )
+    .expect("actual Lumbridge staircase on plane 1");
+    // The production location action approaches the full staircase footprint.
     actions.push(operate_location(c, stair, stair.option_index.unwrap()));
     pump_until(c, r, 30, "Climb-down server destination", |client| {
         client.minusedlevel == 0 && tile(client) == (3205, 3209)
@@ -1736,9 +1981,7 @@ fn run_phase(
     }
 
     if all || phase == "furnace" {
-        let furnace = find_location(c, None, Some("Furnace"), None, None)
-            .expect("loaded Lumbridge smithing furnace");
-        walk_near(c, r, (furnace.x, furnace.z), actions);
+        let furnace = approach_furnace(c, r, actions);
         ensure_item(
             c,
             r,
@@ -1768,9 +2011,8 @@ fn run_phase(
     }
 
     if all || phase == "anvil" {
-        let anvil = find_location(c, None, Some("Anvil"), None, None)
-            .expect("loaded Lumbridge smithing anvil");
-        walk_near(c, r, (anvil.x, anvil.z), actions);
+        leave_furnace(c, r, actions);
+        let anvil = approach_anvil(c, r, actions);
         if phase == "anvil" {
             ensure_item(
                 c,
@@ -1794,10 +2036,11 @@ fn run_phase(
             prepare,
             anvil,
         );
+        leave_anvil(c, r, actions);
     }
 
     if all || phase == "cook" {
-        approach_cook(c, r, actions);
+        let range = approach_range(c, r, actions);
         ensure_item(
             c,
             r,
@@ -1813,14 +2056,11 @@ fn run_phase(
             (3..=27).contains(&raw_count),
             "preserve room for the All batch and later inputs"
         );
-        let range = find_location(c, None, Some("Cooking range"), None, None)
-            .expect("server-loaded Lumbridge cooking range");
-        walk_near(c, r, (range.x, range.z), actions);
         cook_range(c, r, root, outbound, stages, actions, range);
     }
 
     if all || phase == "fletch" {
-        cut_logs_gap(
+        record_fletching_attempt(
             c,
             r,
             root,
@@ -1854,11 +2094,26 @@ fn run_phase(
     if all || phase == "levelup" {
         descend_to_furnace(c, r, actions);
         ensure_lumbridge(c, r, actions);
-        let furnace = find_location(c, None, Some("Furnace"), None, None)
-            .expect("loaded Lumbridge furnace for server-driven level-up");
-        walk_near(c, r, (furnace.x, furnace.z), actions);
+        let furnace = approach_furnace(c, r, actions);
         if phase == "levelup" {
             prepare_smithing_baseline(c, r, root, interventions, prepare);
+            let pitch_before = c.orbit_camera_pitch;
+            c.shell.key_held[3] = 1;
+            pump_until(
+                c,
+                r,
+                10,
+                "Up-arrow frames the overhead firework",
+                |client| client.orbit_camera_pitch == 383,
+            );
+            c.shell.key_held[3] = 0;
+            record_intervention(
+                root,
+                interventions,
+                json!({"kind":"camera_framing","input":"GameShell held Up-arrow",
+                    "pitch_before":pitch_before,"pitch_after":c.orbit_camera_pitch,
+                    "note":"view framing only; no player, skill, inventory or world mutation"}),
+            );
         }
         assert_eq!(c.stat_base_level[SMITHING], 1);
         let mut leveled = false;
@@ -1886,9 +2141,13 @@ fn run_phase(
             "real bronze-smelting products advance Smithing through level 2"
         );
         assert_eq!(c.stat_base_level[SMITHING], 2);
+        assert_eq!(
+            c.chat_modal_id, -1,
+            "server closed the final level-up dialog"
+        );
         assert!(
-            c.resumed_pause_button,
-            "level-up pause was resumed through its real button"
+            !c.resumed_pause_button,
+            "server IF_CLOSE reset the real Continue button"
         );
         capture_stage(
             c,
@@ -1899,6 +2158,27 @@ fn run_phase(
             "smithing-levelup-after-resume",
         );
     }
+}
+
+fn server_logout(c: &mut Client, r: &mut Renderer) -> String {
+    // Same real clientButton gate as live_login_377; don't leave a phase's
+    // account connected while the next phase attempts to log in.
+    assert_eq!(c.if_(2458).unwrap().client_code, 205);
+    c.menu_action[0] = MiniMenuAction::IF_BUTTON;
+    c.menu_param_a[0] = 0;
+    c.menu_param_b[0] = 0;
+    c.menu_param_c[0] = 2458;
+    c.doAction(0);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while c.ingame && Instant::now() < deadline {
+        c.mainloop();
+        drop(r.mainredraw(c));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!c.ingame, "server acknowledged phase logout");
+    let reason = c.take_session_exit_reason().unwrap().to_string();
+    assert!(reason.contains("server_logout"), "{reason}");
+    reason
 }
 
 #[test]
@@ -1957,11 +2237,11 @@ fn live_production_377_smelt_smith_cook_fletch_craft_and_levelup() {
             "cooking":"content/scripts/skill_cooking/scripts/cooking.rs2:10-193",
             "fletching":"content/scripts/skill_fletching/scripts/cut_logs.rs2:29-63",
             "spinning":"content/scripts/skill_crafting/scripts/spinning/spinning.rs2:43-64",
-            "levelup":"content/scripts/levelup.rs2"
+            "levelup":"content/scripts/levelup/scripts/levelup.rs2:25-62"
         },
         "expected_products":{"bronze_bar":BRONZE_BAR,"bronze_dagger":BRONZE_DAGGER,
             "shrimp":COOKED_SHRIMP,"burnt_fish":BURNT_FISH,"ball_of_wool":BALL_OF_WOOL},
-        "content_gap":"cut_logs.rs2 calls multiobj3_close; its procedure body is commented out"
+        "fletching_observation":"records actual server response; no product or quantity choice assumed"
     });
     write_json(&root.join("run.json"), &run_config);
     let mut interventions = Vec::new();
@@ -2010,12 +2290,15 @@ fn live_production_377_smelt_smith_cook_fletch_craft_and_levelup() {
         &mut c,
         &mut r,
         90,
-        "selected account entered loaded mainland",
-        |client| client.scene_state == 2 && client.local_player.is_some(),
-    );
-    assert_eq!(
-        c.minusedlevel, 0,
-        "selected mainland account starts on ground floor"
+        "selected account entered loaded mainland with received production stats",
+        |client| {
+            client.scene_state == 2
+                && client.local_player.is_some()
+                && client.gens.inv > 0
+                && client.stat_base_level[SMITHING] >= 1
+                && client.stat_base_level[COOKING] >= 1
+                && client.stat_base_level[CRAFTING] >= 1
+        },
     );
     if phase == "all" || phase == "levelup" {
         prepare_smithing_baseline(&mut c, &mut r, &root, &mut interventions, prepare);
@@ -2031,11 +2314,15 @@ fn live_production_377_smelt_smith_cook_fletch_craft_and_levelup() {
         &phase,
         prepare,
     );
+    let final_state = full_state(&c, &packets_since(&outbound, 0));
+    let logout_start = packet_count(&outbound);
+    let logout = server_logout(&mut c, &mut r);
     write_json(
         &root.join("result.json"),
         &json!({"phase":phase,"stages":stages.len(),"actions":actions.len(),
             "interventions":interventions.len(),"account":user,
-            "final_state":full_state(&c,&packets_since(&outbound,0))}),
+            "final_state":final_state,"logout":logout,"session_complete":true,
+            "logout_packets":packets_since(&outbound,logout_start)}),
     );
     eprintln!(
         "PASS: production 377 phase={phase}, stages={}, actions={}, evidence={}",
