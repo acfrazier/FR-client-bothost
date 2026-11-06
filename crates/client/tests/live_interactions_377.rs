@@ -1020,7 +1020,13 @@ fn local_close_unloads_guide_text_and_resets_continue_377() {
         .find(|i| i.layer_id == layer && i.button_type == 6)
         .map(|i| i.id)
         .expect("server-opened Guide Continue");
-    let initial = &c.cache.revision_377.as_ref().unwrap().interfaces.initial_overlays;
+    let initial = &c
+        .cache
+        .revision_377
+        .as_ref()
+        .unwrap()
+        .interfaces
+        .initial_overlays;
     let changed_text: Vec<_> = c
         .ifaces_merged()
         .filter(|i| i.layer_id == layer)
@@ -1045,7 +1051,13 @@ fn local_close_unloads_guide_text_and_resets_continue_377() {
     for (id, text) in &changed_text {
         assert_eq!(c.if_(*id).unwrap().text, text);
     }
-    save_stage(&mut c, &mut r, &root, "guide-after-local-close", &mut stages);
+    save_stage(
+        &mut c,
+        &mut r,
+        &root,
+        "guide-after-local-close",
+        &mut stages,
+    );
     c.menu_action[0] = MiniMenuAction::IF_BUTTON;
     c.menu_param_c[0] = 2458;
     c.doAction(0);

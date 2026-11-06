@@ -2441,12 +2441,19 @@ mod tests {
         client.menu_action[0] = crate::client::MiniMenuAction::CLOSE_BUTTON;
         client.doAction(0);
         assert_eq!(
-            (client.main_modal_id, client.side_modal_id, client.chat_modal_id),
+            (
+                client.main_modal_id,
+                client.side_modal_id,
+                client.chat_modal_id
+            ),
             (-1, -1, -1)
         );
         assert!(client.redraw_side && client.redraw_icons && client.redraw_chat);
         assert!(!client.resumed_pause_button);
-        assert!(client.dialog_input_open, "local close leaves the count prompt alone");
+        assert!(
+            !client.dialog_input_open,
+            "the common menu-action prologue closes the count prompt"
+        );
         assert_eq!(&client.out.data()[..client.out.pos], &[110]);
         for id in [201, 211, 221] {
             let com = client.if_(id).unwrap();
