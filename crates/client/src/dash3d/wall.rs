@@ -48,6 +48,24 @@ pub struct Wall {
 }
 
 impl Wall {
+    /// Model2 before or after the first 377 LOC_ANIM. Normalize the original
+    /// static placement so its already-lit render model survives that packet.
+    pub fn model2_state_377(&self) -> Option<WallModel2State377> {
+        self.wall_model2_377.or_else(|| {
+            ((self.typecode2 & 0x1f) == crate::dash3d::LocShape::WALL_L).then_some(
+                WallModel2State377 {
+                    sequence: None,
+                    angle: (((self.typecode2 & 0xff) >> 6) + 1) & 3,
+                    h_sw: self.h_sw,
+                    h_se: self.h_se,
+                    h_ne: self.h_ne,
+                    h_nw: self.h_nw,
+                    start_cycle: 0,
+                },
+            )
+        })
+    }
+
     pub fn new(
         y: i32,
         x: i32,
