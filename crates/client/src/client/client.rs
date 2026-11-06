@@ -1638,6 +1638,7 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 const HOST_TITLE_EXTERNAL_OWNER: u8 = 1 << 0;
 const HOST_TITLE_CHROME: u8 = 1 << 1;
 const HOST_TITLE_LOGIN_REQUESTED: u8 = 1 << 2;
+const HOST_TITLE_IDLE_TIMER: u8 = 1 << 3;
 
 impl Client {
     /// Default construction: revision 274 public tables and framing.
@@ -10683,6 +10684,32 @@ impl Client {
         self.hosted_title_state & HOST_TITLE_EXTERNAL_OWNER != 0
     }
 
+    /// Let an embedding host that owns reconnect run the Java inactivity
+    /// timer (289: after 4500 idle loop cycles the client sends the idle
+    /// request, `IDLE_TIMER`, and the server logs it out). A host-owned
+    /// client suppresses that timer by default, so leaving this unset keeps
+    /// today's behaviour. Without an external reconnect owner the flag has
+    /// no effect: a standalone client always runs the Java timer. Calling
+    /// [`Client::set_external_reconnect_owner`] with `false` clears it.
+    pub fn set_host_idle_timer(&mut self, enabled: bool) {
+        if enabled {
+            self.hosted_title_state |= HOST_TITLE_IDLE_TIMER;
+        } else {
+            self.hosted_title_state &= !HOST_TITLE_IDLE_TIMER;
+        }
+    }
+
+    /// Whether the host-owned session suppresses the Java inactivity timer.
+    fn idle_timer_suppressed(&self) -> bool {
+        self.external_reconnect_owner() && self.hosted_title_state & HOST_TITLE_IDLE_TIMER == 0
+    }
+
+    /// Whether a host-owned client currently runs the Java inactivity timer
+    /// because its host asked for it ([`Client::set_host_idle_timer`]).
+    pub fn host_idle_timer(&self) -> bool {
+        self.external_reconnect_owner() && !self.idle_timer_suppressed()
+    }
+
     /// Replace the Java account form with the host's single-login title for
     /// `label`. Calls made without an external reconnect owner are ignored.
     /// The label reuses the existing title username buffer instead of adding
@@ -13013,10 +13040,12 @@ impl Client {
         for i in 0..5 {
             self.cam_shake_cycle[i] += 1;
         }
-        // A host-owned session is unattended by definition: the host, not
-        // the Java inactivity policy, owns its lifetime. Suppress the timer
-        // for both revisions without manufacturing user input or packets.
-        if self.external_reconnect_owner() {
+        // A host-owned session is unattended by default: the host, not the
+        // Java inactivity policy, owns its lifetime, so the timer stays
+        // suppressed for both revisions without manufacturing user input or
+        // packets. A host that asks for it ([`Client::set_host_idle_timer`])
+        // gets the Java 289 timer instead.
+        if self.idle_timer_suppressed() {
             self.shell.idle_cycles = 0;
         } else if self.revision.is_289() {
             self.shell.idle_cycles += 1;
