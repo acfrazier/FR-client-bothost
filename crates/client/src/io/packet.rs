@@ -666,6 +666,125 @@ mod observer_memory_tests {
 }
 
 #[cfg(test)]
+mod outbound_memory_tests {
+    use super::*;
+    use crate::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+    use crate::io::{map_client_prot, ClientProt, ClientRevision};
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    const WARM_WRITES: usize = 128;
+
+    struct Counting;
+
+    thread_local! {
+        static COUNT: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    // SAFETY: All allocator calls are forwarded unchanged to `System`; only a
+    // thread-local event counter is updated while a measurement is active.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            COUNT.with(|count| {
+                if let Some(n) = count.get() {
+                    count.set(Some(n + 1));
+                }
+            });
+            // SAFETY: The caller supplies a valid layout that is forwarded intact.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            COUNT.with(|count| {
+                if let Some(n) = count.get() {
+                    count.set(Some(n + 1));
+                }
+            });
+            // SAFETY: The caller supplies a valid layout that is forwarded intact.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            COUNT.with(|count| {
+                if let Some(n) = count.get() {
+                    count.set(Some(n + 1));
+                }
+            });
+            // SAFETY: The pointer and original layout are forwarded unchanged.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: The pointer and original layout are forwarded unchanged.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: Counting = Counting;
+
+    fn allocations(f: impl FnOnce()) -> usize {
+        COUNT.with(|count| count.set(Some(0)));
+        f();
+        COUNT.with(|count| count.replace(None).expect(\"allocation counter is active\"))
+    }
+
+    fn assert_revision_outbound_allocation_gate(revision: ClientRevision) -> usize {
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: \"127.0.0.1\".into(),
+                port: 43594,
+                cache_dir: \"/tmp\".into(),
+                members: true,
+                lowmem: false,
+            },
+            revision,
+        );
+        client.ingame = true;
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        client.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
+        client.menu_action[0] = MiniMenuAction::OP_NPC1;
+        client.menu_param_a[0] = 7;
+        client.menu_param_b[0] = 10;
+        client.menu_param_c[0] = 12;
+
+        for _ in 0..2 {
+            client.out.pos = 0;
+            client.doAction(0);
+            assert!(client.out.pos > 0, \"the warmed action emits a packet\");
+        }
+
+        let mut written_bytes = 0;
+        let allocations = allocations(|| {
+            for _ in 0..WARM_WRITES {
+                client.out.pos = 0;
+                client.doAction(0);
+                written_bytes += client.out.pos;
+            }
+        });
+        let packet_length = map_client_prot(revision, ClientProt::OPNPC1).length as usize + 1;
+        assert_eq!(
+            written_bytes,
+            WARM_WRITES * packet_length,
+            \"all 128 warmed actions must encode their complete protocol packet\"
+        );
+        allocations
+    }
+
+    #[test]
+    fn outbound_warm_writes_allocate_at_most_one_event_per_revision() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let allocations = assert_revision_outbound_allocation_gate(revision);
+            eprintln!(\"{revision:?} outbound 128-write allocations: {allocations}\");
+            assert!(
+                allocations <= 1,
+                \"{revision:?} outbound 128-write path exceeded its measured zero-allocation baseline plus one allocation of headroom: {allocations}\"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod rsa_encoding_tests {
     use super::*;
 
