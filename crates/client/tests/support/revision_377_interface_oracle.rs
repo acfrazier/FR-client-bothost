@@ -103,10 +103,13 @@ pub fn assert_archive(archive: &InterfaceArchive377, data: &[u8]) {
         .collect();
     let first = rows.iter().find_map(Value::as_object).unwrap();
     let expected_fields = expected["fields"].as_object().unwrap();
-    assert_eq!(
-        first.keys().collect::<Vec<_>>(),
-        expected_fields.keys().collect::<Vec<_>>()
-    );
+    // Key iteration order follows serde_json's `preserve_order` feature, which
+    // feature unification can enable downstream; coverage is a set check.
+    let mut actual_keys = first.keys().collect::<Vec<_>>();
+    let mut expected_keys = expected_fields.keys().collect::<Vec<_>>();
+    actual_keys.sort();
+    expected_keys.sort();
+    assert_eq!(actual_keys, expected_keys, "interface Java field coverage");
     for (field, digest) in expected_fields {
         let values: Vec<&Value> = rows.iter().map(|row| &row[field]).collect();
         let hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&values).unwrap()));
@@ -139,17 +142,21 @@ pub fn assert_archive(archive: &InterfaceArchive377, data: &[u8]) {
         let saved = archive.saved_record(id).unwrap();
         assert_eq!(saved.layer, layer);
         assert_eq!(saved.payload(), &data[start..reader.pos]);
-        records.push(json!({"id": id, "layer": layer, "start": start, "end": reader.pos}));
+        // The frozen digest covers serde_json's compact array of
+        // {"end","id","layer","start"} objects with sorted keys. Write those
+        // bytes in that explicit order: with `preserve_order` (feature
+        // unification in 274bot), `json!` would keep insertion order instead.
+        records.push(format!(
+            r#"{{"end":{},"id":{id},"layer":{layer},"start":{start}}}"#,
+            reader.pos
+        ));
     }
     reader.finish().unwrap();
     assert_eq!(
         records.len() as u64,
         fixture["interface_records"]["count"].as_u64().unwrap()
     );
-    let hash = format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&records).unwrap())
-    );
+    let hash = format!("{:x}", Sha256::digest(format!("[{}]", records.join(","))));
     assert_eq!(
         hash,
         fixture["interface_records"]["sha256"].as_str().unwrap(),
