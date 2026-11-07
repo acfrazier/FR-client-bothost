@@ -1,12 +1,9 @@
-//! Integration gates for 377-only shared-writer routing and batch rejection.
-use client::client::{Client, ClientConfig, ClientRevision};
-use client::io::{
-    map_client_prot, ClientProt, ClientProt377, ClientStream, Packet, PacketObserver,
-};
-use std::io::{ErrorKind, Read};
-use std::net::TcpListener;
+//! Integration gates for revision-377 shared writers and chat packet routing.
+use client::client::{CheatAdmission, Client, ClientConfig, ClientRevision};
+use client::config::if_type::IfType;
+use client::io::{map_client_prot, ClientProt, ClientProt377, Packet, PacketObserver};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 fn client() -> Client {
     let mut c = Client::new_with_revision(
@@ -55,6 +52,10 @@ fn compatible_shared_writers_select_literal_java_ids() {
         map_client_prot(ClientRevision::R377, ClientProt { id: 999, length: 0 }).id,
         -1
     );
+    // Chat uses dedicated 377 writers, not the legacy shared descriptors.
+    for shared in [ClientProt::MESSAGE_PRIVATE, ClientProt::MESSAGE_PUBLIC] {
+        assert_eq!(map_client_prot(ClientRevision::R377, shared).id, -1);
+    }
 }
 
 struct StrictObserver;
@@ -81,35 +82,73 @@ fn rejected_header_never_reaches_observer_or_cipher() {
 }
 
 #[test]
-fn unsupported_action_discards_whole_batch_and_closes_without_wire_bytes() {
-    let mut c = client();
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    c.stream = Some(ClientStream::connect("127.0.0.1", address.port()).unwrap());
-    let (mut server, _) = listener.accept().unwrap();
-    server
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
-    c.out.set_observer(Some(Arc::new(StrictObserver)));
-    // All OP_NPC actions now have dedicated 377 writers. Private messaging
-    // still uses an unported legacy body and must reject the whole batch.
-    c.out.p1_enc(ClientProt377::NO_TIMEOUT.id);
-    c.social_input_open = true;
-    c.social_input_type = 3;
-    c.social_input = "hello".into();
-    c.social_userhash = 1;
-    c.consume_chat_key(13);
-    c.game_loop();
-    assert!(!c.ingame);
-    assert_eq!(c.out.pos, 0);
-    let reason = c.take_session_exit_reason().unwrap().to_string();
-    assert!(reason.contains("unsupported_outbound_377"), "{reason}");
-    let mut bytes = [0; 1];
-    match server.read(&mut bytes) {
-        Ok(0) => {}
-        Err(e) if e.kind() == ErrorKind::ConnectionReset => {}
-        result => panic!("rejected batch must never reach socket: {result:?} {bytes:?}"),
+fn private_chat_uses_revision_377_packet_writer() {
+    for recipient in [0i64, 1] {
+        let mut c = client();
+        c.social_input_open = true;
+        c.social_input_type = 3;
+        c.social_input = "Hi".into();
+        c.social_userhash = recipient;
+        c.consume_chat_key(13);
+
+        assert_eq!(
+            &c.out.data()[..c.out.pos],
+            &[227, 9, 0, 0, 0, 0, 0, 0, 0, recipient as u8, 0x65]
+        );
+        assert!(c.ingame);
     }
+}
+
+#[test]
+fn public_chat_uses_revision_377_transforms_and_prefixes() {
+    let mut c = client();
+    c.chat_input = "red:shake:Hi".into();
+    c.consume_chat_key(13);
+
+    assert_eq!(&c.out.data()[..c.out.pos], &[49, 3, 0xff, 131, 0x65]);
+    assert!(c.ingame);
+}
+
+#[test]
+fn cheat_377_uses_java_utf16_length_and_low_bytes() {
+    let mut c = client();
+    c.set_cheat_admission(CheatAdmission::Granted);
+    assert!(c.send_cheat("a\u{1F642}").is_sent());
+
+    assert_eq!(&c.out.data()[..c.out.pos], &[56, 4, b'a', 0x3d, 0x42, 10]);
+}
+
+#[test]
+fn report_abuse_rules_and_mute_use_java_377_action_codes() {
+    let mut c = client();
+    c.report_abuse_input = "Bob".into();
+    c.report_abuse_mute_option = true;
+    c.set_iface(
+        9,
+        IfType {
+            client_code: 613,
+            ..IfType::default()
+        },
+    );
+    assert!(!c.client_button(9));
+    assert_eq!(
+        &c.out.data()[..c.out.pos],
+        &[110, 184, 0, 0, 0, 0, 0, 0, 0x0c, 0xdf, 12, 1]
+    );
+    assert_eq!(ClientProt377::SEND_SNAPSHOT.length, 10);
+    assert_eq!(c.main_modal_id, -1);
+
+    c.out.pos = 0;
+    c.set_iface(
+        9,
+        IfType {
+            client_code: 620,
+            ..IfType::default()
+        },
+    );
+    assert!(!c.client_button(9));
+    assert!(!c.report_abuse_mute_option);
+    assert_eq!(c.out.pos, 0);
 }
 
 #[test]

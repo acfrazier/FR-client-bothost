@@ -7,6 +7,7 @@
 
 use super::client::Client;
 use crate::io::{ClientProt377, Packet};
+use crate::wordfilter::WordPack;
 use std::cell::Cell;
 use std::collections::VecDeque;
 
@@ -26,6 +27,10 @@ pub(crate) struct Outbound377 {
     cyclelogic4: i32,
     cyclelogic5: i32,
     cyclelogic6: i32,
+    /// Java `signlink.reporterror` is enabled by default.
+    synth_error_reporting_disabled: bool,
+    /// Java `chatbackInputOpen == 2`, isolated from legacy prompt state.
+    name_dialog_open: bool,
     /// Set by revision-gated shared emitters before the session flush gate.
     pub(crate) unmapped: Cell<Option<i32>>,
 }
@@ -52,6 +57,18 @@ impl Client {
             false,
             std::iter::empty(),
         )
+    }
+
+    /// Select Java 377's missing-wave `signlink.reporterror` behavior.
+    ///
+    /// Java defaults to reporting the wave id. Returns false and leaves the
+    /// state unchanged for clients using another revision.
+    pub fn set_synth_error_reporting_377(&mut self, enabled: bool) -> bool {
+        if !self.revision().is_377() {
+            return false;
+        }
+        self.outbound.r377_mut().synth_error_reporting_disabled = !enabled;
+        true
     }
 
     /// Java `OPOBJ2` counts every action, including a failed approach.
@@ -224,6 +241,64 @@ fn anticheat_cyclelogic5_377(packet: &mut Packet) {
 }
 
 impl Client {
+    /// Open Java 377's chatback mode-2 name prompt.
+    ///
+    /// Java: `Client.java:7478-7485`.
+    pub(crate) fn open_name_dialog_377(&mut self) {
+        self.social_input_open = false;
+        self.dialog_input_open = true;
+        self.dialog_input.clear();
+        self.outbound.r377_mut().name_dialog_open = true;
+        self.redraw_chat = true;
+    }
+
+    /// Open Java 377's amount prompt and leave name-dialog mode.
+    pub(crate) fn open_count_dialog_377(&mut self) {
+        self.social_input_open = false;
+        self.dialog_input_open = true;
+        self.dialog_input.clear();
+        self.clear_name_dialog_mode_377();
+        self.redraw_chat = true;
+    }
+    /// Clear the revision-377 name mode when another prompt or modal replaces it.
+    pub(crate) fn clear_name_dialog_mode_377(&mut self) {
+        if self.revision().is_377() {
+            self.outbound.r377_mut().name_dialog_open = false;
+        }
+    }
+
+    pub(crate) fn name_dialog_open_377(&self) -> bool {
+        self.revision().is_377() && self.dialog_input_open && self.outbound.r377().name_dialog_open
+    }
+
+    pub(crate) fn synth_error_reporting_enabled_377(&self) -> bool {
+        self.revision().is_377() && !self.outbound.r377().synth_error_reporting_disabled
+    }
+
+    /// Consume one Java 377 mode-2 name-dialog key.
+    ///
+    /// Java: `Client.java:4903-4923`.
+    pub(crate) fn consume_name_dialog_key_377(&mut self, key: i32) {
+        if (32..=122).contains(&key) && self.dialog_input.len() < 12 {
+            self.dialog_input.push(char::from_u32(key as u32).unwrap());
+            self.redraw_chat = true;
+        }
+
+        if key == 8 && !self.dialog_input.is_empty() {
+            self.dialog_input.pop();
+            self.redraw_chat = true;
+        }
+
+        if key == 13 || key == 10 {
+            if !self.dialog_input.is_empty() {
+                resume_p_namedialog_377(&mut self.out, &self.dialog_input);
+            }
+            self.clear_name_dialog_mode_377();
+            self.dialog_input_open = false;
+            self.redraw_chat = true;
+        }
+    }
+
     /// Reset the Java input fields and menu counters after cold login acceptance.
     ///
     /// Java: `Client.java:2742-2746,2761-2762,2821-2841`.
@@ -869,8 +944,13 @@ fn mouse_move_377(
     packet.p1_enc(ClientProt377::EVENT_MOUSE_MOVE.id);
     packet.p1(0);
     let start = packet.pos;
+    // Java's inverted Client.java:3044 predicate is a bug; bound the body on
+    // purpose, matching Client.ts:2317 and keeping psize1 within one byte.
     if let Some(samples) = samples.as_mut() {
-        while let Some((raw_x, raw_y)) = samples.pop_front() {
+        while packet.pos - start < 240 {
+            let Some((raw_x, raw_y)) = samples.pop_front() else {
+                break;
+            };
             let (x, y, coordinate) = if (raw_x, raw_y) == (-1, -1) {
                 (-1, -1, 524287)
             } else {
@@ -931,6 +1011,23 @@ fn focus_377(packet: &mut Packet, focused: bool) {
     packet.p1(i32::from(focused));
 }
 
+/// Emit Java's `RESUME_P_NAMEDIALOG` response (206), with a base-37 name.
+///
+/// Java: `Client.java:4914-4919`.
+pub(crate) fn resume_p_namedialog_377(packet: &mut Packet, name: &str) {
+    packet.p1_enc(ClientProt377::RESUME_P_NAMEDIALOG.id);
+    let name_hash = crate::util::JString::to_userhash(name);
+    packet.p8(i64::try_from(name_hash).expect("12-character base-37 names fit in i64"));
+}
+
+/// Emit Java's `EVENT_SYNTH_ERROR` reporting-enabled or disabled form.
+///
+/// Java: `Client.java:3841-3850`.
+pub(crate) fn event_synth_error_377(packet: &mut Packet, wave_id: i32, report_wave_id: bool) {
+    packet.p1_enc(ClientProt377::EVENT_SYNTH_ERROR.id);
+    packet.p2(if report_wave_id { wave_id & 0x7fff } else { -1 });
+}
+
 fn p1_alt3(packet: &mut Packet, value: i32) {
     packet.p1(128i32.wrapping_sub(value));
 }
@@ -948,6 +1045,109 @@ fn p2_alt2(packet: &mut Packet, value: i32) {
 fn p2_alt3(packet: &mut Packet, value: i32) {
     packet.p1(value.wrapping_add(128));
     packet.p1(value >> 8);
+}
+fn p1_alt1(packet: &mut Packet, value: i32) {
+    packet.p1(value.wrapping_add(128));
+}
+
+fn p1_alt2(packet: &mut Packet, value: i32) {
+    packet.p1(value.wrapping_neg());
+}
+
+fn strip_ascii_prefix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.get(..prefix.len())
+        .filter(|candidate| candidate.eq_ignore_ascii_case(prefix))?;
+    text.get(prefix.len()..)
+}
+
+/// Parse Java 377's single colour prefix, then its single text-effect prefix.
+///
+/// Java: `Client.java:4976-5034`.
+pub(crate) fn public_chat_prefixes_377(mut text: &str) -> (i32, i32, &str) {
+    let mut colour = 0;
+    for (prefix, value) in [
+        ("yellow:", 0),
+        ("red:", 1),
+        ("green:", 2),
+        ("cyan:", 3),
+        ("purple:", 4),
+        ("white:", 5),
+        ("flash1:", 6),
+        ("flash2:", 7),
+        ("flash3:", 8),
+        ("glow1:", 9),
+        ("glow2:", 10),
+        ("glow3:", 11),
+    ] {
+        if let Some(rest) = strip_ascii_prefix(text, prefix) {
+            colour = value;
+            text = rest;
+            break;
+        }
+    }
+
+    let mut effect = 0;
+    for (prefix, value) in [
+        ("wave:", 1),
+        ("wave2:", 2),
+        ("shake:", 3),
+        ("scroll:", 4),
+        ("slide:", 5),
+    ] {
+        if let Some(rest) = strip_ascii_prefix(text, prefix) {
+            effect = value;
+            text = rest;
+            break;
+        }
+    }
+    (colour, effect, text)
+}
+
+/// Emit Java 377 public chat with its transformed colour and effect bytes.
+///
+/// Java: `Client.java:5037-5046`.
+pub(crate) fn message_public_377(packet: &mut Packet, colour: i32, effect: i32, text: &str) {
+    packet.p1_enc(ClientProt377::MESSAGE_PUBLIC.id);
+    packet.p1(0);
+    let start = packet.pos;
+    p1_alt2(packet, colour);
+    p1_alt1(packet, effect);
+    WordPack::pack(packet, text);
+    packet.psize1((packet.pos - start) as i32);
+}
+
+/// Emit Java 377 private chat with its base-37 recipient and packed body.
+///
+/// Java: `Client.java:4841-4847`.
+pub(crate) fn message_private_377(packet: &mut Packet, recipient: i64, text: &str) {
+    packet.p1_enc(ClientProt377::MESSAGE_PRIVATE.id);
+    packet.p1(0);
+    let start = packet.pos;
+    packet.p8(recipient);
+    WordPack::pack(packet, text);
+    packet.psize1((packet.pos - start) as i32);
+}
+
+/// Emit Java `CLIENT_CHEAT`: UTF-16-unit length and low-byte string units.
+///
+/// Java: `Client.java:4971-4975`, `Packet.java:148-151`.
+pub(crate) fn client_cheat_377(packet: &mut Packet, command: &str) {
+    packet.p1_enc(ClientProt377::CLIENT_CHEAT.id);
+    packet.p1((command.encode_utf16().count() + 1) as i32);
+    for unit in command.encode_utf16() {
+        packet.p1(i32::from(unit));
+    }
+    packet.p1(10);
+}
+
+/// Emit Java 377 report-abuse rule selection and mute flag.
+///
+/// Java: `Client.java:12049-12053`.
+pub(crate) fn send_snapshot_377(packet: &mut Packet, userhash: i64, reason: i32, mute: bool) {
+    packet.p1_enc(ClientProt377::SEND_SNAPSHOT.id);
+    packet.p8(userhash);
+    packet.p1(reason);
+    packet.p1(if mute { 1 } else { 0 });
 }
 
 /// Build the RSA plaintext login block with the caller's revision-377 UID.
@@ -2535,6 +2735,17 @@ mod tests {
     }
 
     #[test]
+    fn send_snapshot_377_matches_java_report_bytes() {
+        let mut packet = Packet::alloc_outbound(1);
+        send_snapshot_377(&mut packet, 3295, 12, true);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[184, 0, 0, 0, 0, 0, 0, 0x0c, 0xdf, 12, 1]
+        );
+        assert_eq!(ClientProt377::SEND_SNAPSHOT.length, 10);
+    }
+
+    #[test]
     fn session_input_writers_match_377_literal_bytes_and_lengths() {
         let mut packet = Packet::alloc_outbound(1);
         let mut state = Outbound377::default();
@@ -2567,6 +2778,31 @@ mod tests {
         idle_timer_377(&mut packet);
         assert_eq!(&packet.data()[..packet.pos], &[202]);
         assert_eq!(ClientProt377::IDLE_TIMER.length, 0);
+    }
+
+    #[test]
+    fn mouse_move_377_bounds_body_at_java_intended_threshold() {
+        let mut packet = Packet::alloc_outbound(1);
+        let mut state = Outbound377 {
+            mouse_x: 0,
+            mouse_y: 0,
+            ..Outbound377::default()
+        };
+        let mut samples = VecDeque::new();
+        for i in 0..81 {
+            samples.push_back((if i % 2 == 0 { 100 } else { 0 }, 100));
+        }
+
+        mouse_move_377(&mut packet, &mut state, true, 1, Some(&mut samples));
+
+        let mut expected = vec![171, 240];
+        for _ in 0..40 {
+            expected.extend_from_slice(&[0x81, 0x2b, 0x38, 0x81, 0x2a, 0xd4]);
+        }
+        assert_eq!(&packet.data()[..packet.pos], expected.as_slice());
+        assert_eq!(samples.front(), Some(&(100, 100)));
+        assert_eq!(samples.len(), 1);
+        assert_eq!(ClientProt377::EVENT_MOUSE_MOVE.length, -1);
     }
 
     #[test]
@@ -2612,5 +2848,44 @@ mod tests {
         anticheat_cyclelogic5_377(&mut packet);
         assert_eq!(&packet.data()[..packet.pos], &[248]);
         assert_eq!(ClientProt377::ANTICHEAT_CYCLELOGIC5.length, 0);
+    }
+    #[test]
+    fn public_chat_377_matches_java_transforms_and_prefixes() {
+        let (colour, effect, text) = public_chat_prefixes_377("rEd:WaVe2:Hi");
+        assert_eq!((colour, effect, text), (1, 2, "Hi"));
+        for (prefix, expected_effect) in [
+            ("wave:", 1),
+            ("wave2:", 2),
+            ("shake:", 3),
+            ("scroll:", 4),
+            ("slide:", 5),
+        ] {
+            let input = format!("{prefix}Hi");
+            assert_eq!(public_chat_prefixes_377(&input), (0, expected_effect, "Hi"));
+        }
+        for effect in 3..=5 {
+            let mut packet = Packet::alloc_outbound(1);
+            message_public_377(&mut packet, 1, effect, "Hi");
+            assert_eq!(
+                &packet.data()[..packet.pos],
+                &[49, 3, 0xff, (effect + 128) as u8, 0x65]
+            );
+        }
+
+        let mut packet = Packet::alloc_outbound(1);
+        message_public_377(&mut packet, colour, effect, text);
+        assert_eq!(&packet.data()[..packet.pos], &[49, 3, 0xff, 0x82, 0x65]);
+        assert_eq!(ClientProt377::MESSAGE_PUBLIC.length, -1);
+    }
+
+    #[test]
+    fn private_chat_377_matches_java_variable_frame() {
+        let mut packet = Packet::alloc_outbound(1);
+        message_private_377(&mut packet, 0x0102_0304_0506_0708, "Hi");
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[227, 9, 1, 2, 3, 4, 5, 6, 7, 8, 0x65]
+        );
+        assert_eq!(ClientProt377::MESSAGE_PRIVATE.length, -1);
     }
 }

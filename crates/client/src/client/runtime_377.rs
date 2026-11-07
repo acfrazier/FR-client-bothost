@@ -73,6 +73,7 @@ impl Client {
         if !matches!(
             opcode,
             2 | 5
+                | 6
                 | 10
                 | 13
                 | 21
@@ -630,13 +631,8 @@ impl Client {
                             com.hide = hidden;
                         }
                     }
-                    I::CountDialog => {
-                        // Java Client.java:7865-7872: server-opened amount prompt.
-                        self.social_input_open = false;
-                        self.dialog_input_open = true;
-                        self.dialog_input.clear();
-                        self.redraw_chat = true;
-                    }
+                    I::NameDialog => self.open_name_dialog_377(),
+                    I::CountDialog => self.open_count_dialog_377(),
                     I::Close => {
                         self.unload_interface_377(self.side_modal_id);
                         self.unload_interface_377(self.chat_modal_id);
@@ -679,6 +675,7 @@ impl Client {
                         self.main_modal_id = component;
                         self.side_modal_id = -1;
                         self.chat_modal_id = -1;
+                        self.clear_name_dialog_mode_377();
                         self.dialog_input_open = false;
                         self.redraw_chat = true;
                         self.redraw_side = true;
@@ -701,6 +698,7 @@ impl Client {
                         }
                         self.main_modal_id = main;
                         self.side_modal_id = side;
+                        self.clear_name_dialog_mode_377();
                         self.dialog_input_open = false;
                         self.redraw_side = true;
                         self.redraw_icons = true;
@@ -1780,6 +1778,97 @@ mod tests {
         assert_eq!(client.gens.iface, generation + 1);
         assert_eq!(client.ptype, -1);
         assert!(client.ingame);
+    }
+
+    #[test]
+    fn name_dialog_dispatch_keyboard_and_replacement_match_java377() {
+        let mut c = client();
+        c.social_input_open = true;
+        c.dialog_input = "stale".into();
+        c.redraw_chat = false;
+        let generation = c.gens.iface;
+
+        let mut prompt = Packet::new(vec![]);
+        c.dispatch_packet_377(6, &mut prompt).unwrap();
+        assert!(!c.social_input_open);
+        assert!(c.dialog_input_open);
+        // Renderer uses this mode to display Java's "Enter name:" prompt.
+        assert!(c.name_dialog_open_377());
+        assert!(c.dialog_input.is_empty());
+        assert!(c.redraw_chat);
+        assert_eq!(c.gens.iface, generation + 1);
+
+        // Java accepts ASCII 32..=122, caps at 12, supports backspace, and
+        // ignores keys outside the accepted range.
+        for key in 65..=77 {
+            c.consume_chat_key(key);
+        }
+        assert_eq!(c.dialog_input, "ABCDEFGHIJKL");
+        c.consume_chat_key(123);
+        assert_eq!(c.dialog_input, "ABCDEFGHIJKL");
+        c.consume_chat_key(8);
+        assert_eq!(c.dialog_input, "ABCDEFGHIJK");
+        c.consume_chat_key(76);
+        c.consume_chat_key(13);
+
+        // JString.toBase37("ABCDEFGHIJKL") = 0x029bb1b8aded3bf6.
+        assert_eq!(
+            &c.out.data()[..c.out.pos],
+            &[206, 0x02, 0x9b, 0xb1, 0xb8, 0xad, 0xed, 0x3b, 0xf6]
+        );
+        assert!(!c.dialog_input_open);
+        assert!(!c.name_dialog_open_377());
+
+        let mut empty = client();
+        let mut prompt = Packet::new(vec![]);
+        empty.dispatch_packet_377(6, &mut prompt).unwrap();
+        empty.consume_chat_key(10);
+        assert_eq!(empty.out.pos, 0, "empty names do not send a response");
+        assert!(!empty.dialog_input_open);
+        assert!(!empty.name_dialog_open_377());
+
+        let mut zero_hash = client();
+        let mut prompt = Packet::new(vec![]);
+        zero_hash.dispatch_packet_377(6, &mut prompt).unwrap();
+        for key in [33, 64, 35] {
+            zero_hash.consume_chat_key(key);
+        }
+        assert_eq!(zero_hash.dialog_input, "!@#");
+        zero_hash.consume_chat_key(13);
+        assert_eq!(
+            &zero_hash.out.data()[..zero_hash.out.pos],
+            &[206, 0, 0, 0, 0, 0, 0, 0, 0],
+            "nonempty punctuation hashes to zero but still sends p8(0)"
+        );
+
+        let mut amount = client();
+        let mut prompt = Packet::new(vec![]);
+        amount.dispatch_packet_377(6, &mut prompt).unwrap();
+        amount.consume_chat_key(65);
+        assert!(amount.name_dialog_open_377());
+        let mut count_dialog = Packet::new(vec![]);
+        amount.dispatch_packet_377(58, &mut count_dialog).unwrap();
+        assert!(amount.dialog_input_open);
+        assert!(!amount.name_dialog_open_377());
+        assert!(amount.dialog_input.is_empty());
+        amount.consume_chat_key(52);
+        amount.consume_chat_key(50);
+        amount.consume_chat_key(13);
+        assert_eq!(
+            &amount.out.data()[..amount.out.pos],
+            &[75, 0, 0, 0, 42],
+            "replacement amount prompt emits RESUME_P_COUNTDIALOG"
+        );
+
+        let mut closed = client();
+        let mut prompt = Packet::new(vec![]);
+        closed.dispatch_packet_377(6, &mut prompt).unwrap();
+        closed.consume_chat_key(65);
+        let mut if_close = Packet::new(vec![]);
+        closed.dispatch_packet_377(29, &mut if_close).unwrap();
+        assert!(!closed.dialog_input_open);
+        assert!(!closed.name_dialog_open_377());
+        assert_eq!(closed.out.pos, 0, "IF_CLOSE sends no prompt response");
     }
 
     #[test]
