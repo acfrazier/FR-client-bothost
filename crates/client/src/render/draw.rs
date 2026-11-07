@@ -3202,10 +3202,14 @@ impl Renderer {
                     );
                 }
             } else if client.dialog_input_open {
-                // TS 11136-11138: the enter-amount prompt replaces the chat
-                // lines.
+                // The amount and revision-377 name prompts replace chat lines.
                 if let Some(b12) = self.media.b12.as_ref() {
-                    b12.centre_string(&mut surface, Some("Enter amount:"), 239, 40, Colour::BLACK);
+                    let prompt = if client.name_dialog_open_377() {
+                        "Enter name:"
+                    } else {
+                        "Enter amount:"
+                    };
+                    b12.centre_string(&mut surface, Some(prompt), 239, 40, Colour::BLACK);
                     b12.centre_string(
                         &mut surface,
                         Some(&format!("{}*", client.dialog_input)),

@@ -158,6 +158,30 @@ including bank 10/X amounts, shop quantities, smithing and trade. Every
 Java 377 `OP*` menu packet has a revision-specific writer and dispatch;
 the 274/289 layouts and default revision stay unchanged. A cold 377 login
 clears the multiway overlay, while a reconnect preserves it as Java does.
+
+Revision-377 public chat uses Java's case-insensitive colour and effect
+prefixes, then writes colour with `p1_alt2` and effect with `p1_alt1`.
+Its effects are `wave`, `wave2`, `shake`, `scroll` and `slide`. Private
+chat uses the revision-377 variable-length packet with the recipient's
+base-37 name and WordPack text. The 80 packet descriptors are in
+[`protocol-377.json`](docs/revision-377/protocol-377.json).
+`CLIENT_CHEAT` uses Java's UTF-16-unit length and low-byte `pjstr` encoding
+for both raw `::` chat and granted API calls.
+Report rules 601..=613 close interfaces and send `SEND_SNAPSHOT` (184) for a
+nonempty target, with reason 0..=12 and the mute flag; action 620 only toggles
+the mute option. `EVENT_MOUSE_MOVE` keeps the `Client.ts:2317` 240-byte
+threshold. Java's inverted `Client.java:3044` predicate is a bug, bounded on
+purpose to keep the one-byte body length safe; Rust retains Java's field
+encoding and leaves excess samples queued.
+`EVENT_SYNTH_ERROR` (80) reports an unresolved 377 wave as `p2(waveId &
+0x7fff)` by default. `Client::set_synth_error_reporting_377(false)` selects
+Java's reporting-disabled `p2(-1)` form without masking the sentinel.
+`P_NAMEDIALOG` (server 6) opens Java's name prompt and renders “Enter name:”;
+keys 32..=122 append up to 12 characters, backspace deletes, and nonempty
+Enter emits `RESUME_P_NAMEDIALOG` (206) with `p8(toBase37(name))`. Empty
+Enter sends no response. `P_COUNTDIALOG` and `IF_CLOSE` clear name mode, so
+the amount prompt cannot inherit the name-response opcode. Rust has no writer
+for the Java AWT-only `EVENT_HAS_WINDOW`.
 The bank X actions accept Java's bodyless `P_COUNTDIALOG` (58), close any
 social input, clear and open the amount prompt, and redraw chat only after
 the complete frame has been validated.
