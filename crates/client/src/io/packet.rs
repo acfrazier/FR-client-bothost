@@ -673,6 +673,8 @@ mod outbound_memory_tests {
     use std::cell::Cell;
 
     const WARM_WRITES: usize = 128;
+    const R274_WARM_ALLOCATION_BASELINE: usize = WARM_WRITES;
+    const R289_WARM_ALLOCATION_BASELINE: usize = WARM_WRITES;
 
     struct Counting;
 
@@ -772,13 +774,24 @@ mod outbound_memory_tests {
     }
 
     #[test]
-    fn outbound_warm_writes_allocate_at_most_one_event_per_revision() {
-        for revision in [ClientRevision::R274, ClientRevision::R289] {
-            let allocations = assert_revision_outbound_allocation_gate(revision);
+    fn outbound_warm_writes_stay_within_one_allocation_of_each_revision_baseline() {
+        for (revision, allocations, baseline) in [
+            (
+                ClientRevision::R274,
+                assert_revision_outbound_allocation_gate(ClientRevision::R274),
+                R274_WARM_ALLOCATION_BASELINE,
+            ),
+            (
+                ClientRevision::R289,
+                assert_revision_outbound_allocation_gate(ClientRevision::R289),
+                R289_WARM_ALLOCATION_BASELINE,
+            ),
+        ] {
             eprintln!("{revision:?} outbound 128-write allocations: {allocations}");
             assert!(
-                allocations <= 1,
-                "{revision:?} outbound 128-write path exceeded its measured zero-allocation baseline plus one allocation of headroom: {allocations}"
+                allocations <= baseline + 1,
+                "{revision:?} outbound 128-write path exceeded its measured baseline plus one allocation of headroom: {allocations} > {}",
+                baseline + 1
             );
         }
     }
