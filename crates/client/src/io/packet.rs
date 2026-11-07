@@ -733,15 +733,15 @@ mod outbound_memory_tests {
     fn allocations(f: impl FnOnce()) -> usize {
         COUNT.with(|count| count.set(Some(0)));
         f();
-        COUNT.with(|count| count.replace(None).expect(\"allocation counter is active\"))
+        COUNT.with(|count| count.replace(None).expect("allocation counter is active"))
     }
 
     fn assert_revision_outbound_allocation_gate(revision: ClientRevision) -> usize {
         let mut client = Client::new_with_revision(
             ClientConfig {
-                host: \"127.0.0.1\".into(),
+                host: "127.0.0.1".into(),
                 port: 43594,
-                cache_dir: \"/tmp\".into(),
+                cache_dir: "/tmp".into(),
                 members: true,
                 lowmem: false,
             },
@@ -758,7 +758,7 @@ mod outbound_memory_tests {
         for _ in 0..2 {
             client.out.pos = 0;
             client.doAction(0);
-            assert!(client.out.pos > 0, \"the warmed action emits a packet\");
+            assert!(client.out.pos > 0, "the warmed action emits a packet");
         }
 
         let mut written_bytes = 0;
@@ -773,7 +773,7 @@ mod outbound_memory_tests {
         assert_eq!(
             written_bytes,
             WARM_WRITES * packet_length,
-            \"all 128 warmed actions must encode their complete protocol packet\"
+            "all 128 warmed actions must encode their complete protocol packet"
         );
         allocations
     }
@@ -782,10 +782,10 @@ mod outbound_memory_tests {
     fn outbound_warm_writes_allocate_at_most_one_event_per_revision() {
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let allocations = assert_revision_outbound_allocation_gate(revision);
-            eprintln!(\"{revision:?} outbound 128-write allocations: {allocations}\");
+            eprintln!("{revision:?} outbound 128-write allocations: {allocations}");
             assert!(
                 allocations <= 1,
-                \"{revision:?} outbound 128-write path exceeded its measured zero-allocation baseline plus one allocation of headroom: {allocations}\"
+                "{revision:?} outbound 128-write path exceeded its measured zero-allocation baseline plus one allocation of headroom: {allocations}"
             );
         }
     }
