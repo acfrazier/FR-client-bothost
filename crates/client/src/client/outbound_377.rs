@@ -1133,11 +1133,13 @@ pub(crate) fn message_private_377(packet: &mut Packet, recipient: i64, text: &st
 /// Java: `Client.java:4971-4975`, `Packet.java:148-151`.
 pub(crate) fn client_cheat_377(packet: &mut Packet, command: &str) {
     packet.p1_enc(ClientProt377::CLIENT_CHEAT.id);
-    packet.p1((command.encode_utf16().count() + 1) as i32);
+    packet.p1(0);
+    let start = packet.pos;
     for unit in command.encode_utf16() {
         packet.p1(i32::from(unit));
     }
     packet.p1(10);
+    packet.psize1((packet.pos - start) as i32);
 }
 
 /// Emit Java 377 report-abuse rule selection and mute flag.
