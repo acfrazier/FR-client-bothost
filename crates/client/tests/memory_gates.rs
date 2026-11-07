@@ -193,12 +193,42 @@ fn assert_revision_inbound_allocation_gate(revision: ClientRevision) -> [usize; 
     let mut protocol = Packet::new(vec![0, 3, 42]);
 
     let counts = [
-        warmed_dispatch_allocations(revision, &mut c, "player actor", opcodes.player_info, &mut player),
+        warmed_dispatch_allocations(
+            revision,
+            &mut c,
+            "player actor",
+            opcodes.player_info,
+            &mut player,
+        ),
         warmed_dispatch_allocations(revision, &mut c, "npc actor", opcodes.npc_info, &mut npc),
-        warmed_dispatch_allocations(revision, &mut c, "misc runenergy", opcodes.runenergy, &mut misc),
-        warmed_dispatch_allocations(revision, &mut c, "zone object delete", opcodes.zone_obj_del, &mut zone),
-        warmed_dispatch_allocations(revision, &mut c, "cache inventory", opcodes.inventory_full, &mut inventory),
-        warmed_dispatch_allocations(revision, &mut c, "protocol varp", opcodes.varp_small, &mut protocol),
+        warmed_dispatch_allocations(
+            revision,
+            &mut c,
+            "misc runenergy",
+            opcodes.runenergy,
+            &mut misc,
+        ),
+        warmed_dispatch_allocations(
+            revision,
+            &mut c,
+            "zone object delete",
+            opcodes.zone_obj_del,
+            &mut zone,
+        ),
+        warmed_dispatch_allocations(
+            revision,
+            &mut c,
+            "cache inventory",
+            opcodes.inventory_full,
+            &mut inventory,
+        ),
+        warmed_dispatch_allocations(
+            revision,
+            &mut c,
+            "protocol varp",
+            opcodes.varp_small,
+            &mut protocol,
+        ),
     ];
     assert!(c.ingame, "all warmed inbound fixtures must remain valid");
     counts
