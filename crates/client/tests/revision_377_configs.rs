@@ -422,11 +422,13 @@ fn assert_java_table(name: &str, rows: Vec<Value>, fixture: &Value) {
     );
     let first = rows.iter().find_map(Value::as_object).unwrap();
     let fields = expected["fields"].as_object().unwrap();
-    assert_eq!(
-        first.keys().collect::<Vec<_>>(),
-        fields.keys().collect::<Vec<_>>(),
-        "{name} Java field coverage"
-    );
+    // serde_json map order depends on the `preserve_order` feature, which
+    // feature unification can enable downstream; coverage is a set check.
+    let mut actual_keys = first.keys().collect::<Vec<_>>();
+    let mut expected_keys = fields.keys().collect::<Vec<_>>();
+    actual_keys.sort();
+    expected_keys.sort();
+    assert_eq!(actual_keys, expected_keys, "{name} Java field coverage");
     for (field, digest) in fields {
         let values: Vec<&Value> = rows.iter().map(|row| &row[field]).collect();
         let hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&values).unwrap()));
