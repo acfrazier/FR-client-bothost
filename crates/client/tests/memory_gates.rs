@@ -208,6 +208,14 @@ fn assert_revision_inbound_allocation_gate(revision: ClientRevision) -> [usize; 
 fn warmed_inbound_decode_and_apply_allocation_gates_cover_each_revision() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let counts = assert_revision_inbound_allocation_gate(revision);
+        let expected = match revision {
+            ClientRevision::R274 => [7, 0, 0, 0, 1, 0],
+            ClientRevision::R289 => [14, 0, 0, 1, 1, 0],
+        };
+        assert_eq!(
+            counts, expected,
+            "{revision:?} warmed inbound allocations changed by event family"
+        );
         eprintln!("{revision:?} inbound allocation baseline: {counts:?}");
     }
 }
