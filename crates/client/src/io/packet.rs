@@ -768,6 +768,7 @@ mod outbound_memory_tests {
         });
         assert_eq!(writes, WARM_WRITES, "every warmed action writes a packet");
 
+        allocations
     }
 
     #[test]
