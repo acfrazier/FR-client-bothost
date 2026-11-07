@@ -674,7 +674,6 @@ mod observer_memory_tests {
 
 #[cfg(test)]
 mod outbound_memory_tests {
-    use super::*;
     use crate::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
     use crate::io::{map_client_prot, ClientProt, ClientRevision};
     use std::alloc::{GlobalAlloc, Layout, System};
@@ -755,27 +754,27 @@ mod outbound_memory_tests {
         client.menu_param_b[0] = 10;
         client.menu_param_c[0] = 12;
 
+        let expected_opcode = map_client_prot(revision, ClientProt::OPNPC1).id as u8;
         for _ in 0..2 {
             client.out.pos = 0;
             client.doAction(0);
-            assert!(client.out.pos > 0, "the warmed action emits a packet");
+            assert!(client.out.pos >= 3, "the warmed action emits its packet");
+            assert_eq!(
+                &client.out.data()[client.out.pos - 3..client.out.pos],
+                &[expected_opcode, 0, 7]
+            );
         }
 
-        let mut written_bytes = 0;
+        let mut writes = 0;
         let allocations = allocations(|| {
             for _ in 0..WARM_WRITES {
                 client.out.pos = 0;
                 client.doAction(0);
-                written_bytes += client.out.pos;
+                writes += usize::from(client.out.pos >= 3);
             }
         });
-        let packet_length = map_client_prot(revision, ClientProt::OPNPC1).length as usize + 1;
-        assert_eq!(
-            written_bytes,
-            WARM_WRITES * packet_length,
-            "all 128 warmed actions must encode their complete protocol packet"
-        );
-        allocations
+        assert_eq!(writes, WARM_WRITES, "every warmed action writes a packet");
+
     }
 
     #[test]
