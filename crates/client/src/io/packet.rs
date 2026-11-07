@@ -660,8 +660,15 @@ mod observer_memory_tests {
         let packet_size = std::mem::size_of::<Packet>();
         let client_size = std::mem::size_of::<crate::client::Client>();
         println!("S3 client memory: packet={packet_size} client={client_size}");
-        #[cfg(target_os = "macos")]
-        assert_eq!(client_size, 28872);
+        // The whole per-slot Client, 28,872 B measured on both Linux (the CI
+        // lane) and macOS. The inventory's rule allows +8% rounded to an
+        // 8-byte boundary: 28,872 * 1.08 = 31,181.8 -> 31,184 B. This also
+        // covers other 64-bit targets; a smaller layout passes the ceiling.
+        #[cfg(target_pointer_width = "64")]
+        assert!(
+            client_size <= 31_184,
+            "Client grew to {client_size} B (measured 28,872 B; limit 31,184 B)"
+        );
     }
 }
 
