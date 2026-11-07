@@ -186,6 +186,19 @@ The bank X actions accept Java's bodyless `P_COUNTDIALOG` (58), close any
 social input, clear and open the amount prompt, and redraw chat only after
 the complete frame has been validated.
 
+`live_public_chat_377` is an ignored, two-account server-delivery proof.
+Prepare nearby accounts with public chat on and interfaces closed. Set
+`ENGINE_DIR`, `CLIENT_377_RUNTIME_CACHE_DIR`, a new absolute
+`CLIENT_377_LIVE_DIR`, `CLIENT_377_LIVE_PREFIX`, `CLIENT_377_LIVE_USER`,
+`CLIENT_377_LIVE_PASSWORD`, `CLIENT_377_LIVE_OBSERVER`, and
+`CLIENT_377_LIVE_OBSERVER_PASSWORD`. Both accounts must use the selected
+prefix; credentials are not written to evidence. Run
+`cargo test -p client --no-default-features --test live_public_chat_377 public_chat_colour_and_effect_reach_other_player -- --exact --ignored --nocapture --test-threads=1`.
+The test never starts an engine. It sends actual GameShell keys and records
+all six effects, outbound packet metadata, receiver screenshots, and the
+other account's remote-player text/style in later server player-info
+updates. The sender's local echo is not accepted as delivery proof.
+
 `live_bank_shop_377` is an ignored proof for an explicitly selected prepared
 account near Draynor bank. It checks Withdraw/Deposit-10 and X, amount
 prompts, an inventory drag, and Buy/Sell-5 against received server state.

@@ -11650,10 +11650,11 @@ impl Client {
                 let input = std::mem::take(&mut self.chat_input);
                 let _ = self.send_cheat(&input[2..]);
             } else {
-                let mut text = self.chat_input.clone();
+                let mut text;
                 let (colour, effect, body) = if self.revision.is_377() {
-                    super::outbound_377::public_chat_prefixes_377(&text)
+                    super::outbound_377::public_chat_prefixes_377(&self.chat_input)
                 } else {
+                    text = self.chat_input.clone();
                     let mut colour = 0;
                     // TS 3097-3145 colour prefixes (sequential ifs, as TS).
                     if text.starts_with("yellow:") {
