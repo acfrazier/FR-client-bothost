@@ -122,6 +122,18 @@ Set it to the assigned account prefix, for example `s12f`. Empty prefixes
 and accounts outside that prefix are rejected before connecting.
 It proves loading and login, not audible playback or PCM parity.
 
+Revision 377 applies Java's inbound cinematic-camera packets: move-to (3),
+look-at (167), shake (67), and reset (148). Move/look acceleration values
+of at least 100 apply immediately. Other values use the existing integer
+logic-cycle interpolation. Shake changes only the rendered eye, not the
+persistent camera position. The five shake axes reset together.
+`revision_377_camera` checks production packet dispatch, Java-computed frame
+values, terrain heights, angle wrapping, reset, and zero steady-state allocations.
+`live_camera_377` uses normal Giant Dwarf dialogue to observe server cameras.
+It requires the live environment above and a fresh `frcm` account of 5–8 characters.
+Its only seeds are that account's tutorial prerequisite and position.
+It does not establish Java pixel equivalence.
+
 Revision 377 uses separate Java-sized media tables: 100 slots each for
 mapscene and mapfunction images, with 72 and 70 images loaded. Its player
 PK, prayer and hint icons remain separate, and its minimap supports the

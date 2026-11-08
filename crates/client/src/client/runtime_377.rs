@@ -72,7 +72,8 @@ impl Client {
         // Java login, tutorial and captured mainland interaction cohort.
         if !matches!(
             opcode,
-            2 | 5
+            2 | 3
+                | 5
                 | 6
                 | 10
                 | 13
@@ -86,6 +87,7 @@ impl Client {
                 | 59
                 | 61
                 | 63
+                | 67
                 | 71
                 | 75
                 | 82
@@ -110,6 +112,7 @@ impl Client {
                 | 159
                 | 162
                 | 166
+                | 167
                 | 174
                 | 181
                 | 182
@@ -911,6 +914,69 @@ impl Client {
                 self.minimap_flag_x = 0;
                 self.try_move_path.clear();
                 p.map_flag = true;
+            }
+            O::CameraMoveTo(target) => {
+                // Java Client.java:8349-8364. The existing logic-cycle camera
+                // pass (4701-4792) interpolates when acceleration is below 100.
+                self.cinema_cam = true;
+                self.cam_move_to_lx = target.x;
+                self.cam_move_to_lz = target.z;
+                self.cam_move_to_hei = target.height;
+                self.cam_move_to_rate = target.rate;
+                self.cam_move_to_rate2 = target.acceleration;
+                if target.acceleration >= 100 {
+                    self.cam_x = target.x * 128 + 64;
+                    self.cam_z = target.z * 128 + 64;
+                    self.cam_y = get_av_h(
+                        &self.groundh,
+                        &self.mapl,
+                        self.cam_x,
+                        self.cam_z,
+                        self.minusedlevel,
+                    ) - target.height;
+                }
+                p.camera = true;
+            }
+            O::CameraLookAt(target) => {
+                // Java Client.java:7538-7565: integer distance, angle truncation,
+                // 11-bit masking, then the pitch clamp, in that order.
+                self.cinema_cam = true;
+                self.cam_look_at_lx = target.x;
+                self.cam_look_at_lz = target.z;
+                self.cam_look_at_hei = target.height;
+                self.cam_look_at_rate = target.rate;
+                self.cam_look_at_rate2 = target.acceleration;
+                if target.acceleration >= 100 {
+                    let x = target.x * 128 + 64;
+                    let z = target.z * 128 + 64;
+                    let y = get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel)
+                        - target.height;
+                    let dx = x - self.cam_x;
+                    let dy = y - self.cam_y;
+                    let dz = z - self.cam_z;
+                    let distance = f64::sqrt((dx * dx + dz * dz) as f64) as i32;
+                    self.cam_pitch = (((dy as f64).atan2(distance as f64) * 325.949) as i32
+                        & 0x7ff)
+                        .clamp(128, 383);
+                    self.cam_yaw = ((dx as f64).atan2(dz as f64) * -325.949) as i32 & 0x7ff;
+                }
+                p.camera = true;
+            }
+            O::CameraShake {
+                axis,
+                jitter,
+                amplitude,
+                rate,
+            } => {
+                // Java Client.java:7778-7791. Decode checks the five-slot axis
+                // before application; drawScene applies jitter to the eye only.
+                let axis = axis as usize;
+                self.cam_shake[axis] = true;
+                self.cam_shake_axis[axis] = jitter;
+                self.cam_shake_ran[axis] = amplitude;
+                self.cam_shake_amp[axis] = rate;
+                self.cam_shake_cycle[axis] = 0;
+                p.camera = true;
             }
             O::CameraReset => {
                 self.cinema_cam = false;
