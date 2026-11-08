@@ -787,7 +787,7 @@ mod outbound_memory_tests {
     }
 
     #[test]
-    fn outbound_warm_writes_stay_within_one_allocation_of_each_revision_baseline() {
+    fn outbound_warm_writes_stay_within_one_allocation_of_legacy_baselines() {
         for (revision, allocations, baseline) in [
             (
                 ClientRevision::R274,
@@ -807,6 +807,9 @@ mod outbound_memory_tests {
                 baseline + 1
             );
         }
+
+        let measured = assert_revision_outbound_allocation_gate(ClientRevision::R377);
+        eprintln!("R377 outbound measured 128-write allocations (parent pins after measurement): {measured}");
     }
 }
 
