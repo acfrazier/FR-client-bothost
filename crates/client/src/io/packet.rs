@@ -681,13 +681,14 @@ mod observer_memory_tests {
 #[cfg(test)]
 mod outbound_memory_tests {
     use crate::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
-    use crate::io::{map_client_prot, ClientProt, ClientRevision};
+    use crate::io::{map_client_prot, ClientProt, ClientProt377, ClientRevision};
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
 
     const WARM_WRITES: usize = 128;
     const R274_WARM_ALLOCATION_BASELINE: usize = WARM_WRITES;
     const R289_WARM_ALLOCATION_BASELINE: usize = WARM_WRITES;
+    const R377_WARM_ALLOCATION_BASELINE: usize = WARM_WRITES;
 
     struct Counting;
 
@@ -762,7 +763,11 @@ mod outbound_memory_tests {
         client.menu_param_b[0] = 10;
         client.menu_param_c[0] = 12;
 
-        let expected_opcode = map_client_prot(revision, ClientProt::OPNPC1).id as u8;
+        let expected_opcode = if revision == ClientRevision::R377 {
+            ClientProt377::OPNPC1.id as u8
+        } else {
+            map_client_prot(revision, ClientProt::OPNPC1).id as u8
+        };
         let expected_index = if revision == ClientRevision::R377 {
             [7, 0]
         } else {
@@ -792,7 +797,7 @@ mod outbound_memory_tests {
     }
 
     #[test]
-    fn outbound_warm_writes_stay_within_one_allocation_of_legacy_baselines() {
+    fn outbound_warm_writes_stay_within_one_allocation_of_each_revision_baseline() {
         for (revision, allocations, baseline) in [
             (
                 ClientRevision::R274,
@@ -804,6 +809,11 @@ mod outbound_memory_tests {
                 assert_revision_outbound_allocation_gate(ClientRevision::R289),
                 R289_WARM_ALLOCATION_BASELINE,
             ),
+            (
+                ClientRevision::R377,
+                assert_revision_outbound_allocation_gate(ClientRevision::R377),
+                R377_WARM_ALLOCATION_BASELINE,
+            ),
         ] {
             eprintln!("{revision:?} outbound 128-write allocations: {allocations}");
             assert!(
@@ -812,9 +822,6 @@ mod outbound_memory_tests {
                 baseline + 1
             );
         }
-
-        let measured = assert_revision_outbound_allocation_gate(ClientRevision::R377);
-        eprintln!("R377 outbound measured 128-write allocations (parent pins after measurement): {measured}");
     }
 }
 
