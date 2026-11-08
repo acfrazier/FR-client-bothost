@@ -5,6 +5,8 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::Arc;
 
+const R377_PACKET_FIXTURES: &str = include_str!("fixtures/revision_377/packets.json");
+
 const UNCHANGED_ITERATIONS: usize = 128;
 
 struct Counting;
@@ -92,7 +94,72 @@ fn inbound_opcodes(revision: ClientRevision) -> InboundOpcodes {
             varp_small: ServerProt289::VARP_SMALL,
             inventory_payload: &[0, 3, 0, 1, 0, 1, 2],
         },
+        ClientRevision::R377 => panic!("R377 uses the independent runtime dispatcher"),
     }
+}
+
+fn revision_377_fixture(name: &str) -> (i32, Vec<u8>) {
+    let fixtures: serde_json::Value =
+        serde_json::from_str(R377_PACKET_FIXTURES).expect("R377 packet fixture JSON");
+    let case = fixtures["cases"]
+        .as_array()
+        .expect("R377 packet cases")
+        .iter()
+        .find(|case| case["name"] == name)
+        .unwrap_or_else(|| panic!("missing R377 packet fixture {name}"));
+    let opcode = case["opcode"].as_u64().expect("fixture opcode") as i32;
+    let encoded = case["payload_hex"]
+        .as_str()
+        .expect("fixture payload_hex");
+    let payload = encoded
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let digit = |byte: u8| match byte {
+                b'0'..=b'9' => byte - b'0',
+                b'a'..=b'f' => byte - b'a' + 10,
+                b'A'..=b'F' => byte - b'A' + 10,
+                _ => panic!("invalid R377 fixture hex"),
+            };
+            digit(pair[0]) * 16 + digit(pair[1])
+        })
+        .collect();
+    (opcode, payload)
+}
+
+fn warmed_r377_dispatch_allocations(
+    c: &mut Client,
+    label: &str,
+    opcode: i32,
+    packet: &mut Packet,
+) -> usize {
+    let mut apply = || {
+        packet.pos = 0;
+        packet.clear_frame_end();
+        packet.set_frame_end(packet.length());
+        c.psize = packet.length() as i32;
+        c.handle_packet(opcode, packet);
+    };
+    apply();
+    apply();
+    assert!(c.ingame, "R377 {label} production apply fixture must remain valid");
+    let baseline = allocations(|| apply());
+    let mut samples = [0; UNCHANGED_ITERATIONS];
+    for sample in &mut samples {
+        *sample = allocations(|| apply());
+    }
+    assert!(
+        samples.iter().all(|&sample| sample == baseline),
+        "R377 {label} allocation count changed after warm-up: baseline={baseline}, samples={samples:?}"
+    );
+    let first_half: usize = samples[..UNCHANGED_ITERATIONS / 2].iter().sum();
+    let second_half: usize = samples[UNCHANGED_ITERATIONS / 2..].iter().sum();
+    assert_eq!(
+        first_half, second_half,
+        "R377 {label} allocation count grew across unchanged iterations"
+    );
+    eprintln!("R377 inbound {label}: {baseline} allocations/apply");
+    baseline
 }
 
 fn client(revision: ClientRevision) -> Client {
@@ -180,9 +247,26 @@ fn warmed_dispatch_allocations(
     baseline
 }
 
-/// Shared revision-parametric inbound allocation body. A later revision adds
-/// its opcode/payload row to `inbound_opcodes` and calls this same helper.
+/// Shared revision-parametric inbound allocation body. R377 uses the captured
+/// engine fixtures and the same production handler entrypoint used by live input.
 fn assert_revision_inbound_allocation_gate(revision: ClientRevision) -> [usize; 6] {
+    if revision == ClientRevision::R377 {
+        let mut c = client(revision);
+        let fixtures = [
+            ("player actor", "PlayerInfo"),
+            ("npc actor", "NpcInfo"),
+            ("misc runenergy", "UpdateRunEnergy"),
+            ("zone object delete", "ObjDel"),
+            ("cache inventory", "UpdateInvFull"),
+            ("protocol varp", "VarpSmall"),
+        ];
+        return fixtures.map(|(label, name)| {
+            let (opcode, payload) = revision_377_fixture(name);
+            let mut packet = Packet::new(payload);
+            warmed_r377_dispatch_allocations(&mut c, label, opcode, &mut packet)
+        });
+    }
+
     let opcodes = inbound_opcodes(revision);
     let mut c = client(revision);
     let mut player = Packet::new(player_info_frame());
@@ -241,6 +325,7 @@ fn warmed_inbound_decode_and_apply_allocation_gates_cover_each_revision() {
         let expected = match revision {
             ClientRevision::R274 => [7, 0, 0, 0, 1, 0],
             ClientRevision::R289 => [14, 0, 0, 1, 1, 0],
+            ClientRevision::R377 => unreachable!("R377 has no pinned allocation baseline yet"),
         };
         assert_eq!(
             counts, expected,
@@ -248,4 +333,8 @@ fn warmed_inbound_decode_and_apply_allocation_gates_cover_each_revision() {
         );
         eprintln!("{revision:?} inbound allocation baseline: {counts:?}");
     }
+
+    eprintln!(
+        "R377 inbound measured allocation values (parent pins after measurement): {measured:?}"
+    );
 }
