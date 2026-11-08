@@ -168,8 +168,8 @@ fn player_info_frame(revision: ClientRevision) -> Vec<u8> {
     // Production PLAYER_INFO appearance + face-entity mask. R377 reads the
     // transformed target before its reversed appearance's three-byte prefix.
     if revision == ClientRevision::R377 {
-        let mut frame = vec![0x80, 0x1f, 0xfc, 0x05, 0x12, 0xb4, 47];
-        let mut appearance = [0; 47];
+        let mut frame = vec![0x80, 0x1f, 0xfc, 0x05, 0x12, 0xb4, 45];
+        let mut appearance = [0; 45];
         appearance[20..34].fill(0xff);
         appearance[41] = 1;
         frame.extend(appearance.into_iter().rev());
@@ -200,6 +200,7 @@ fn warmed_dispatch_allocations(
 ) -> usize {
     dispatch(c, opcode, packet);
     dispatch(c, opcode, packet);
+    assert!(c.ingame, "{revision:?} {label} fixture must warm successfully");
     let baseline = allocations(|| dispatch(c, opcode, packet));
     let mut samples = [0; UNCHANGED_ITERATIONS];
     for sample in &mut samples {
@@ -276,12 +277,15 @@ fn assert_revision_inbound_allocation_gate(revision: ClientRevision) -> [usize; 
 
 #[test]
 fn warmed_inbound_decode_and_apply_allocation_gates_cover_each_revision() {
-    for revision in [ClientRevision::R274, ClientRevision::R289] {
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
         let counts = assert_revision_inbound_allocation_gate(revision);
         let expected = match revision {
-            ClientRevision::R274 => [7, 0, 0, 0, 1, 0],
+            ClientRevision::R274 | ClientRevision::R377 => [7, 0, 0, 0, 1, 0],
             ClientRevision::R289 => [14, 0, 0, 1, 1, 0],
-            ClientRevision::R377 => unreachable!("R377 has no pinned allocation baseline yet"),
         };
         assert_eq!(
             counts, expected,
@@ -289,9 +293,4 @@ fn warmed_inbound_decode_and_apply_allocation_gates_cover_each_revision() {
         );
         eprintln!("{revision:?} inbound allocation baseline: {counts:?}");
     }
-
-    let measured = assert_revision_inbound_allocation_gate(ClientRevision::R377);
-    eprintln!(
-        "R377 inbound measured allocation values (parent pins after measurement): {measured:?}"
-    );
 }
