@@ -127,40 +127,6 @@ fn revision_377_fixture(name: &str) -> (i32, Vec<u8>) {
     (opcode, payload)
 }
 
-fn warmed_r377_dispatch_allocations(
-    c: &mut Client,
-    label: &str,
-    opcode: i32,
-    packet: &mut Packet,
-) -> usize {
-    let mut apply = || {
-        packet.pos = 0;
-        packet.clear_frame_end();
-        packet.set_frame_end(packet.length());
-        c.psize = packet.length() as i32;
-        c.handle_packet(opcode, packet);
-    };
-    apply();
-    apply();
-    assert!(c.ingame, "R377 {label} production apply fixture must remain valid");
-    let baseline = allocations(|| apply());
-    let mut samples = [0; UNCHANGED_ITERATIONS];
-    for sample in &mut samples {
-        *sample = allocations(|| apply());
-    }
-    assert!(
-        samples.iter().all(|&sample| sample == baseline),
-        "R377 {label} allocation count changed after warm-up: baseline={baseline}, samples={samples:?}"
-    );
-    let first_half: usize = samples[..UNCHANGED_ITERATIONS / 2].iter().sum();
-    let second_half: usize = samples[UNCHANGED_ITERATIONS / 2..].iter().sum();
-    assert_eq!(
-        first_half, second_half,
-        "R377 {label} allocation count grew across unchanged iterations"
-    );
-    eprintln!("R377 inbound {label}: {baseline} allocations/apply");
-    baseline
-}
 
 fn client(revision: ClientRevision) -> Client {
     let mut c = Client::new_with_revision(
@@ -244,6 +210,7 @@ fn warmed_dispatch_allocations(
         "{revision:?} {label} allocation count grew across unchanged iterations"
     );
     eprintln!("{revision:?} inbound {label}: {baseline} allocations/dispatch");
+    assert!(c.ingame, "{revision:?} {label} fixture must remain valid");
     baseline
 }
 
@@ -263,7 +230,7 @@ fn assert_revision_inbound_allocation_gate(revision: ClientRevision) -> [usize; 
         return fixtures.map(|(label, name)| {
             let (opcode, payload) = revision_377_fixture(name);
             let mut packet = Packet::new(payload);
-            warmed_r377_dispatch_allocations(&mut c, label, opcode, &mut packet)
+            warmed_dispatch_allocations(revision, &mut c, label, opcode, &mut packet)
         });
     }
 
@@ -334,6 +301,7 @@ fn warmed_inbound_decode_and_apply_allocation_gates_cover_each_revision() {
         eprintln!("{revision:?} inbound allocation baseline: {counts:?}");
     }
 
+    let measured = assert_revision_inbound_allocation_gate(ClientRevision::R377);
     eprintln!(
         "R377 inbound measured allocation values (parent pins after measurement): {measured:?}"
     );
