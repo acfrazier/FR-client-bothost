@@ -1,11 +1,9 @@
 use client::client::{Client, ClientConfig, ClientPlayer};
-use client::config::{IfType, IfTypeMut};
+use client::config::{Cache, IfType, IfTypeMut};
 use client::io::{ClientRevision, Packet, ServerProt, ServerProt289};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::Arc;
-
-const R377_PACKET_FIXTURES: &str = include_str!("fixtures/revision_377/packets.json");
 
 const UNCHANGED_ITERATIONS: usize = 128;
 
@@ -72,6 +70,8 @@ struct InboundOpcodes {
     inventory_full: i32,
     varp_small: i32,
     inventory_payload: &'static [u8],
+    zone_payload: &'static [u8],
+    varp_payload: &'static [u8],
 }
 
 fn inbound_opcodes(revision: ClientRevision) -> InboundOpcodes {
@@ -84,6 +84,8 @@ fn inbound_opcodes(revision: ClientRevision) -> InboundOpcodes {
             inventory_full: ServerProt::UPDATE_INV_FULL,
             varp_small: ServerProt::VARP_SMALL,
             inventory_payload: &[0, 3, 1, 0, 1, 2],
+            zone_payload: &[0x12, 0x80, 0],
+            varp_payload: &[0, 3, 42],
         },
         ClientRevision::R289 => InboundOpcodes {
             player_info: ServerProt289::PLAYER_INFO,
@@ -93,52 +95,48 @@ fn inbound_opcodes(revision: ClientRevision) -> InboundOpcodes {
             inventory_full: ServerProt289::UPDATE_INV_FULL,
             varp_small: ServerProt289::VARP_SMALL,
             inventory_payload: &[0, 3, 0, 1, 0, 1, 2],
+            zone_payload: &[0x12, 0x80, 0],
+            varp_payload: &[0, 3, 42],
         },
-        ClientRevision::R377 => panic!("R377 uses the independent runtime dispatcher"),
+        ClientRevision::R377 => InboundOpcodes {
+            player_info: 90,
+            npc_info: 71,
+            runenergy: 125,
+            zone_obj_del: 208,
+            inventory_full: 206,
+            varp_small: 182,
+            // Java Client.java:8065-8085: component, count, LE biased ID,
+            // then negated quantity. The item and component match the fixture.
+            inventory_payload: &[0, 3, 0, 1, 0x81, 0, 0xfe],
+            // Java Client.java:7553-7568 and 7325-7340.
+            zone_payload: &[0, 0x80, 0x92],
+            varp_payload: &[0, 0x83, 86],
+        },
     }
 }
 
-fn revision_377_fixture(name: &str) -> (i32, Vec<u8>) {
-    let fixtures: serde_json::Value =
-        serde_json::from_str(R377_PACKET_FIXTURES).expect("R377 packet fixture JSON");
-    let case = fixtures["cases"]
-        .as_array()
-        .expect("R377 packet cases")
-        .iter()
-        .find(|case| case["name"] == name)
-        .unwrap_or_else(|| panic!("missing R377 packet fixture {name}"));
-    let opcode = case["opcode"].as_u64().expect("fixture opcode") as i32;
-    let encoded = case["payload_hex"]
-        .as_str()
-        .expect("fixture payload_hex");
-    let payload = encoded
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let digit = |byte: u8| match byte {
-                b'0'..=b'9' => byte - b'0',
-                b'a'..=b'f' => byte - b'a' + 10,
-                b'A'..=b'F' => byte - b'A' + 10,
-                _ => panic!("invalid R377 fixture hex"),
-            };
-            digit(pair[0]) * 16 + digit(pair[1])
-        })
-        .collect();
-    (opcode, payload)
-}
-
-
 fn client(revision: ClientRevision) -> Client {
-    let mut c = Client::new_with_revision(
-        ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: false,
-        },
-        revision,
-    );
+    let config = ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    };
+    let mut c = if revision == ClientRevision::R377 {
+        let mut cache = Cache::default();
+        cache.objs.push(Default::default());
+        cache.varps.resize_with(4, Default::default);
+        Client::from_shared_with_revision(
+            config,
+            Arc::new(cache),
+            Arc::new(Vec::new()),
+            Vec::new(),
+            revision,
+        )
+    } else {
+        Client::new_with_revision(config, revision)
+    };
     c.ingame = true;
     c.ptype = -1;
     c.local_player = Some(ClientPlayer::at(10, 10));
@@ -166,9 +164,17 @@ fn client(revision: ClientRevision) -> Client {
     c
 }
 
-fn player_info_frame() -> Vec<u8> {
-    // Production PLAYER_INFO appearance + face-entity mask, as used by both
-    // revision fixtures. Replaying it exercises the warmed actor apply path.
+fn player_info_frame(revision: ClientRevision) -> Vec<u8> {
+    // Production PLAYER_INFO appearance + face-entity mask. R377 reads the
+    // transformed target before its reversed appearance's three-byte prefix.
+    if revision == ClientRevision::R377 {
+        let mut frame = vec![0x80, 0x1f, 0xfc, 0x05, 0x12, 0xb4, 47];
+        let mut appearance = [0; 47];
+        appearance[20..34].fill(0xff);
+        appearance[41] = 1;
+        frame.extend(appearance.into_iter().rev());
+        return frame;
+    }
     let mut frame = vec![0x80, 0x1f, 0xfc, 0x05, 44];
     let mut appearance = [0; 44];
     appearance[19..33].fill(0xff);
@@ -214,34 +220,17 @@ fn warmed_dispatch_allocations(
     baseline
 }
 
-/// Shared revision-parametric inbound allocation body. R377 uses the captured
-/// engine fixtures and the same production handler entrypoint used by live input.
+/// Shared revision-parametric inbound allocation body. Every case calls the
+/// production handler entrypoint used by live input, including R377 validation.
 fn assert_revision_inbound_allocation_gate(revision: ClientRevision) -> [usize; 6] {
-    if revision == ClientRevision::R377 {
-        let mut c = client(revision);
-        let fixtures = [
-            ("player actor", "PlayerInfo"),
-            ("npc actor", "NpcInfo"),
-            ("misc runenergy", "UpdateRunEnergy"),
-            ("zone object delete", "ObjDel"),
-            ("cache inventory", "UpdateInvFull"),
-            ("protocol varp", "VarpSmall"),
-        ];
-        return fixtures.map(|(label, name)| {
-            let (opcode, payload) = revision_377_fixture(name);
-            let mut packet = Packet::new(payload);
-            warmed_dispatch_allocations(revision, &mut c, label, opcode, &mut packet)
-        });
-    }
-
     let opcodes = inbound_opcodes(revision);
     let mut c = client(revision);
-    let mut player = Packet::new(player_info_frame());
+    let mut player = Packet::new(player_info_frame(revision));
     let mut npc = Packet::new(vec![0]);
     let mut misc = Packet::new(vec![75]);
-    let mut zone = Packet::new(vec![0x12, 0x80, 0]);
+    let mut zone = Packet::new(opcodes.zone_payload.to_vec());
     let mut inventory = Packet::new(opcodes.inventory_payload.to_vec());
-    let mut protocol = Packet::new(vec![0, 3, 42]);
+    let mut protocol = Packet::new(opcodes.varp_payload.to_vec());
 
     let counts = [
         warmed_dispatch_allocations(
