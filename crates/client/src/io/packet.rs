@@ -763,13 +763,18 @@ mod outbound_memory_tests {
         client.menu_param_c[0] = 12;
 
         let expected_opcode = map_client_prot(revision, ClientProt::OPNPC1).id as u8;
+        let expected_index = if revision == ClientRevision::R377 {
+            [7, 0]
+        } else {
+            [0, 7]
+        };
         for _ in 0..2 {
             client.out.pos = 0;
             client.doAction(0);
             assert!(client.out.pos >= 3, "the warmed action emits its packet");
             assert_eq!(
                 &client.out.data()[client.out.pos - 3..client.out.pos],
-                &[expected_opcode, 0, 7]
+                &[expected_opcode, expected_index[0], expected_index[1]]
             );
         }
 
