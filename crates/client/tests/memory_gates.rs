@@ -200,7 +200,10 @@ fn warmed_dispatch_allocations(
 ) -> usize {
     dispatch(c, opcode, packet);
     dispatch(c, opcode, packet);
-    assert!(c.ingame, "{revision:?} {label} fixture must warm successfully");
+    assert!(
+        c.ingame,
+        "{revision:?} {label} fixture must warm successfully"
+    );
     let baseline = allocations(|| dispatch(c, opcode, packet));
     let mut samples = [0; UNCHANGED_ITERATIONS];
     for sample in &mut samples {
