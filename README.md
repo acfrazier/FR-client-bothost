@@ -112,6 +112,8 @@ Warmed report-name draws reuse the component's text buffer on every revision.
 LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
 as Java does.
 
+Cold login clears the Continue-button latch; a reconnect retains it.
+
 The 289 IF_SETOBJECT sentinel clears only the model type. The stored model
 ID and transform values remain unchanged.
 

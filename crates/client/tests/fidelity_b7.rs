@@ -47,6 +47,7 @@ fn relog(revision: ClientRevision, expected: &[u8]) {
     c.oplogic7 = 100;
     c.oplogic8 = 100;
     c.oplogic9 = 100;
+    c.resumed_pause_button = true;
     c.logout();
     c.login("fixture", "fixture", false).unwrap();
     server.join().unwrap();
@@ -65,6 +66,16 @@ fn relog(revision: ClientRevision, expected: &[u8]) {
     assert_eq!(&c.out.data()[..c.out.pos], expected);
     assert_eq!(counters, [0; 9]);
     assert_eq!(c.in_multizone, 0);
+    assert!(
+        !c.resumed_pause_button,
+        "{revision:?} cold login resets Continue"
+    );
+    c.out.pos = 0;
+    c.menu_action[0] = MiniMenuAction::PAUSE_BUTTON;
+    c.menu_param_c[0] = 42;
+    c.doAction(0);
+    assert_eq!(c.out.pos, 3, "{revision:?} the next session can Continue");
+    assert!(c.resumed_pause_button);
     println!("Client inline bytes: {}", std::mem::size_of::<Client>());
 }
 
@@ -130,9 +141,14 @@ fn fidelity_b7_reconnect_keeps_multiway_and_menu_counters() {
         c.oplogic7 = 7;
         c.oplogic8 = 8;
         c.oplogic9 = 9;
+        c.resumed_pause_button = true;
         c.login("fixture", "fixture", true).unwrap();
         server.join().unwrap();
         assert_eq!(c.in_multizone, 1);
+        assert!(
+            c.resumed_pause_button,
+            "reconnect retains the Continue latch"
+        );
         assert_eq!(
             [
                 c.oplogic1, c.oplogic2, c.oplogic3, c.oplogic4, c.oplogic5, c.oplogic6, c.oplogic7,

@@ -3781,6 +3781,7 @@ impl Client {
             self.minimap_state = 0;
             self.main_overlay_id = -1;
             self.dialog_input_open = false;
+            self.resumed_pause_button = false;
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
             self.begin_session_frames();
