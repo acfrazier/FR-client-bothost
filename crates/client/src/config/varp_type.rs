@@ -58,9 +58,7 @@ mod tests {
     #[test]
     fn varp12_legacy_opcode_payload_and_13_keep_next_record_aligned() {
         // Java 289 VarpType.java:118-121 consumes g4 for 12 and no payload for 13.
-        let mut dat = Packet::new(vec![
-            12, 0, 0, 0, 0, 13, 5, 0x12, 0x34, 0, 5, 0x56, 0x78, 0,
-        ]);
+        let mut dat = Packet::new(vec![12, 0, 0, 0, 0, 13, 5, 0x12, 0x34, 0, 5, 0x56, 0x78, 0]);
         let mut first = VarpType::default();
         first.decode(&mut dat);
         let mut second = VarpType::default();

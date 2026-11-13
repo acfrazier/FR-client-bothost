@@ -77,7 +77,10 @@ mod tests {
         first.decode(&mut dat);
         let mut second = VarBitType::default();
         second.decode(&mut dat);
-        assert_eq!((second.basevar, second.startbit, second.endbit), (0x1234, 5, 6));
+        assert_eq!(
+            (second.basevar, second.startbit, second.endbit),
+            (0x1234, 5, 6)
+        );
         assert_eq!(dat.pos, 18);
     }
 }
