@@ -98,6 +98,8 @@ The 289 welcome components display last-login, unread-message and recovery
 state with Java's text and colours. Codes 650 and 655 share the login text.
 The address uses host-provided DNS text or the dotted IP without network IO.
 Moderator mute text follows the privilege level and mute option.
+LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
+as Java does.
 
 ## Tests
 

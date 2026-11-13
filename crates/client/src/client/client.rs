@@ -6833,7 +6833,6 @@ impl Client {
                 .unwrap_or(-1);
             if self.welcome_interface_id != -1 {
                 self.main_modal_id = self.welcome_interface_id;
-                self.redraw_frame = true;
             }
             self.report_abuse_input.clear();
             self.report_abuse_mute_option = false;
