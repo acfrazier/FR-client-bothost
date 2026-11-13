@@ -9413,10 +9413,8 @@ impl Client {
                 *z -= dz;
             }
         }
-        // Java 377 Client.java:8301: only an actual rebuild ends the cutscene.
-        if self.revision.is_377() {
-            self.cinema_cam = false;
-        }
+        // Java 289 client.java:3122 and Java 377 Client.java:8301: only an actual rebuild ends the cutscene.
+        self.cinema_cam = false;
     }
 
     /// Common R289 admission and publication boundary. R289 operations are

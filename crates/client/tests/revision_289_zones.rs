@@ -153,6 +153,10 @@ fn objects_direct_and_enclosed_receiver_count_mask_and_pile() {
 }
 
 fn client() -> Client {
+    client_with_revision(ClientRevision::R289)
+}
+
+fn client_with_revision(revision: ClientRevision) -> Client {
     let mut c = Client::new_with_revision(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -161,7 +165,7 @@ fn client() -> Client {
             members: true,
             lowmem: false,
         },
-        ClientRevision::R289,
+        revision,
     );
     let cache = std::sync::Arc::get_mut(&mut c.cache).expect("isolated fixture cache");
     cache.objs.resize_with(1, Default::default);
@@ -250,6 +254,54 @@ fn rebuild_translates_local_and_pending_state_and_keeps_world_until_load() {
         (7, 8)
     );
     assert_eq!(c.gens.scene, before.scene + 1);
+}
+#[test]
+fn actual_rebuild_resets_cinematic_camera() {
+    for (revision, opcode) in [
+        (
+            ClientRevision::R289,
+            client::io::ServerProt289::REBUILD_NORMAL,
+        ),
+        (ClientRevision::R274, client::io::ServerProt::REBUILD_NORMAL),
+    ] {
+        let mut c = client_with_revision(revision);
+        c.scene_state = 2;
+        c.cinema_cam = true;
+
+        dispatch(&mut c, opcode, &[0, 7, 0, 8]);
+
+        assert_eq!(c.scene_state, 1, "rebuild must enter scene loading");
+        assert_eq!(
+            (c.map_build_centre_zone_x, c.map_build_centre_zone_z),
+            (7, 8)
+        );
+        assert!(!c.cinema_cam, "cinematic camera was not reset");
+    }
+}
+
+#[test]
+fn unchanged_centre_rebuild_preserves_cinematic_camera() {
+    for (revision, opcode) in [
+        (
+            ClientRevision::R289,
+            client::io::ServerProt289::REBUILD_NORMAL,
+        ),
+        (ClientRevision::R274, client::io::ServerProt::REBUILD_NORMAL),
+    ] {
+        let mut c = client_with_revision(revision);
+        c.map_build_centre_zone_x = 7;
+        c.map_build_centre_zone_z = 8;
+        c.scene_state = 2;
+        c.cinema_cam = true;
+
+        dispatch(&mut c, opcode, &[0, 7, 0, 8]);
+
+        assert_eq!(c.scene_state, 2, "unchanged centre must not rebuild");
+        assert!(
+            c.cinema_cam,
+            "unchanged centre must preserve the cinematic camera"
+        );
+    }
 }
 
 #[test]
