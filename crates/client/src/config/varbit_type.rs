@@ -52,9 +52,32 @@ impl VarBitType {
                     self.endbit = dat.g1();
                 }
                 10 => self.debugname = dat.gjstr(),
-                // TS's else branch also consumes only the code byte
+                // Java 289 VarbitType.java:74-79: code 2 is empty; 3/4 store g4.
+                2 => {}
+                3 | 4 => {
+                    let _ = dat.g4();
+                }
                 _ => eprintln!("Error unrecognised varbit config code: {code}"),
             }
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::VarBitType;
+    use crate::io::Packet;
+
+    #[test]
+    fn varbit_legacy_opcode_payloads_and_2_keep_next_record_aligned() {
+        // Java 289 VarbitType.java:74-79; 2 has no payload, 3/4 each consume g4.
+        let mut dat = Packet::new(vec![
+            2, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 1, 0x12, 0x34, 5, 6, 0,
+        ]);
+        let mut first = VarBitType::default();
+        first.decode(&mut dat);
+        let mut second = VarBitType::default();
+        second.decode(&mut dat);
+        assert_eq!((second.basevar, second.startbit, second.endbit), (0x1234, 5, 6));
+        assert_eq!(dat.pos, 18);
     }
 }
