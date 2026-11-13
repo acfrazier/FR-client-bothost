@@ -182,15 +182,12 @@ impl World {
         self.fill_base_level_with_revision(level, ClientRevision::R274);
     }
 
-    /// Keep Java's empty-square painter dependencies only for explicit 377
-    /// builds. Pass the revision at build time without enlarging every client.
-    pub fn fill_base_level_with_revision(&mut self, level: i32, revision: ClientRevision) {
+    /// Materialize Java's empty-square painter dependencies for every revision.
+    /// Keep the revision at the build call without enlarging every client.
+    pub fn fill_base_level_with_revision(&mut self, level: i32, _revision: ClientRevision) {
         self.min_level = level;
-        if !revision.is_377() {
-            return;
-        }
-        // Java 377 World3D.method275: empty squares participate in the fill
-        // queue's adjacency ordering even though they emit no fragments.
+        // Java's base-level fills materialize empty squares even before geometry
+        // has been added.
         for x in 0..self.max_tile_x {
             for z in 0..self.max_tile_z {
                 self.squares[level as usize][x as usize][z as usize]
@@ -1227,7 +1224,7 @@ mod size_tests {
     }
 
     #[test]
-    fn fill_base_level_does_not_materialize_empty_squares() {
+    fn fill_base_level_materializes_empty_squares() {
         let max_level = 1;
         let max_tile_x = 104;
         let max_tile_z = 104;
@@ -1245,7 +1242,11 @@ mod size_tests {
                 }
             }
         }
-        assert_eq!(n, 0, "empty plane must stay None holes, got {n}");
+        assert_eq!(
+            n,
+            max_tile_x as usize * max_tile_z as usize,
+            "base plane must be materialized, got {n} squares"
+        );
         assert_eq!(w.min_level, 0);
     }
 
@@ -1270,7 +1271,7 @@ mod size_tests {
     }
 
     #[test]
-    fn explicit_r274_and_r289_base_fill_keep_the_existing_sparse_behavior() {
+    fn explicit_r274_and_r289_base_fill_materialize_empty_squares() {
         for revision in [
             crate::io::ClientRevision::R274,
             crate::io::ClientRevision::R289,
@@ -1278,12 +1279,12 @@ mod size_tests {
             let mut world = World::new(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4);
             world.fill_base_level_with_revision(1, revision);
             assert_eq!(world.min_level, 1);
-            assert!(world
-                .squares
-                .iter()
-                .flatten()
-                .flatten()
-                .all(Option::is_none));
+            assert!(world.squares.iter().enumerate().all(|(level, tiles)| {
+                tiles
+                    .iter()
+                    .flatten()
+                    .all(|square| square.is_some() == (level == 1))
+            }));
         }
     }
 }
