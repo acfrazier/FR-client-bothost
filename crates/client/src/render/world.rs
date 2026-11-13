@@ -1205,18 +1205,12 @@ impl RenderWorld {
                 )
                 .map(SceneModel::Shared)
             } else {
-                // The legacy port passes shape as angle here; Java 377
-                // uses the placement angle for dynamic ground decor.
-                let anim_angle = if cache.revision_377.is_some() {
-                    angle
-                } else {
-                    LocShape::GROUND_DECOR
-                };
+                // Java passes the placement angle for animated ground decor.
                 Some(SceneModel::LocAnim(ClientLocAnim::new(
                     cache,
                     loc_id,
                     LocShape::GROUND_DECOR,
-                    anim_angle,
+                    angle,
                     gd.h_sw,
                     gd.h_se,
                     gd.h_ne,
@@ -6876,5 +6870,69 @@ mod wall_anim_377_tests {
             renderer.wall_model2(&world, &cache, 0, 0, 0, 0).is_none(),
             "the legacy resolver keeps clearing model2 on non-2 LOC_ANIM"
         );
+    }
+}
+#[cfg(test)]
+mod ground_decor_anim_tests {
+    use super::{RenderWorld, SceneModel};
+    use crate::config::{runtime_377::InterfaceFields377, Cache, CacheRevision377, LocType};
+    use crate::core::world::World;
+
+    fn cache(revision_377: bool) -> Cache {
+        let mut cache = Cache::default();
+        cache.locs.push(LocType {
+            anim: 0,
+            ..LocType::default()
+        });
+        cache.seqs.resize_with(1, Default::default);
+        if revision_377 {
+            cache.revision_377 = Some(Box::new(CacheRevision377 {
+                config: Default::default(),
+                interfaces: InterfaceFields377 {
+                    client_code_layers: Default::default(),
+                    type1_fields: Vec::new(),
+                    null_string_masks: Vec::new(),
+                    initial_overlays: Vec::new(),
+                },
+            }));
+        }
+        cache
+    }
+
+    #[test]
+    fn animated_ground_decoration_uses_placement_angle_for_every_revision() {
+        let placement_angle = 3;
+        for revision_377 in [false, true] {
+            let cache = cache(revision_377);
+            let mut world = World::new(vec![vec![vec![0; 2]; 2]; 1], 1, 1, 1);
+            world.fill_base_level(0);
+            world.set_ground_decor(
+                0,
+                0,
+                0,
+                0,
+                0,
+                (placement_angle << 6) | 22,
+                10,
+                20,
+                30,
+                40,
+            );
+            let mut renderer = RenderWorld::new();
+
+            match renderer
+                .gd_model(&world, &cache, 0, 0, 0, 0)
+                .expect("animated ground decoration resolves")
+            {
+                SceneModel::LocAnim(anim) => {
+                    assert_eq!(
+                        anim.angle, placement_angle,
+                        "placement angle must not depend on revision_377={revision_377}"
+                    );
+                    assert_eq!(anim.shape, 22);
+                }
+                _ => panic!("animated ground decoration must use ClientLocAnim"),
+            }
+        }
     }
 }

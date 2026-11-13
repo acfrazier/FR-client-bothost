@@ -147,6 +147,8 @@ client without a second allocation or copy.
 original-engine synthetic fixture and Java-derived terrain/rotation expectations.
 These offline tests are not a live Recruitment Drive or rendered-pixel proof.
 
+Animated ground decorations use their placement angle in every revision.
+
 All revisions use 100-slot mapscene and mapfunction tables.
 The 274/289 loaders stop each table at its first missing image.
 Revision 377 keeps separate tables, with 72 and 70 images loaded. Its player
