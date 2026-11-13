@@ -65,7 +65,7 @@ fn player(name: &str, x: i32, z: i32, team: u8) -> ClientPlayer {
         },
         ready: true,
         name: Some(name.to_string()),
-        team_377: team,
+        team,
         ..ClientPlayer::default()
     }
 }
@@ -88,7 +88,7 @@ fn player_dot_client(revision: ClientRevision) -> Client {
             z: 3200,
             ..Default::default()
         },
-        team_377: 42,
+        team: 42,
         ..ClientPlayer::default()
     });
     client.player_count = 3;
@@ -111,7 +111,7 @@ fn minimap_377_uses_friend_then_team_then_ordinary_dots() {
     let mut renderer_377 = renderer();
     renderer_377.media = media.clone();
     let mut client_377 = player_dot_client(ClientRevision::R377);
-    client_377.players[0].as_mut().unwrap().team_377 = 7;
+    client_377.players[0].as_mut().unwrap().team = 7;
     // Production `prepare_game` sizes the scanline masks before this draw.
     renderer_377.build_minimap_masks(&mut client_377);
     renderer_377.minimap_draw(&mut client_377);
@@ -134,8 +134,8 @@ fn fidelity_b1_legacy_minimap_uses_userhash_and_289_team_override() {
         ] {
             let mut client = player_dot_client(revision);
             client.player_count = 1;
-            client.local_player.as_mut().unwrap().team_377 = local_team;
-            client.players[0].as_mut().unwrap().team_377 = remote_team;
+            client.local_player.as_mut().unwrap().team = local_team;
+            client.players[0].as_mut().unwrap().team = remote_team;
             client.friend_userhash[0] = crate::util::JString::to_userhash("friend") as i64;
             client.friend_username[0] = "Not the displayed name".into();
             client.friend_node_id[0] = if online { 301 } else { 0 };

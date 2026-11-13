@@ -156,6 +156,7 @@ nonzero teams override friendship. Revision 377 retains friend-first priority.
 The PK and prayer indices use signed bytes. The equipment-team value and
 legacy headicon bitmask use unsigned bytes, preserving the existing inline
 player layout and all wire values.
+Revision 289 reads the last nonzero worn-object team after each appearance update.
 The 377 runtime validates `SET_MULTIWAY` before applying its unsigned byte
 to the Java multiway overlay state.
 

@@ -1674,7 +1674,7 @@ fn apply_appearance_377(
     // The appearance cursor reads g1b; ObjType.team is decoded with g1.
     player.pk_icon_377 = appearance.head_icon as i8;
     player.prayer_icon_377 = appearance.skull_icon as i8;
-    player.team_377 = 0;
+    player.team = 0;
     for item in appearance.equipment.iter().flatten().copied() {
         let Some(item_id) = item
             .checked_sub(512)
@@ -1684,7 +1684,7 @@ fn apply_appearance_377(
         };
         if let Some(obj) = cache.objs.get(item_id) {
             if obj.team != 0 {
-                player.team_377 = obj.team as u8;
+                player.team = obj.team as u8;
             }
         }
     }
@@ -1865,7 +1865,7 @@ mod tests {
         };
         let mut player = ClientPlayer {
             headicons: u8::MAX,
-            team_377: 77,
+            team: 77,
             ..ClientPlayer::default()
         };
 
@@ -1874,7 +1874,7 @@ mod tests {
         assert_eq!(player.headicons, 0);
         assert_eq!(player.pk_icon_377, -1);
         assert_eq!(player.prayer_icon_377, 8);
-        assert_eq!(player.team_377, 9);
+        assert_eq!(player.team, 9);
         assert_eq!(&player.appearance[..4], &[512, 513, 514, 65_535]);
     }
 
@@ -1912,7 +1912,7 @@ mod tests {
         apply_appearance_377(&mut player, &appearance, &cache);
         assert_eq!(player.pk_icon_377, -128);
         assert_eq!(player.prayer_icon_377, 127);
-        assert_eq!(player.team_377, 255);
+        assert_eq!(player.team, 255);
     }
 
     #[test]

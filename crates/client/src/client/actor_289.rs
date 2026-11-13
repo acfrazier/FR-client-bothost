@@ -167,6 +167,19 @@ impl Appearance {
         player.gender = self.gender;
         player.headicons = self.icons as u8;
         player.appearance[..self.parts.len()].copy_from_slice(&self.parts);
+        player.team = 0;
+        if self.transmog.is_none() {
+            for part in self.parts {
+                if let Some(obj) = part
+                    .checked_sub(512)
+                    .and_then(|id| cache.objs.get(id as usize))
+                {
+                    if obj.team != 0 {
+                        player.team = obj.team as u8;
+                    }
+                }
+            }
+        }
         player.transmog = self.transmog.filter(|&id| id < cache.npcs.len());
         player.colour = self.colours;
         // 289 `method39` 128-155 reads the side-steps in the Java 274
@@ -697,4 +710,53 @@ fn apply_mask(c: &mut Client, npc: bool, index: usize, mask: Mask) -> bool {
         Mask::Type(id) => bind_type(c.npc[index].as_mut().unwrap(), id, &c.cache),
     }
     false
+}
+
+#[cfg(test)]
+mod fidelity_tests {
+    use super::*;
+    use crate::config::ObjType;
+
+    fn appearance(parts: &[u16]) -> Appearance {
+        let mut raw = vec![0, 0];
+        for (slot, &part) in parts.iter().enumerate() {
+            if part == 0 {
+                raw.push(0);
+            } else {
+                raw.extend(part.to_be_bytes());
+            }
+            if slot == 0 && part == u16::MAX {
+                raw.extend([0, 0]);
+                break;
+            }
+        }
+        raw.extend([0; 5]);
+        raw.extend([255; 14]);
+        raw.extend(1i64.to_be_bytes());
+        raw.extend([3, 0, 0]);
+        Appearance::decode(raw)
+    }
+
+    #[test]
+    fn fidelity_b2_appearance_uses_last_nonzero_worn_team_and_resets() {
+        let cache = Cache {
+            objs: [7, 0, 9]
+                .map(|team| ObjType {
+                    team,
+                    ..ObjType::default()
+                })
+                .into(),
+            ..Cache::default()
+        };
+        let mut player = ClientPlayer::default();
+        let mut parts = [0; 12];
+        parts[..4].copy_from_slice(&[512, 513, 514, 65_534]);
+        appearance(&parts).apply(&mut player, &cache);
+        assert_eq!(player.team, 9);
+        appearance(&[0; 12]).apply(&mut player, &cache);
+        assert_eq!(player.team, 0);
+        appearance(&parts).apply(&mut player, &cache);
+        appearance(&[u16::MAX]).apply(&mut player, &cache);
+        assert_eq!(player.team, 0, "transmog must not read retained worn slots");
+    }
 }

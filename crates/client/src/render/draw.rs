@@ -3626,7 +3626,7 @@ impl Renderer {
         };
         let player_x = player.x;
         let player_z = player.z;
-        let local_team_377 = player.team_377;
+        let local_team = player.team;
         let Some(map) = self.area_map.as_mut() else {
             return;
         };
@@ -3795,7 +3795,7 @@ impl Renderer {
                     });
                     if is_online_friend {
                         mapdots4
-                    } else if local_team_377 != 0 && p.team_377 == local_team_377 {
+                    } else if local_team != 0 && p.team == local_team {
                         mapdots5
                     } else {
                         mapdots3
@@ -3806,11 +3806,8 @@ impl Renderer {
                         client.friend_node_id[friend] != 0
                             && client.friend_userhash[friend] == userhash
                     });
-                    let friend = if client.revision().is_289()
-                        && local_team_377 != 0
-                        && p.team_377 != 0
-                    {
-                        local_team_377 == p.team_377
+                    let friend = if client.revision().is_289() && local_team != 0 && p.team != 0 {
+                        local_team == p.team
                     } else {
                         friend
                     };

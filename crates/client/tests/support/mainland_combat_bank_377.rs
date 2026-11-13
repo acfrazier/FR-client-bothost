@@ -108,7 +108,7 @@ fn combat_bank_state(c: &Client) -> Value {
     let p = c.local_player.as_ref().unwrap();
     snapshot["player"] = json!({"entity":actor_state(&p.entity),"name":p.name,"ready":p.ready,
         "gender":p.gender,"headicons":p.headicons,"appearance":p.appearance,"colour":p.colour,
-        "headicon_pk":p.pk_icon_377,"headicon_prayer":p.prayer_icon_377,"team":p.team_377,
+        "headicon_pk":p.pk_icon_377,"headicon_prayer":p.prayer_icon_377,"team":p.team,
         "combat_level":p.combat_level,"base_id":p.base_id,"y":p.y,
         "transmog":p.transmog,"skill_level":p.skill_level});
     snapshot["npc_actors"] = json!(c
