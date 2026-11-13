@@ -150,8 +150,9 @@ These offline tests are not a live Recruitment Drive or rendered-pixel proof.
 Revision 377 uses separate Java-sized media tables: 100 slots each for
 mapscene and mapfunction images, with 72 and 70 images loaded. Its player
 PK, prayer and hint icons remain separate, and its minimap supports the
-fifth (team) dot and multiway overlay. The default 274 profile and the
-274/289 sprite paths keep their existing tables and behavior.
+fifth (team) dot and multiway overlay. The 274 minimap marks online friends.
+Revision 289 uses that friend sprite for matching nonzero teams, and different
+nonzero teams override friendship. Revision 377 retains friend-first priority.
 The PK and prayer indices use signed bytes. The equipment-team value and
 legacy headicon bitmask use unsigned bytes, preserving the existing inline
 player layout and all wire values.
