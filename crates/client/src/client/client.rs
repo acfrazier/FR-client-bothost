@@ -3764,12 +3764,22 @@ impl Client {
             self.ptype1 = -1;
             self.ptype2 = -1;
             self.psize = 0;
-            self.scene_state = 0;
-            self.menu_num_entries = 0;
             self.last_response = Some(Instant::now());
             // Java `Client.java` 3004: the grant clears the reboot countdown.
             self.reboot_timer = 0;
             self.logout_timer = 0;
+            // Java 274 Client.java:3626-3644,3673-3677; Java 289
+            // Client.java:3006-3057 reset the transient HUD/input state.
+            self.hint_type = 0;
+            self.menu_num_entries = 0;
+            self.is_menu_open = false;
+            self.use_mode = 0;
+            self.target_mode = 0;
+            self.scene_state = 0;
+            self.wave_count = 0;
+            self.minimap_state = 0;
+            self.main_overlay_id = -1;
+            self.dialog_input_open = false;
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
             self.begin_session_frames();

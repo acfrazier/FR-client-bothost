@@ -418,11 +418,28 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     let chat_gen_after_logout = c.gens.chat;
     r.title_screen_draw(&mut c); // consumes the game frame (Task 4b)
     assert!(r.area_chat.is_none());
+    c.hint_type = 10;
+    c.main_overlay_id = 42;
+    c.minimap_state = 2;
+    c.is_menu_open = true;
+    c.dialog_input_open = true;
+    c.use_mode = 1;
+    c.target_mode = 1;
+    c.wave_count = 4;
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
     // J274 Client.java:3609-3614 restores focus and clears mouse timing state.
     assert!(c.shell.focused);
     assert_eq!(c.shell.idle_cycles, 0);
+    // J274 Client.java:3626-3644,3673-3677 resets cold-session HUD/input state.
+    assert_eq!(c.hint_type, 0);
+    assert_eq!(c.main_overlay_id, -1);
+    assert_eq!(c.minimap_state, 0);
+    assert!(!c.is_menu_open);
+    assert!(!c.dialog_input_open);
+    assert_eq!(c.use_mode, 0);
+    assert_eq!(c.target_mode, 0);
+    assert_eq!(c.wave_count, 0);
     c.shell.mouse_click_button = 1;
     c.shell.mouse_click_time = 2000;
     c.shell.mouse_click_x = 10;
