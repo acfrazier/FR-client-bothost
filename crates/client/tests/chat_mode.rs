@@ -1,21 +1,26 @@
 //! Task 2: `chatModeLoop` (Java `Client.java` 2755-2800). Clicking the
 //! Public/Private/Trade/duel strip buttons on the chatback cycles the mode
 //! and emits `CHAT_SETMODE` (154) with the three modes; the Report abuse
-//! button sends `CLOSE_MODAL` and records `main_modal_id` from the first
-//! interface with client code 600 (Java `reportAbuseComId = mainModalId =
-//! layerId`; `reportAbuseInput`/`reportAbuseMuteOption`/`reportAbuseComId`
-//! are not ported). The main-modal draw is slice 3, out of scope.
-use client::client::{Client, ClientConfig};
+//! button resets the report form and arms typed name input (Java 274
+//! Client.java:2789-2797; Java 289 Client.java:4217-4224).
+use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::if_type::IfType;
 
 fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+    client_with_revision(ClientRevision::R274)
+}
+
+fn client_with_revision(revision: ClientRevision) -> Client {
+    Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        revision,
+    )
 }
 
 /// Latch a left click at applet coords and run the chat mode handler.
@@ -68,6 +73,39 @@ fn report_abuse_sends_close_modal_and_records_main_modal_id() {
     // close_modal also cleared the side/chat modals (nothing open here).
     assert_eq!(c.side_modal_id, -1);
     assert_eq!(c.chat_modal_id, -1);
+}
+
+#[test]
+fn report_button_then_typing_fills_the_report_name() {
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        let mut c = client_with_revision(revision);
+        c.set_iface(
+            2,
+            IfType {
+                id: 2,
+                layer_id: 2,
+                client_code: 600,
+                ..Default::default()
+            },
+        );
+        c.report_abuse_input = "stale".into();
+        c.report_abuse_mute_option = true;
+        click_chat(&mut c, 450, 480);
+        assert_eq!(c.main_modal_id, 2, "{revision:?}");
+        assert_eq!(c.report_abuse_com_id, 2, "{revision:?}");
+        assert!(c.report_abuse_input.is_empty(), "{revision:?}");
+        assert!(!c.report_abuse_mute_option, "{revision:?}");
+        for key in b"bob" {
+            c.shell.apply_key(true, 0, *key as i32);
+        }
+        c.handle_chat_input();
+        assert_eq!(c.report_abuse_input, "bob", "{revision:?}");
+        assert!(c.chat_input.is_empty(), "{revision:?}");
+    }
 }
 
 #[test]

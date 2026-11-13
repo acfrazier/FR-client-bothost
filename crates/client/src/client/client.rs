@@ -11574,9 +11574,8 @@ impl Client {
     /// (273..373) button strip at y 467..499 cycles the mode, re-runs the
     /// mode labels (`redrawPrivacySettings`/`redrawChatback`) and sends
     /// `CHAT_SETMODE` with the three modes; the Report abuse button
-    /// (412..512) closes the modals and records `main_modal_id` from the
-    /// first interface with client code 600. `reportAbuseInput`,
-    /// `reportAbuseMuteOption` and `reportAbuseComId` are not ported.
+    /// (412..512) closes the modals, resets the report form and arms name
+    /// input using the first interface with client code 600.
     pub fn chat_mode_loop(&mut self) {
         if self.shell.mouse_click_button != 1 {
             return;
@@ -11631,11 +11630,14 @@ impl Client {
             return;
         }
         self.close_modal();
+        self.report_abuse_input.clear();
+        self.report_abuse_mute_option = false;
         let report = self
             .ifaces_merged()
             .find(|e| e.client_code == CC_REPORT_INPUT)
             .map(|e| e.layer_id);
         if let Some(layer_id) = report {
+            self.report_abuse_com_id = layer_id;
             self.main_modal_id = layer_id;
         }
     }

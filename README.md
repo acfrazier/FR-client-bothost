@@ -103,6 +103,9 @@ state with Java's text and colours. Codes 650 and 655 share the login text.
 The address uses host-provided DNS text or the dotted IP without network IO.
 Moderator mute text follows the privilege level and mute option.
 
+The chat Report abuse button clears the previous name and mute choice, opens
+the report interface and routes typed keys to the report name.
+
 LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
 as Java does.
 
