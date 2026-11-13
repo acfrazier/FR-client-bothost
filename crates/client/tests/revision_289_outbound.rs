@@ -736,20 +736,30 @@ fn sampled_mouse_encodes_before_click() {
 
 #[test]
 fn cycle5_counts_only_drawn_mode2_crosshairs() {
-    let mut c = client(ClientRevision::R289);
+    // J274 Client.java:1550-1554; J289 uses the same 57-draw threshold.
     let mut r = client::render::Renderer::new(false);
-    c.scene_state = 2;
-    c.cross_mode = 2;
-    for _ in 0..57 {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = client(revision);
+        c.scene_state = 2;
+        c.cross_mode = 2;
+        for _ in 0..57 {
+            r.game_draw(&mut c);
+        }
+        assert_eq!(c.out.pos, 0);
+        c.scene_state = 1;
         r.game_draw(&mut c);
+        assert_eq!(c.out.pos, 0);
+        c.scene_state = 2;
+        r.game_draw(&mut c);
+        assert_eq!(
+            &c.out.data()[..c.out.pos],
+            if revision.is_289() {
+                &[85][..]
+            } else {
+                &[100][..]
+            }
+        );
     }
-    assert_eq!(c.out.pos, 0);
-    c.scene_state = 1;
-    r.game_draw(&mut c);
-    assert_eq!(c.out.pos, 0);
-    c.scene_state = 2;
-    r.game_draw(&mut c);
-    assert_eq!(&c.out.data()[..c.out.pos], &[85]);
 }
 
 #[test]

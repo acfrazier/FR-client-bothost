@@ -599,8 +599,8 @@ impl Renderer {
                     s.plot_sprite(&mut surface, client.cross_x - 8 - 4, client.cross_y - 8 - 4);
                 }
             } else if client.cross_mode == 2 {
-                // Primary 289 J:1773-1778: count drawn op crosshairs only.
-                if client.revision().is_289() {
+                // J274 Client.java:1550-1554 counts drawn op crosshairs only.
+                if !client.revision().is_377() {
                     client.outbound.legacy().cyclelogic5 += 1;
                     if client.outbound.legacy().cyclelogic5 > 57 {
                         client.outbound.legacy().cyclelogic5 = 0;
