@@ -484,7 +484,11 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
         "prepare_game must unload the title regions"
     );
     let (mouse, click) = server.join().unwrap();
-    assert_eq!(mouse, [0x0a, 0xb4], "cold login must retain 274 mouse telemetry");
+    assert_eq!(
+        mouse,
+        [0x0a, 0xb4],
+        "cold login must retain 274 mouse telemetry"
+    );
     let packed = u32::from_be_bytes(click[1..5].try_into().unwrap());
     assert_eq!(packed >> 20, 40, "cold login resets previous-click time");
 }
