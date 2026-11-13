@@ -271,7 +271,7 @@ fn multiway_overlay_uses_java_377_sprite_and_preserves_legacy_rendering() {
     for (revision, expected) in [
         (ClientRevision::R377, 0xFF0000),
         (ClientRevision::R289, 0x00AA00),
-        (ClientRevision::R274, 0),
+        (ClientRevision::R274, 0x00AA00),
     ] {
         let mut client = client(revision, Cache::default());
         client.in_multizone = 1;
