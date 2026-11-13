@@ -100,7 +100,7 @@ Java redraws. An already-closed side or chat layer adds no redraw request.
 Unwritten varps have Java's implicit zero value. Receiving or synchronizing
 zero does not change settings or request a redraw.
 
-The 289 welcome components display last-login, unread-message and recovery
+The 274/289 welcome components display last-login, unread-message and recovery
 state with Java's text and colours. Codes 650 and 655 share the login text.
 The address uses host-provided DNS text or the dotted IP without network IO.
 Moderator mute text follows the privilege level and mute option.

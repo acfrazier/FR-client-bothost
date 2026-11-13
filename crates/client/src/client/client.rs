@@ -7866,9 +7866,9 @@ impl Client {
             } else {
                 com.graphic_name = self.idk_design_button2.clone().unwrap_or_default();
             }
-        } else if self.revision.is_289() {
-            // Java 289 client.java:4733-4818. Reuse the component's text
-            // buffer because these consumers run on every interface draw.
+        } else if !self.revision.is_377() {
+            // Java 274 Client.java:2493-2579 / 289 client.java:4733-4818.
+            // Reuse text buffers on every interface draw.
             match client_code {
                 613 => {
                     if self.staffmodlevel < 1 {

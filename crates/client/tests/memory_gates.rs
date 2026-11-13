@@ -299,8 +299,14 @@ fn warmed_inbound_decode_and_apply_allocation_gates_cover_each_revision() {
 }
 
 #[test]
-fn warmed_289_welcome_components_allocate_nothing() {
-    let mut c = client(ClientRevision::R289);
+fn warmed_legacy_welcome_components_allocate_nothing() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        welcome_draw_allocations(revision);
+    }
+}
+
+fn welcome_draw_allocations(revision: ClientRevision) {
+    let mut c = client(revision);
     let codes = [613, 650, 651, 652, 653, 654, 655];
     for code in codes {
         c.set_iface(
@@ -341,7 +347,7 @@ fn warmed_289_welcome_components_allocate_nothing() {
                 draw(&mut c, pass);
             }
         });
-        assert_eq!(count, 0, "warmed 289 welcome draws must reuse text buffers");
+        assert_eq!(count, 0, "{revision:?} warmed welcome draws must reuse text");
         assert_eq!(c.if_(651).unwrap().text, "1 unread message");
     }
 }

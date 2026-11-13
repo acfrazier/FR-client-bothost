@@ -219,18 +219,71 @@ fn mute_option_uses_java_privilege_text_and_colour() {
 }
 
 #[test]
-fn other_revisions_keep_their_existing_component_behaviour() {
-    for revision in [ClientRevision::R274, ClientRevision::R377] {
-        let mut c = client_with_revision(revision);
-        c.last_login_ip = 0x01020304;
-        c.last_login_message_count = 10;
-        c.staffmodlevel = 1;
-        for code in [613, 650, 651, 652, 653, 654, 655] {
-            assert_eq!(
-                update(&mut c, code),
-                ("decoded".into(), 0x123456),
-                "{revision:?} code {code}"
-            );
-        }
+fn r377_keeps_its_existing_component_behaviour() {
+    let mut c = client_with_revision(ClientRevision::R377);
+    c.last_login_ip = 0x01020304;
+    c.last_login_message_count = 10;
+    c.staffmodlevel = 1;
+    for code in [613, 650, 651, 652, 653, 654, 655] {
+        assert_eq!(
+            update(&mut c, code),
+            ("decoded".into(), 0x123456),
+            "R377 code {code}"
+        );
+    }
+}
+
+#[test]
+fn r274_welcome_and_mute_follow_java() {
+    let mut c = client_with_revision(ClientRevision::R274);
+    c.staffmodlevel = 1;
+    c.set_iface(
+        2,
+        IfType {
+            client_code: 613,
+            ..Default::default()
+        },
+    );
+    assert!(!c.client_button(2));
+    assert_eq!(
+        update(&mut c, 613),
+        (
+            "Moderator option: Mute player for 48 hours: <ON>".into(),
+            16711680
+        )
+    );
+    assert!(!c.client_button(2));
+    assert_eq!(
+        update(&mut c, 613),
+        (
+            "Moderator option: Mute player for 48 hours: <OFF>".into(),
+            16777215
+        )
+    );
+    c.last_login_ip = 0x01020304;
+    c.days_since_login = 1;
+    c.last_login_message_count = 10;
+    c.days_since_recovery_change = 200;
+    for (code, text, colour) in [
+        (650, "You last logged in yesterday from: 1.2.3.4", 0x123456),
+        (655, "You last logged in yesterday from: 1.2.3.4", 0x123456),
+        (651, "10 unread messages", 65280),
+        (
+            652,
+            "You have not yet set any password recovery questions.",
+            0x123456,
+        ),
+        (
+            653,
+            "We strongly recommend you do so now to secure your account.",
+            0x123456,
+        ),
+        (
+            654,
+            "Do this from the 'account management' area on our front webpage",
+            0x123456,
+        ),
+    ] {
+        assert_eq!(update(&mut c, code), (text.into(), colour), "code {code}");
     }
 }
