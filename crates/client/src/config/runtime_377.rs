@@ -28,7 +28,7 @@ use super::flo_type::FloType;
 use super::idk_type::IdkType;
 use super::if_type::{IfType, IfTypeMut};
 use super::if_type_377::{ClientCodeLayers377, IfType377, InterfaceArchive377, SpriteRef377};
-use super::loc_type::LocType;
+use super::loc_type::{LocMorph, LocType};
 use super::npc_type::NpcType;
 use super::obj_type::ObjType;
 use super::seq_type::SeqType;
@@ -67,48 +67,6 @@ pub struct NpcFields377 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocFields377 {
-    /// Java opcode 77 morph selector, absent unless the opcode was present.
-    pub morph: Option<MorphTable377>,
-}
-
-impl Cache {
-    /// Java 377 `LocType.method562`: resolve one current location form.
-    /// The scene typecode still identifies the original location; only its
-    /// model, menu text/options and Examine description use the selected form.
-    pub fn resolve_loc(&self, id: usize, varps: &[i32]) -> Option<&LocType> {
-        let loc = self.locs.get(id)?;
-        let Some(revision) = self.revision_377.as_ref() else {
-            return Some(loc);
-        };
-        let Some(morph) = revision.config.locs.get(id)?.morph.as_ref() else {
-            return Some(loc);
-        };
-        let selector = if morph.varbit != -1 {
-            let bit = self.varbits.get(usize::try_from(morph.varbit).ok()?)?;
-            if bit.startbit < 0 || bit.endbit < bit.startbit || bit.endbit > 31 {
-                return None;
-            }
-            let value = *varps.get(usize::try_from(bit.basevar).ok()?)?;
-            let mask = (u32::MAX >> (31 - (bit.endbit - bit.startbit))) as i32;
-            (value >> bit.startbit) & mask
-        } else {
-            *varps.get(usize::try_from(morph.varp).ok()?)?
-        };
-        let target = *morph.targets.get(usize::try_from(selector).ok()?)?;
-        self.locs.get(usize::try_from(target).ok()?)
-    }
-
-    /// Opcode 77 makes even an unanimated root a dynamic model source.
-    pub fn loc_has_morph_377(&self, id: usize) -> bool {
-        self.revision_377
-            .as_ref()
-            .and_then(|revision| revision.config.locs.get(id))
-            .is_some_and(|fields| fields.morph.is_some())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeqFields377 {
     /// Java SeqType opcode 12 (`field790`); retained although the pinned Java
     /// client does not read it.
@@ -144,7 +102,6 @@ pub struct VarbitFields377 {
 pub struct CacheFields377 {
     pub objs: Vec<ObjFields377>,
     pub npcs: Vec<NpcFields377>,
-    pub locs: Vec<LocFields377>,
     pub seqs: Vec<SeqFields377>,
     pub varps: Vec<VarpFields377>,
     pub varbits: Vec<VarbitFields377>,
@@ -295,11 +252,13 @@ pub fn adapt_cache_377(
     }
 
     let mut runtime_locs = Vec::with_capacity(locs.len());
-    cache_fields_377.locs.reserve(locs.len());
-    for loc in locs {
-        let (loc, fields) = into_loc_parts(loc);
+    let mut loc_morphs = Vec::new();
+    for (id, loc) in locs.into_iter().enumerate() {
+        let (loc, morph) = into_loc_parts(loc);
         runtime_locs.push(loc);
-        cache_fields_377.locs.push(fields);
+        if let Some(morph) = morph {
+            loc_morphs.push((id, morph));
+        }
     }
 
     let mut runtime_seqs = Vec::with_capacity(seqs.len());
@@ -331,6 +290,7 @@ pub fn adapt_cache_377(
         objs: runtime_objs,
         npcs: runtime_npcs,
         locs: runtime_locs,
+        loc_morphs,
         flos: flos.into_iter().map(Into::into).collect(),
         idks: idks.into_iter().map(Into::into).collect(),
         seqs: runtime_seqs,
@@ -582,7 +542,7 @@ fn into_npc_parts(source: NpcType377) -> (NpcType, NpcFields377) {
     (runtime, fields)
 }
 
-fn into_loc_parts(source: LocType377) -> (LocType, LocFields377) {
+fn into_loc_parts(source: LocType377) -> (LocType, Option<LocMorph>) {
     let LocType377 {
         id,
         model,
@@ -658,14 +618,12 @@ fn into_loc_parts(source: LocType377) -> (LocType, LocFields377) {
         breakroutefinding,
         raiseobject,
     };
-    let fields = LocFields377 {
-        morph: morphs.map(|targets| MorphTable377 {
-            varbit: morph_varbit,
-            varp: morph_varp,
-            targets,
-        }),
-    };
-    (runtime, fields)
+    let morph = morphs.map(|targets| LocMorph {
+        varbit: morph_varbit,
+        varp: morph_varp,
+        targets,
+    });
+    (runtime, morph)
 }
 
 fn into_varp_parts(source: VarpType377) -> (VarpType, VarpFields377) {
@@ -1173,14 +1131,7 @@ mod tests {
                 .targets,
             [8, -1, 9]
         );
-        assert_eq!(
-            loaded.cache_fields_377.locs[0]
-                .morph
-                .as_ref()
-                .unwrap()
-                .varbit,
-            5
-        );
+        assert_eq!(loaded.cache.loc_morphs[0].1.varbit, 5);
         assert_eq!(loaded.cache_fields_377.seqs[0].reserved, 0x1234);
         assert!(loaded.cache_fields_377.varps[0].tracked);
         assert_eq!(

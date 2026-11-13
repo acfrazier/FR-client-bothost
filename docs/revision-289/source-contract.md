@@ -61,6 +61,7 @@ Zero-payload outbound rows use an explicit `(empty payload)` field marker (or em
 - `crates/client/src/io/server_prot.rs` and `client_prot.rs`: current 274 tables; preserve public constants/default construction and add an explicit revision-selected profile.
 - `crates/client/src/io/client_prot_289.rs`: additive 289 outbound table + `map_client_prot`.
 - `crates/client/src/io/cache_289.rs`: offline synthetic config/interface fixtures through production `Cache::unpack` / `IfType::unpack`; JAG outer g3 sizes exclude the six-byte header.
+- `crates/client/src/config/loc_type.rs`: Java 289 `Class9.java:371-378` decodes loc opcode 77 as g2 varbit, g1 highest selector index, and index+1 g2 forms. The legacy and revision-377 loaders publish their distinct opcode-77 layouts into `Cache.loc_morphs`; 274 content has no opcode 77.
 - `crates/client/src/client/client.rs`, `game_shell.rs`: production lifecycle and packet dispatch seams; `client_opcode` selects revision outbound ids.
 - `crates/client/src/render/draw.rs`: draw-path outbound emits also use `client_opcode`.
 - `crates/client/src/login_rsa.rs`: existing RSA boundary; compare byte-for-byte against the 289 login sequence before changing it.

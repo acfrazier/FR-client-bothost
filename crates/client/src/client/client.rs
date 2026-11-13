@@ -12209,11 +12209,7 @@ impl Client {
                 if let Some(loc) = loc {
                     let loc_name = loc.name.clone();
                     let loc_ops = loc.op.clone();
-                    let examine_code = if self.revision().is_377() {
-                        loc.id << 14
-                    } else {
-                        typecode
-                    };
+                    let examine_code = loc.id << 14;
                     if self.use_mode == 1 {
                         let option =
                             format!("Use {} with @cya@{}", self.obj_selected_name, loc_name);

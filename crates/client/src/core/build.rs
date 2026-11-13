@@ -561,9 +561,9 @@ impl ClientBuild {
         let y = (height_sw + height_se + height_ne + height_nw) >> 2;
 
         let loc = cache.loc(loc_id as usize);
-        // Java 377 keeps a dynamic source for a morphing root even when
-        // the root has no models. Its selected child materialises later.
-        let morph = cache.loc_has_morph_377(loc_id as usize);
+        // Java 289 and 377 keep a dynamic source for a morphing root even
+        // when the root has no models. Its selected child materialises later.
+        let morph = cache.loc_has_morph(loc_id as usize);
 
         let mut typecode = x
             .wrapping_add(z << 7)
@@ -995,7 +995,7 @@ impl ClientBuild {
         let y = (height_sw + height_se + height_nw + height_ne) >> 2;
 
         let loc = cache.loc(loc_id as usize);
-        let morph = cache.loc_has_morph_377(loc_id as usize);
+        let morph = cache.loc_has_morph(loc_id as usize);
 
         let mut typecode = x
             .wrapping_add(z << 7)

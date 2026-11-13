@@ -65,7 +65,7 @@ impl ClientLocAnim {
         self.temp_model(cache, loop_cycle, None)
     }
 
-    /// Java 377 advances the root's sequence, then selects the current
+    /// Java 289 and 377 advance the root's sequence, then select the current
     /// location form. A hidden form must not pause or reset the sequence.
     pub fn get_temp_model_with_varps(
         &mut self,

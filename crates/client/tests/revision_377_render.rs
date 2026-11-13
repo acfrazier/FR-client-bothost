@@ -3,11 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision, MiniMenuAction};
 use client::config::if_type::ComponentType;
-use client::config::runtime_377::{
-    CacheFields377, InterfaceFields377, LocFields377, MorphTable377,
-};
+use client::config::runtime_377::{CacheFields377, InterfaceFields377};
 use client::config::{
-    Cache, CacheRevision377, IfType, IfTypeMut, LocType, SeqType, VarBitType, VarpType,
+    Cache, CacheRevision377, IfType, IfTypeMut, LocMorph, LocType, SeqType, VarBitType, VarpType,
 };
 use client::core::{ClientBuild, World};
 use client::dash3d::model::ModelProvider;
@@ -638,21 +636,16 @@ fn morph_cache() -> Cache {
             endbit: 2,
             ..VarBitType::default()
         }],
-        revision_377: Some(Box::new(CacheRevision377 {
-            config: CacheFields377 {
-                locs: vec![
-                    LocFields377 {
-                        morph: Some(MorphTable377 {
-                            varbit: -1,
-                            varp: 0,
-                            targets: vec![1, 2, -1],
-                        }),
-                    },
-                    LocFields377 { morph: None },
-                    LocFields377 { morph: None },
-                ],
-                ..CacheFields377::default()
+        loc_morphs: vec![(
+            0,
+            LocMorph {
+                varbit: -1,
+                varp: 0,
+                targets: vec![1, 2, -1],
             },
+        )],
+        revision_377: Some(Box::new(CacheRevision377 {
+            config: CacheFields377::default(),
             interfaces: InterfaceFields377 {
                 client_code_layers: Default::default(),
                 type1_fields: Vec::new(),
@@ -675,11 +668,7 @@ fn location_morph_selectors_match_java_377_without_a_fallback() {
         assert!(cache.resolve_loc(0, &[value]).is_none(), "selector {value}");
     }
     assert!(cache.resolve_loc(0, &[]).is_none());
-    cache.revision_377.as_mut().unwrap().config.locs[0]
-        .morph
-        .as_mut()
-        .unwrap()
-        .varbit = 0;
+    cache.loc_morphs[0].1.varbit = 0;
     assert_eq!(cache.resolve_loc(0, &[0]).unwrap().id, 1);
     assert_eq!(cache.resolve_loc(0, &[2]).unwrap().id, 2);
     assert!(
@@ -696,11 +685,12 @@ fn location_morph_selectors_match_java_377_without_a_fallback() {
     assert!(cache.resolve_loc(0, &[-1]).is_none());
     cache.varbits[0].endbit = 32;
     assert!(cache.resolve_loc(0, &[0]).is_none());
+    cache.varbits[0].endbit = 2;
     cache.revision_377 = None;
     assert_eq!(
-        cache.resolve_loc(0, &[]).unwrap().id,
-        0,
-        "legacy cache keeps its root"
+        cache.resolve_loc(0, &[1]).unwrap().id,
+        2,
+        "shared 377 morph remains active without revision-specific fields"
     );
 }
 
@@ -718,6 +708,7 @@ fn model_free_morph_roots_survive_map_and_zone_placement() {
         let mut cache = morph_cache();
         if !revision_377 {
             cache.revision_377 = None;
+            cache.loc_morphs.clear();
         }
         for shape in 0..=22 {
             for angle in 0..4 {

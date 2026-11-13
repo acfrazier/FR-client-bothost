@@ -849,7 +849,7 @@ impl RenderWorld {
         loop_cycle: i32,
     ) -> Option<SceneModel> {
         let loc = loc?;
-        if loc.anim == -1 && !cache.loc_has_morph_377(loc_id as usize) {
+        if loc.anim == -1 && !cache.loc_has_morph(loc_id as usize) {
             let model = loc.get_model_shared(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1);
             if crate::render_debug_enabled() {
                 if let Some(m) = &model {
@@ -1181,7 +1181,7 @@ impl RenderWorld {
                 loop_cycle,
             )))
         } else if let Some(loc) = Self::loc_at(cache, loc_id) {
-            if loc.anim == -1 && !cache.loc_has_morph_377(loc_id as usize) {
+            if loc.anim == -1 && !cache.loc_has_morph(loc_id as usize) {
                 loc.get_model_shared(
                     cache,
                     LocShape::GROUND_DECOR,

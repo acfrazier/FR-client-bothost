@@ -49,6 +49,47 @@ fn mc2() -> &'static Mutex<LruCache<CachedLoc>> {
 /// `LocShape.CENTREPIECE_STRAIGHT` from `dash3d/LocShape.ts`; the only shape
 /// the `active` fixup compares against.
 const CENTREPIECE_STRAIGHT: i32 = 10;
+/// A location morph selector shared by the legacy and revision-377 loaders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocMorph {
+    pub varbit: i32,
+    pub varp: i32,
+    pub targets: Vec<i32>,
+}
+
+impl Cache {
+    /// Resolve the current location form selected by its varbit or varp.
+    pub fn resolve_loc(&self, id: usize, varps: &[i32]) -> Option<&LocType> {
+        let loc = self.locs.get(id)?;
+        let Ok(index) = self
+            .loc_morphs
+            .binary_search_by_key(&id, |(loc_id, _)| *loc_id)
+        else {
+            return Some(loc);
+        };
+        let morph = &self.loc_morphs[index].1;
+        let selector = if morph.varbit != -1 {
+            let bit = self.varbits.get(usize::try_from(morph.varbit).ok()?)?;
+            if bit.startbit < 0 || bit.endbit < bit.startbit || bit.endbit > 31 {
+                return None;
+            }
+            let value = *varps.get(usize::try_from(bit.basevar).ok()?)?;
+            let mask = (u32::MAX >> (31 - (bit.endbit - bit.startbit))) as i32;
+            (value >> bit.startbit) & mask
+        } else {
+            *varps.get(usize::try_from(morph.varp).ok()?)?
+        };
+        let target = *morph.targets.get(usize::try_from(selector).ok()?)?;
+        self.locs.get(usize::try_from(target).ok()?)
+    }
+
+    /// Opcode 77 makes even an unanimated root a dynamic model source.
+    pub fn loc_has_morph(&self, id: usize) -> bool {
+        self.loc_morphs
+            .binary_search_by_key(&id, |(loc_id, _)| *loc_id)
+            .is_ok()
+    }
+}
 
 pub struct LocType {
     pub id: i32,
@@ -129,17 +170,18 @@ impl Default for LocType {
 }
 
 impl LocType {
-    pub fn unpack(jag: &JagFile) -> Vec<LocType> {
+    pub fn unpack(jag: &JagFile) -> (Vec<LocType>, Vec<(usize, LocMorph)>) {
         let Some(data) = jag.read("loc.dat") else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let Some(idx_data) = jag.read("loc.idx") else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let mut dat = Packet::new(data);
         let mut idx = Packet::new(idx_data);
         let num = idx.g2();
         let mut list = Vec::with_capacity(num as usize);
+        let mut loc_morphs = Vec::new();
         let mut offset = 2usize;
         for id in 0..num {
             let size = idx.g2();
@@ -148,15 +190,19 @@ impl LocType {
                 id,
                 ..LocType::default()
             };
-            loc.decode(&mut dat);
+            let morph = loc.decode(&mut dat);
             list.push(loc);
+            if let Some(morph) = morph {
+                loc_morphs.push((id as usize, morph));
+            }
             offset += size as usize;
         }
-        list
+        (list, loc_morphs)
     }
 
-    fn decode(&mut self, dat: &mut Packet) {
+    fn decode(&mut self, dat: &mut Packet) -> Option<LocMorph> {
         let mut active = -1;
+        let mut morph = None;
         loop {
             let code = dat.g1();
             if code == 0 {
@@ -245,6 +291,20 @@ impl LocType {
                 73 => self.forcedecor = true,
                 74 => self.breakroutefinding = true,
                 75 => self.raiseobject = dat.g1(),
+                77 => {
+                    let varbit = dat.g2();
+                    let count = dat.g1() as usize;
+                    let mut targets = Vec::with_capacity(count + 1);
+                    for _ in 0..=count {
+                        let target = dat.g2();
+                        targets.push(if target == 65535 { -1 } else { target });
+                    }
+                    morph = Some(LocMorph {
+                        varbit: if varbit == 65535 { -1 } else { varbit },
+                        varp: -1,
+                        targets,
+                    });
+                }
                 _ => eprintln!("Error unrecognised loc config code: {code}"),
             }
         }
@@ -272,6 +332,7 @@ impl LocType {
         if self.raiseobject == -1 {
             self.raiseobject = if self.blockwalk { 1 } else { 0 };
         }
+        morph
     }
 
     /// `getModel`-availability gate without decoding (Task 3b): the sim

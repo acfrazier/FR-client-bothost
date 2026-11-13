@@ -105,6 +105,10 @@ ID and transform values remain unchanged.
 Brightness settings always invalidate object icons and request a frame
 redraw. Values outside 1–4 leave the brightness itself unchanged.
 
+Revision 289 decodes location opcode 77 into the sparse morph table also
+used by 377. Scene models and Examine select the current varbit form.
+Revision 274 retains its non-morphing location format.
+
 ## Tests
 
 ```bash
