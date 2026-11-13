@@ -347,7 +347,10 @@ fn welcome_draw_allocations(revision: ClientRevision) {
                 draw(&mut c, pass);
             }
         });
-        assert_eq!(count, 0, "{revision:?} warmed welcome draws must reuse text");
+        assert_eq!(
+            count, 0,
+            "{revision:?} warmed welcome draws must reuse text"
+        );
         assert_eq!(c.if_(651).unwrap().text, "1 unread message");
     }
 }
