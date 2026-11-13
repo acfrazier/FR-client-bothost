@@ -100,6 +100,8 @@ The address uses host-provided DNS text or the dotted IP without network IO.
 Moderator mute text follows the privilege level and mute option.
 LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
 as Java does.
+The 289 IF_SETOBJECT sentinel clears only the model type. The stored model
+ID and transform values remain unchanged.
 
 ## Tests
 

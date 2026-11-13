@@ -6687,7 +6687,6 @@ impl Client {
                 if let Some(com) = self.iface_mut(component as usize) {
                     if object == 65535 {
                         com.model1_type = 0;
-                        com.model1_id = 0;
                     } else {
                         com.model1_type = 4;
                         com.model1_id = object;
