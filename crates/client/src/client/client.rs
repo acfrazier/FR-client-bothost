@@ -3751,7 +3751,7 @@ impl Client {
             stream.set_deadline(None).map_err(|e| {
                 self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
             })?;
-            if self.revision.is_289() {
+            if !self.revision.is_377() {
                 self.cold_login_input_289();
             } else if self.revision.is_377() {
                 self.cold_login_input_377();
