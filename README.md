@@ -193,6 +193,8 @@ Java 377 `OP*` menu packet has a revision-specific writer and dispatch;
 the 274/289 layouts and default revision stay unchanged. Every cold login
 clears the multiway flag and menu anticheat counters. Reconnect preserves them.
 
+All revisions send nonempty private-message text without a recipient-hash guard.
+
 Revision-377 public chat uses Java's case-insensitive colour and effect
 prefixes, then writes colour with `p1_alt2` and effect with `p1_alt1`.
 Its effects are `wave`, `wave2`, `shake`, `scroll` and `slide`. Private

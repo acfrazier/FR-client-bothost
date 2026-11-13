@@ -11574,10 +11574,7 @@ impl Client {
                     let userhash = JString::to_userhash(&self.social_input) as i64;
                     self.del_friend(userhash);
                 }
-                if self.social_input_type == 3
-                    && !self.social_input.is_empty()
-                    && (self.revision.is_377() || self.social_userhash != 0)
-                {
+                if self.social_input_type == 3 && !self.social_input.is_empty() {
                     if self.revision.is_377() {
                         super::outbound_377::message_private_377(
                             &mut self.out,
