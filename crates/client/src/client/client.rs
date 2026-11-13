@@ -6707,13 +6707,13 @@ impl Client {
                 let head = self.local_player.as_ref().map(|local| {
                     local
                         .transmog
-                        .map(|npc_id| npc_id as i32)
+                        .map(|npc_id| (npc_id as i32).wrapping_add(305419896))
                         .unwrap_or_else(|| {
-                            (local.appearance[8] as i32) << 6
-                                | (local.appearance[0] as i32) << 12
-                                | (local.colour[0] as i32) << 24
-                                | (local.colour[4] as i32) << 18
-                                | local.appearance[11] as i32
+                            (i32::from(local.colour[0]) << 24)
+                                .wrapping_add(i32::from(local.colour[4]) << 18)
+                                .wrapping_add(i32::from(local.appearance[0]) << 12)
+                                .wrapping_add(i32::from(local.appearance[8]) << 6)
+                                .wrapping_add(i32::from(local.appearance[11]))
                         })
                 });
                 if let (Some(com), Some(head)) = (self.iface_mut(component as usize), head) {

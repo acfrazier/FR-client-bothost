@@ -84,6 +84,11 @@ and optional rotated `data/config/private.pem`. Jag CRCs come from
 
 More CLI detail: [`crates/client-play/README.md`](crates/client-play/README.md).
 
+## Java dispatcher fidelity
+
+Revision 289 chat-head cache keys use Java's wrapping sum, including the
+transformed NPC offset. Different hair and hat appearances retain distinct keys.
+
 ## Tests
 
 ```bash
