@@ -170,7 +170,13 @@ impl Default for LocType {
 }
 
 impl LocType {
-    pub fn unpack(jag: &JagFile) -> (Vec<LocType>, Vec<(usize, LocMorph)>) {
+    /// Decode location definitions while keeping the morph sidecar internal.
+    pub fn unpack(jag: &JagFile) -> Vec<LocType> {
+        Self::unpack_locs_with_morphs(jag).0
+    }
+
+    /// Decode location definitions and the morph sidecar used by `Cache`.
+    pub fn unpack_locs_with_morphs(jag: &JagFile) -> (Vec<LocType>, Vec<(usize, LocMorph)>) {
         let Some(data) = jag.read("loc.dat") else {
             return (Vec::new(), Vec::new());
         };

@@ -64,7 +64,7 @@ impl Cache {
     /// before spotanim, since `SpotType` links to loaded `SeqType`s).
     pub fn unpack(jag: &JagFile) -> Self {
         let seqs = SeqType::unpack(jag);
-        let (locs, loc_morphs) = LocType::unpack(jag);
+        let (locs, loc_morphs) = LocType::unpack_locs_with_morphs(jag);
         let mut spots = SpotType::unpack(jag);
         for spot in &mut spots {
             spot.seq =
