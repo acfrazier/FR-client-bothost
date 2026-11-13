@@ -2799,13 +2799,13 @@ mod tests {
             client.doAction(0);
             assert_eq!(client.resumed_pause_button, side == -1 && chat == -1);
         }
-        // The existing 289 local-close path always clears the debounce.
+        // Java 289 also retains the debounce when no side/chat modal closes.
         let mut client = client();
         client.revision = crate::client::ClientRevision::R289;
         client.resumed_pause_button = true;
         client.menu_action[0] = crate::client::MiniMenuAction::CLOSE_BUTTON;
         client.doAction(0);
-        assert!(!client.resumed_pause_button);
+        assert!(client.resumed_pause_button);
     }
 
     #[test]
