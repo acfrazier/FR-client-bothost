@@ -251,7 +251,7 @@ fn social_then_amount_still_outrank_pending_message() {
 }
 
 #[test]
-fn legacy_274_keeps_base_interface_order_and_no_pending_frame_dirtiness() {
+fn legacy_274_keeps_base_interface_order_without_pending_message() {
     for (tutorial, modal) in [(10, -1), (-1, -1), (-1, 20), (10, 20)] {
         let (mut c, mut r) = fixture(ClientRevision::R274);
         c.tut_com_id = tutorial;
@@ -266,22 +266,32 @@ fn legacy_274_keeps_base_interface_order_and_no_pending_frame_dirtiness() {
         } else {
             assert_eq!(underlying[77 * 479], 0);
         }
-        // Even an injected unreachable pending field must not alter 274.
-        for message in ["Message", ""] {
-            c.tut_com_message = Some(message.into());
-            c.redraw_chat = true;
-            r.game_draw(&mut c);
-            assert_chat(&r, &underlying);
-            r.area_chat.as_mut().unwrap().pixels.fill(0xeeeeee);
-            r.game_draw(&mut c);
-            assert!(r
-                .area_chat
-                .as_ref()
-                .unwrap()
-                .pixels
-                .iter()
-                .all(|&p| p == 0xeeeeee));
-            assert!(!c.redraw_chat);
-        }
     }
+}
+
+#[test]
+fn r274_tutorial_message_is_captured_drawn_and_acknowledged() {
+    let (mut c, mut r) = fixture(ClientRevision::R274);
+    c.tut_com_id = 10;
+    c.add_chat(0, "Message", "");
+    assert_eq!(c.tut_com_message.as_deref(), Some("Message"));
+    assert_eq!(c.shell.mouse_click_button, 0, "arrival clears stale click");
+    r.game_draw(&mut c);
+    assert_chat(&r, &expected_prompt("Message", "Click to continue"));
+    assert!(!c.redraw_chat);
+
+    // The pending prompt redraws even after the backend consumed the dirty flag.
+    r.area_chat.as_mut().unwrap().pixels.fill(0xeeeeee);
+    r.game_draw(&mut c);
+    assert_chat(&r, &expected_prompt("Message", "Click to continue"));
+    assert!(!c.redraw_chat);
+
+    c.shell.mouse_click_button = 1;
+    c.handle_chat_if_clicks();
+    assert_eq!(c.tut_com_message, None);
+    assert_eq!(c.shell.mouse_click_button, 0);
+    assert_eq!(c.out.pos, 0, "acknowledgement is local");
+    assert!(c.redraw_chat);
+    r.game_draw(&mut c);
+    assert_chat(&r, &vec![TUTORIAL; 479 * 96]);
 }

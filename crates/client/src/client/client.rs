@@ -6822,12 +6822,12 @@ impl Client {
     }
 
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
-    /// (99→1), write the new line at slot 0, and redraw. R289 Java method99
-    /// (1819-1824) also captures every kind-0 tutorial notice, including
-    /// local notices and empty text; leave the base R274 path unchanged.
+    /// (99→1), write the new line at slot 0, and redraw. J274 Client.java
+    /// (3787-3790) and J289 method99 (1819-1824) capture every kind-0
+    /// tutorial notice, including local notices and empty text.
     /// Each appended line bumps `chat_seq` once (before the slot shift).
     pub fn add_chat(&mut self, r#type: i32, text: &str, sender: &str) {
-        if self.revision.is_289() && r#type == 0 && self.tut_com_id != -1 {
+        if !self.revision.is_377() && r#type == 0 && self.tut_com_id != -1 {
             self.tut_com_message = Some(text.to_string());
             self.shell.mouse_click_button = 0;
         }
@@ -7849,10 +7849,9 @@ impl Client {
     /// See `handle_side_if_clicks`: chat-modal button clicks flow through
     /// `build_minimenu` + `mouse_loop`/`doAction`.
     pub fn handle_chat_if_clicks(&mut self) {
-        // Java 289 6042-6046: only LEFT + non-null message acknowledges.
-        // The interface may remain open (or already have closed). R274's
-        // base handler was a no-op; do not add acknowledgement there.
-        if self.revision.is_289()
+        // J274 Client.java:9567-9571 and J289 6042-6046 acknowledge only a
+        // left click while a tutorial message is pending.
+        if !self.revision.is_377()
             && self.shell.mouse_click_button == 1
             && self.tut_com_message.is_some()
         {

@@ -3217,9 +3217,9 @@ impl Renderer {
                         Colour::DARKBLUE,
                     );
                 }
-            } else if client.revision().is_289() && client.tut_com_message.is_some() {
-                // Primary 289 method129 (5273-5275): pending text replaces
-                // interfaces/chat, even after the tutorial closes or if empty.
+            } else if !client.revision().is_377() && client.tut_com_message.is_some() {
+                // J274 Client.java:4968-4970; pending text replaces the chat.
+                // The interface may remain open or already have closed.
                 if let Some(b12) = self.media.b12.as_ref() {
                     b12.centre_string(
                         &mut surface,
