@@ -813,19 +813,23 @@ fn click_is_packed_before_ui_consumes_it() {
 
 #[test]
 fn idle_real_loop_threshold_and_repeat_subtract_500() {
-    let mut c = client(ClientRevision::R289);
-    for tick in 1..=5001 {
-        c.last_outbound = Instant::now();
-        c.out.pos = 0;
-        c.game_loop();
-        let bytes = &c.out.data()[..c.out.pos];
-        assert_eq!(
-            bytes.last() == Some(&145),
-            tick == 4501 || tick == 5001,
-            "tick {tick}"
-        );
-        if tick == 4501 || tick == 5001 {
-            assert_eq!(c.logout_timer, 250);
+    // J274 Client.java:9589-9594; J289 has the same 4501/5001 thresholds.
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = client(revision);
+        let opcode = if revision.is_289() { 145 } else { 209 };
+        for tick in 1..=5001 {
+            c.last_outbound = Instant::now();
+            c.out.pos = 0;
+            c.game_loop();
+            let bytes = &c.out.data()[..c.out.pos];
+            assert_eq!(
+                bytes.last() == Some(&opcode),
+                tick == 4501 || tick == 5001,
+                "revision {revision:?}, tick {tick}"
+            );
+            if tick == 4501 || tick == 5001 {
+                assert_eq!(c.logout_timer, 250);
+            }
         }
     }
 }

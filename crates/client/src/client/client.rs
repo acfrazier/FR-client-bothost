@@ -13558,14 +13558,12 @@ impl Client {
         for i in 0..5 {
             self.cam_shake_cycle[i] += 1;
         }
-        // A host-owned session is unattended by default: the host, not the
-        // Java inactivity policy, owns its lifetime, so the timer stays
-        // suppressed for both revisions without manufacturing user input or
-        // packets. A host that asks for it ([`Client::set_host_idle_timer`])
-        // gets the Java 289 timer instead.
+        // A host-owned session is unattended by default; otherwise each Java
+        // revision runs its inactivity timer. A host can opt in with
+        // [`Client::set_host_idle_timer`].
         if self.idle_timer_suppressed() {
             self.shell.idle_cycles = 0;
-        } else if self.revision.is_289() || self.revision.is_377() {
+        } else {
             self.shell.idle_cycles += 1;
             if self.shell.idle_cycles > 4500 {
                 self.shell.idle_cycles -= 500;
