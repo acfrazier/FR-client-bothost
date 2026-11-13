@@ -4499,8 +4499,8 @@ impl Renderer {
         }
     }
 
-    /// `animateInterface` from client-ts (10552): advance the animation of
-    /// `id`'s children by `delta`, recursing `TYPE_LAYER` children.
+    /// `animateInterface`: advance `id`'s children by `delta`. Java 274
+    /// Client.java:1410 / 289:10424 recurse into type 1; 377:11558 uses type 0.
     /// A `TYPE_MODEL` child with a model anim selects the
     /// active/inactive seq (`get_if_active` picks `model_anim2` else
     /// `model_anim`), adds `delta` to `anim_cycle`, and steps `anim_frame`
@@ -4516,6 +4516,11 @@ impl Renderer {
         };
 
         let mut updated = false;
+        let recursive_type = if client.revision.is_377() {
+            ComponentType::TYPE_LAYER
+        } else {
+            ComponentType::TYPE_UNUSED
+        };
 
         for child_index in 0..child_count {
             let child_id = client.if_(id as usize).unwrap().children.as_ref().unwrap()[child_index];
@@ -4528,7 +4533,7 @@ impl Renderer {
             let Some(child) = client.if_(child_id as usize) else {
                 break;
             };
-            let is_layer = child.r#type == ComponentType::TYPE_LAYER;
+            let recurses = child.r#type == recursive_type;
             let is_model = child.r#type == ComponentType::TYPE_MODEL;
             let model_anim = child.model_anim;
             let model_anim2 = child.model_anim2;
@@ -4539,7 +4544,7 @@ impl Renderer {
             } else {
                 false
             };
-            if is_layer {
+            if recurses {
                 updated |= Renderer::animate_interface(client, child_id, delta);
             }
 

@@ -1839,6 +1839,87 @@ fn animate_interface_advances_model_frame() {
 }
 
 #[test]
+fn animate_interface_recurses_into_each_revisions_java_child_type() {
+    use client::io::ClientRevision;
+
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        for nested_type in [ComponentType::TYPE_LAYER, ComponentType::TYPE_UNUSED] {
+            let mut c = Client::new_with_revision(
+                ClientConfig {
+                    host: "127.0.0.1".into(),
+                    port: 43594,
+                    cache_dir: "/tmp".into(),
+                    members: true,
+                    lowmem: false,
+                },
+                revision,
+            );
+            c.set_iface(
+                1,
+                IfType {
+                    children: Some(vec![2, -1, 4]),
+                    ..Default::default()
+                },
+            );
+            c.set_iface(
+                2,
+                IfType {
+                    id: 2,
+                    r#type: nested_type,
+                    children: Some(vec![3]),
+                    ..Default::default()
+                },
+            );
+            for id in [3, 4] {
+                c.set_iface(
+                    id,
+                    IfType {
+                        r#type: ComponentType::TYPE_MODEL,
+                        ..Default::default()
+                    },
+                );
+                c.set_iface_mut(
+                    id,
+                    IfTypeMut {
+                        model_anim: 0,
+                        ..Default::default()
+                    },
+                );
+            }
+            Arc::get_mut(&mut c.cache).unwrap().seqs = vec![SeqType {
+                num_frames: 2,
+                frames: Some(vec![0, 0]),
+                iframes: Some(vec![-1, -1]),
+                delay: Some(vec![1, 1]),
+                loops: 2,
+                ..Default::default()
+            }];
+            // J274 Client.java:1410 / J289:10424 use 1; J377:11558 uses 0.
+            let recurses = if revision.is_377() {
+                nested_type == ComponentType::TYPE_LAYER
+            } else {
+                nested_type == ComponentType::TYPE_UNUSED
+            };
+            assert_eq!(
+                Renderer::animate_interface(&mut c, 1, 2),
+                recurses,
+                "{revision:?} nested type {nested_type}"
+            );
+            let model = c.if_(3).unwrap();
+            assert_eq!(
+                (model.anim_frame, model.anim_cycle),
+                (i32::from(recurses), 0)
+            );
+            assert_eq!(c.if_(4).unwrap().anim_frame, 0, "stop at the -1 child");
+        }
+    }
+}
+
+#[test]
 fn if_anim_reset_preserves_nested_layer_child() {
     let _r = Renderer::new(false);
     let mut c = client();
