@@ -382,6 +382,59 @@ fn client_component_update_range_writes_world_text() {
 }
 
 #[test]
+fn report_abuse_name_input_matches_java() {
+    let mut c = client();
+    let mut player = ClientPlayer::at(1, 1);
+    player.name = Some("Bob".into());
+    c.local_player = Some(player);
+
+    // J274 reportAbuseComId starts at -1, so another modal does not capture chat.
+    c.main_modal_id = 0;
+    c.shell.apply_key(true, 0, b'x' as i32);
+    c.handle_chat_input();
+    assert_eq!(c.chat_input, "x");
+    c.chat_input.clear();
+    c.out.pos = 0;
+
+    c.main_modal_id = 2;
+    c.report_abuse_com_id = 2;
+    c.set_iface(
+        2,
+        client::config::IfType {
+            id: 2,
+            client_code: 600,
+            ..Default::default()
+        },
+    );
+    for key in b"Ab1 Z!" {
+        c.shell.apply_key(true, 0, *key as i32);
+    }
+    c.shell.apply_key(true, 0, 8);
+    c.shell.apply_key(true, 0, 13);
+    for _ in 0..10 {
+        c.shell.apply_key(true, 0, b'x' as i32);
+    }
+    c.handle_chat_input();
+    let expected = format!("Ab1 {}", "x".repeat(8));
+    assert_eq!(c.report_abuse_input, expected);
+    assert_eq!(c.main_modal_id, 2, "Enter does not submit the report name");
+    assert_eq!(c.out.pos, 0, "typing the report name sends no packet");
+
+    c.client_component(2);
+    assert_eq!(
+        c.if_(2).unwrap().text,
+        format!("{}|", c.report_abuse_input),
+        "the report field blinks a cursor for loopCycle % 20 < 10"
+    );
+    c.loop_cycle = 10;
+    c.client_component(2);
+    assert_eq!(
+        c.if_(2).unwrap().text,
+        format!("{} ", c.report_abuse_input)
+    );
+}
+
+#[test]
 fn do_action_message_private_opens_social_input() {
     let mut c = client();
     c.friend_count = 1;

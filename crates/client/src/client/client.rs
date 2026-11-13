@@ -2236,7 +2236,7 @@ impl Client {
             cyclelogic6: 0,
             report_abuse_input: String::new(),
             report_abuse_mute_option: false,
-            report_abuse_com_id: 0,
+            report_abuse_com_id: -1,
 
             dir_map: vec![0; BUILD_AREA_TILES],
             dist_map: vec![0; BUILD_AREA_TILES],
@@ -7808,6 +7808,11 @@ impl Client {
             if com.scroll_height <= height {
                 com.scroll_height = height + 1;
             }
+        } else if client_code == CC_REPORT_INPUT {
+            // J274 Client.java:2485-2491.
+            com.text = self.report_abuse_input.clone();
+            com.text
+                .push(if self.loop_cycle % 20 < 10 { '|' } else { ' ' });
         } else if client_code == CC_DESIGN_PREVIEW {
             // TS 10773-10820: spin the preview model around the y axis
             // every frame; the combined kit model (built above) is cached
@@ -11551,6 +11556,22 @@ impl Client {
     /// Existing single-character `handleInputKey` chat-branch body.
     /// Does not count a revision-289 per-frame input poll.
     pub fn consume_chat_key(&mut self, key: i32) {
+        // J274 Client.java:10208-10212,10404-10407; Enter is ignored.
+        if self.main_modal_id != -1 && self.main_modal_id == self.report_abuse_com_id {
+            if key == 8 {
+                self.report_abuse_input.pop();
+            } else if (97..=122).contains(&key)
+                || (65..=90).contains(&key)
+                || (48..=57).contains(&key)
+                || key == 32
+            {
+                if self.report_abuse_input.encode_utf16().count() < 12 {
+                    self.report_abuse_input
+                        .push(char::from_u32(key as u32).unwrap());
+                }
+            }
+            return;
+        }
         if self.social_input_open {
             if (32..=122).contains(&key) && self.social_input.len() < 80 {
                 self.social_input.push(char::from_u32(key as u32).unwrap());
