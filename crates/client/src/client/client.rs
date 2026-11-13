@@ -13,6 +13,7 @@
 //! zero through a full login + build + sim run.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
@@ -7850,6 +7851,107 @@ impl Client {
                 com.graphic_name = self.idk_design_button1.clone().unwrap_or_default();
             } else {
                 com.graphic_name = self.idk_design_button2.clone().unwrap_or_default();
+            }
+        } else if self.revision.is_289() {
+            // Java 289 client.java:4733-4818. Reuse the component's text
+            // buffer because these consumers run on every interface draw.
+            match client_code {
+                613 => {
+                    if self.staffmodlevel < 1 {
+                        com.text.clear();
+                    } else if self.report_abuse_mute_option {
+                        com.colour = 16711680;
+                        "Moderator option: Mute player for 48 hours: <ON>"
+                            .clone_into(&mut com.text);
+                    } else {
+                        com.colour = 16777215;
+                        "Moderator option: Mute player for 48 hours: <OFF>"
+                            .clone_into(&mut com.text);
+                    }
+                }
+                650 | 655 => {
+                    com.text.clear();
+                    if self.last_login_ip != 0 {
+                        com.text.push_str("You last logged in ");
+                        match self.days_since_login {
+                            0 => com.text.push_str("earlier today"),
+                            1 => com.text.push_str("yesterday"),
+                            days => write!(com.text, "{days} days ago").unwrap(),
+                        }
+                        com.text.push_str(" from: ");
+                        if let Some(dns) = &self.last_login_dns_display {
+                            com.text.push_str(dns);
+                        } else {
+                            write!(
+                                com.text,
+                                "{}",
+                                std::net::Ipv4Addr::from(self.last_login_ip as u32)
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+                651 => match self.last_login_message_count {
+                    0 => {
+                        "0 unread messages".clone_into(&mut com.text);
+                        com.colour = 16776960;
+                    }
+                    1 => {
+                        "1 unread message".clone_into(&mut com.text);
+                        com.colour = 65280;
+                    }
+                    count if count > 1 => {
+                        com.text.clear();
+                        write!(com.text, "{count} unread messages").unwrap();
+                        com.colour = 65280;
+                    }
+                    _ => {}
+                },
+                652 => match self.days_since_recovery_change {
+                    201 => {
+                        if self.members_warning == 1 {
+                            "@yel@This is a non-members world: @whi@Since you are a member we"
+                                .clone_into(&mut com.text);
+                        } else {
+                            com.text.clear();
+                        }
+                    }
+                    200 => {
+                        "You have not yet set any password recovery questions."
+                            .clone_into(&mut com.text);
+                    }
+                    days => {
+                        com.text.clear();
+                        match days {
+                            0 => com.text.push_str("Earlier today"),
+                            1 => com.text.push_str("Yesterday"),
+                            _ => write!(com.text, "{days} days ago").unwrap(),
+                        }
+                        com.text.push_str(" you changed your recovery questions");
+                    }
+                },
+                653 => {
+                    let text = match self.days_since_recovery_change {
+                        201 if self.members_warning == 1 => {
+                            "@whi@recommend you use a members world instead. You may use"
+                        }
+                        201 => "",
+                        200 => "We strongly recommend you do so now to secure your account.",
+                        _ => "If you do not remember making this change then cancel it immediately",
+                    };
+                    text.clone_into(&mut com.text);
+                }
+                654 => {
+                    let text = match self.days_since_recovery_change {
+                        201 if self.members_warning == 1 => {
+                            "@whi@this world but member benefits are unavailable whilst here."
+                        }
+                        201 => "",
+                        _ => "Do this from the 'account management' area on our front webpage",
+                    };
+                    text.clone_into(&mut com.text);
+                }
+                _ => {}
             }
         }
     }
