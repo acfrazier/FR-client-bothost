@@ -785,16 +785,20 @@ fn r274_event_packets_match_java_click_camera_and_focus_bytes() {
 
 #[test]
 fn cycle4_input_poll_counts_calls_even_without_keys() {
-    let mut c = client(ClientRevision::R289);
-    for _ in 0..192 {
+    // J274 Client.java:10193-10199; J289 sends the same 232 suffix.
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = client(revision);
+        let opcode = if revision.is_289() { 137 } else { 230 };
+        for _ in 0..192 {
+            c.handle_chat_input();
+        }
+        assert_eq!(c.out.pos, 0);
         c.handle_chat_input();
+        assert_eq!(&c.out.data()[..c.out.pos], &[opcode, 232]);
+        c.out.pos = 0;
+        c.handle_chat_input();
+        assert_eq!(c.out.pos, 0);
     }
-    assert_eq!(c.out.pos, 0);
-    c.handle_chat_input();
-    assert_eq!(&c.out.data()[..c.out.pos], &[137, 232]);
-    c.out.pos = 0;
-    c.handle_chat_input();
-    assert_eq!(c.out.pos, 0);
 }
 
 #[test]

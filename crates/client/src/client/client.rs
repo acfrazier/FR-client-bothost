@@ -11520,8 +11520,8 @@ impl Client {
     /// Local chat echo uses `toSentenceCase`, `WordFilter.filter`, and
     /// `add_chat`.
     pub fn handle_chat_input(&mut self) {
-        if self.revision.is_289() {
-            // J:10743-10750: count poll calls, not queued characters.
+        if !self.revision.is_377() {
+            // J274 Client.java:10193-10199: count poll calls, not queued characters.
             self.outbound.legacy().cyclelogic4 += 1;
             if self.outbound.legacy().cyclelogic4 > 192 {
                 self.outbound.legacy().cyclelogic4 = 0;
