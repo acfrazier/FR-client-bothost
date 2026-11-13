@@ -222,10 +222,11 @@ fn java_all_five_shake_axes_are_frame_local_and_seeded() {
 
 #[test]
 fn camera_dispatch_interpolation_and_shake_allocate_nothing() {
-    // Existing 64-bit layout: this feature reuses the camera fields, not new
-    // per-client state. Keep the measured baseline as a growth tripwire.
+    // Camera state remains allocation-free. Packet 53 adds a 32-byte lazy
+    // instance descriptor: measured 28,904 bytes, with 64 bytes of headroom.
+    // Its 676-entry grid is boxed only when an instance packet is decoded.
     #[cfg(target_pointer_width = "64")]
-    assert!(std::mem::size_of::<Client>() <= 28_872);
+    assert!(std::mem::size_of::<Client>() <= 28_968);
     let mut c = client();
     let mut renderer = Renderer::new(false);
     let mut moveto = Packet::new(vec![4, 5, 0, 200, 10, 50]);

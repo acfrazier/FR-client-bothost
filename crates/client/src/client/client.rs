@@ -27,6 +27,7 @@ use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
 use crate::client::login_error::{LoginError, LoginStage, LoginTransportError};
 use crate::client::mini_menu_action::MiniMenuAction;
+use crate::client::packet_377::rebuild_377::Rebuild377;
 use crate::client::skill::Skill;
 use crate::config::if_type::{
     default_mut, ButtonType, ComponentType, IfType, IfTypeMut, IfTypeOwned, IfTypeView,
@@ -1296,6 +1297,8 @@ pub struct Client {
     pub map_build_location_file: Vec<i32>,
     pub map_build_ground_data: Vec<Option<Vec<u8>>>,
     pub map_build_location_data: Vec<Option<Vec<u8>>>,
+    /// Only opcode 53 retains a template grid; ordinary clients allocate none.
+    map_build_region_377: Option<Rebuild377>,
 
     pub use_mode: i32,
     pub target_mode: i32,
@@ -2257,6 +2260,7 @@ impl Client {
             map_build_location_file: Vec::new(),
             map_build_ground_data: Vec::new(),
             map_build_location_data: Vec::new(),
+            map_build_region_377: None,
 
             use_mode: 0,
             target_mode: 0,
@@ -9229,13 +9233,13 @@ impl Client {
         self.apply_rebuild_zones(zone_x, zone_z);
     }
 
-    fn apply_rebuild_zones(&mut self, zone_x: i32, zone_z: i32) {
+    fn begin_rebuild_zones(&mut self, zone_x: i32, zone_z: i32) -> bool {
         if self.map_build_centre_zone_x == zone_x
             && self.map_build_centre_zone_z == zone_z
             && self.scene_state == 2
         {
             self.ptype = -1;
-            return;
+            return false;
         }
 
         self.map_build_centre_zone_x = zone_x;
@@ -9253,6 +9257,13 @@ impl Client {
 
         // The loading splash is drawn by the renderer: `check_minimap`
         // paints it (and builds the scene) on the next `mainredraw`.
+        true
+    }
+
+    fn apply_rebuild_zones(&mut self, zone_x: i32, zone_z: i32) {
+        if !self.begin_rebuild_zones(zone_x, zone_z) {
+            return;
+        }
 
         let start_x = (self.map_build_centre_zone_x - 6) / 8;
         let end_x = (self.map_build_centre_zone_x + 6) / 8;
@@ -9293,6 +9304,10 @@ impl Client {
             }
         }
 
+        self.finish_rebuild_zones();
+    }
+
+    fn finish_rebuild_zones(&mut self) {
         let dx = self.map_build_base_x - self.map_build_prev_base_x;
         let dz = self.map_build_base_z - self.map_build_prev_base_z;
         self.map_build_prev_base_x = self.map_build_base_x;
@@ -9397,6 +9412,10 @@ impl Client {
                 *x -= dx;
                 *z -= dz;
             }
+        }
+        // Java 377 Client.java:8301: only an actual rebuild ends the cutscene.
+        if self.revision.is_377() {
+            self.cinema_cam = false;
         }
     }
 
@@ -11080,6 +11099,7 @@ impl Client {
         self.projectiles.clear();
         self.spotanims.clear();
         self.loc_changes = LinkList::new();
+        self.map_build_region_377 = None;
         self.friend_server_status = 0;
         self.friend_count = 0;
         self.last_login_ip = 0;
@@ -12487,9 +12507,10 @@ impl Client {
     /// available, -4 while player info is pending; on success sets
     /// `scene_state = 2`, runs `map_build` and emits MAP_BUILD_COMPLETE.
     pub fn check_scene(&mut self) -> i32 {
-        if self.map_build_index.is_empty()
-            || self.map_build_ground_data.is_empty()
-            || self.map_build_location_data.is_empty()
+        if self.map_build_region_377.is_none()
+            && (self.map_build_index.is_empty()
+                || self.map_build_ground_data.is_empty()
+                || self.map_build_location_data.is_empty())
         {
             return -1000; // custom
         }
@@ -12510,8 +12531,16 @@ impl Client {
         let mut ready = true;
         for i in 0..self.map_build_ground_data.len() {
             if let Some(data) = &self.map_build_location_data[i] {
-                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
-                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                // Java 377 Client.java:3485-3488 checks source-square models
+                // in-area even when their world coordinates are far away.
+                let (x, z) = if self.map_build_region_377.is_some() {
+                    (10, 10)
+                } else {
+                    (
+                        (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x,
+                        (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z,
+                    )
+                };
                 if !ClientBuild::check_locations_low_mem(
                     self.config.lowmem,
                     &self.cache,
@@ -12621,6 +12650,12 @@ impl Client {
 
         for level in 0..BuildArea::LEVELS {
             self.collision[level as usize].reset();
+            if self.revision.is_377() {
+                // Java 377 Client.java:3518-3524, also when leaving an instance.
+                for row in &mut self.mapl[level as usize] {
+                    row.fill(0);
+                }
+            }
         }
 
         let mut build = ClientBuild::new();
@@ -12645,7 +12680,10 @@ impl Client {
             self.world.fill_base_level_with_revision(0, self.revision);
         }
 
-        if !self.map_build_ground_data.is_empty() {
+        if self.map_build_region_377.is_some() {
+            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            self.load_region_ground_377(&mut build);
+        } else if !self.map_build_ground_data.is_empty() {
             self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
             for i in 0..self.map_build_ground_data.len() {
@@ -12680,7 +12718,10 @@ impl Client {
         // reads the same ground the camera's `get_av_h` does.
         self.world.groundh.clone_from(&self.groundh);
 
-        if !self.map_build_location_data.is_empty() {
+        if self.map_build_region_377.is_some() {
+            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            self.load_region_locations_377(&mut build);
+        } else if !self.map_build_location_data.is_empty() {
             self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
             for i in 0..self.map_build_location_data.len() {

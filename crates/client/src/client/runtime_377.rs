@@ -83,6 +83,7 @@ impl Client {
                 | 40
                 | 49
                 | 50
+                | 53
                 | 58
                 | 59
                 | 61
@@ -226,9 +227,6 @@ impl Client {
                     "377 zone outside mainland location/object/animation cohort: {frame:?}"
                 ))
             }
-            O::Rebuild(Rebuild377::Instance { .. }) => {
-                return Err("377 instance rebuild not in captured cohort".into())
-            }
             O::Interface(I::SetPlayerHead { .. }) if self.local_player.is_none() => {
                 return Err("377 player dialogue head without local player".into())
             }
@@ -306,8 +304,8 @@ impl Client {
     fn apply_operation_377(&mut self, operation: O<'_>) -> Option<R289Publication> {
         let mut p = R289Publication::default();
         match operation {
-            O::Rebuild(Rebuild377::Normal { zone_x, zone_z }) => {
-                self.apply_rebuild_zones(zone_x, zone_z);
+            O::Rebuild(rebuild) => {
+                self.apply_rebuild_377(rebuild);
                 R289Publication::ALL.publish(&mut self.gens);
                 return None;
             }
@@ -1014,6 +1012,150 @@ impl Client {
             _ => unreachable!("operation outside captured 377 cohort"),
         }
         Some(p)
+    }
+
+    fn apply_rebuild_377(&mut self, rebuild: Rebuild377) {
+        let (zone_x, zone_z) = rebuild.zone_center();
+        match rebuild {
+            Rebuild377::Normal { .. } => {
+                // Java Client.java:8095 changes mode even on the same-center
+                // early return; no instance grid may leak into a normal build.
+                self.map_build_region_377 = None;
+                self.apply_rebuild_zones(zone_x, zone_z);
+            }
+            instance @ Rebuild377::Instance { .. } => {
+                // Client.java:8096-8124 stores the grid before the early return.
+                // Move the decoder's box: no second grid allocation or copy.
+                self.map_build_region_377 = Some(instance);
+                if !self.begin_rebuild_zones(zone_x, zone_z) {
+                    return;
+                }
+                let region = self.map_build_region_377.as_ref().unwrap();
+                self.map_build_index.clear();
+                // Java's bounded scratch is one entry per destination slot.
+                // Reuse its capacity across instance rebuilds.
+                self.map_build_index
+                    .reserve(region.template_slots().unwrap().len());
+                self.map_build_index.extend(region.unique_map_squares());
+                let count = self.map_build_index.len();
+                self.map_build_ground_data.clear();
+                self.map_build_ground_data.resize_with(count, || None);
+                self.map_build_location_data.clear();
+                self.map_build_location_data.resize_with(count, || None);
+                self.map_build_ground_file.clear();
+                self.map_build_ground_file.resize(count, -1);
+                self.map_build_location_file.clear();
+                self.map_build_location_file.resize(count, -1);
+
+                // Client.java:8182-8233: unique source squares, first appearance
+                // order, land request before locations, without tutorial skips.
+                if let Some(od) = &mut self.on_demand {
+                    for (index, &square) in self.map_build_index.iter().enumerate() {
+                        let x = square >> 8;
+                        let z = square & 0xff;
+                        let land = od.get_map_file(x, z, 0);
+                        self.map_build_ground_file[index] = land;
+                        if land != -1 {
+                            od.request(3, land);
+                        }
+                        let loc = od.get_map_file(x, z, 1);
+                        self.map_build_location_file[index] = loc;
+                        if loc != -1 {
+                            od.request(3, loc);
+                        }
+                    }
+                }
+                self.finish_rebuild_zones();
+            }
+        }
+    }
+
+    pub(super) fn load_region_ground_377(&mut self, build: &mut ClientBuild) {
+        // Java Client.java:3556-3620. Keep missing-slot clearing interleaved
+        // with loaded chunks: its left/bottom seams read preceding chunks.
+        let region = self.map_build_region_377.as_ref().unwrap();
+        let mut tiles = region.region_tiles().peekable();
+        for plane in 0..4 {
+            for x in 0..13 {
+                for z in 0..13 {
+                    let destination_x = x * 8;
+                    let destination_z = z * 8;
+                    let tile = tiles.next_if(|tile| {
+                        tile.plane == plane
+                            && tile.destination_tile_x - self.map_build_base_x == destination_x
+                            && tile.destination_tile_z - self.map_build_base_z == destination_z
+                    });
+                    let mut loaded = false;
+                    if let Some(tile) = tile {
+                        let square = ((tile.source_zone_x / 8) << 8) + tile.source_zone_z / 8;
+                        if let Some(index) =
+                            self.map_build_index.iter().position(|&id| id == square)
+                        {
+                            if let Some(data) = &self.map_build_ground_data[index] {
+                                build.load_ground_region(
+                                    &mut self.groundh,
+                                    &mut self.mapl,
+                                    &mut self.collision[plane],
+                                    data,
+                                    plane,
+                                    destination_x,
+                                    destination_z,
+                                    tile.source_level,
+                                    (tile.source_zone_x & 7) * 8,
+                                    (tile.source_zone_z & 7) * 8,
+                                    tile.rotation,
+                                );
+                                loaded = true;
+                            }
+                        }
+                    }
+                    if !loaded {
+                        ClientBuild::clear_ground_region(
+                            &mut self.groundh,
+                            plane,
+                            destination_x,
+                            destination_z,
+                        );
+                    }
+                }
+            }
+        }
+        let slots = region.template_slots().unwrap();
+        for x in 0..13 {
+            for z in 0..13 {
+                if slots[x * 13 + z] == -1 {
+                    build.fade_adjacent(&mut self.groundh, z as i32 * 8, x as i32 * 8, 8, 8);
+                }
+            }
+        }
+    }
+
+    pub(super) fn load_region_locations_377(&mut self, build: &mut ClientBuild) {
+        // Java Client.java:3571-3596 selects only the source chunk/plane.
+        let region = self.map_build_region_377.as_ref().unwrap();
+        for tile in region.region_tiles() {
+            let square = ((tile.source_zone_x / 8) << 8) + tile.source_zone_z / 8;
+            if let Some(index) = self.map_build_index.iter().position(|&id| id == square) {
+                if let Some(data) = &self.map_build_location_data[index] {
+                    build.load_locations_region(
+                        &self.cache,
+                        &mut self.world,
+                        &mut self.collision,
+                        &self.groundh,
+                        &self.mapl,
+                        data,
+                        tile.plane,
+                        tile.destination_tile_x - self.map_build_base_x,
+                        tile.destination_tile_z - self.map_build_base_z,
+                        tile.source_level,
+                        (tile.source_zone_x & 7) * 8,
+                        (tile.source_zone_z & 7) * 8,
+                        tile.rotation,
+                        self.loop_cycle,
+                    );
+                }
+            }
+        }
     }
 
     fn animate_location_377(&mut self, x: i32, z: i32, shape: i32, angle: i32, sequence: i32) {

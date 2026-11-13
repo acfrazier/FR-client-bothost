@@ -134,6 +134,19 @@ It requires the live environment above and a fresh `frcm` account of 5–8 chara
 Its only seeds are that account's tutorial prerequisite and position.
 It does not establish Java pixel equivalence.
 
+Revision 377 also applies `REBUILD_REGION` (53), Java's instanced scene rebuild.
+It retains the decoded 4×13×13 template grid, requests each unique source map
+square once, shifts the existing scene state, and waits for player synchronization.
+The scene builder rotates source 8×8 terrain and location chunks onto their
+destination planes, including non-square location footprints and bridge collision.
+Missing chunks follow Java's height clearing and level-zero seam fading.
+Normal rebuilds and logout retire instance mode; the 274/289 paths are unchanged.
+The grid is allocated only when decoding an instance packet, then moved into the
+client without a second allocation or copy.
+`revision_377_rebuild` checks the production handler and scene builder with the
+original-engine synthetic fixture and Java-derived terrain/rotation expectations.
+These offline tests are not a live Recruitment Drive or rendered-pixel proof.
+
 Revision 377 uses separate Java-sized media tables: 100 slots each for
 mapscene and mapfunction images, with 72 and 70 images loaded. Its player
 PK, prayer and hint icons remain separate, and its minimap supports the

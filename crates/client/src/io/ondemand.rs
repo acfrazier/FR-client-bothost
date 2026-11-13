@@ -2201,4 +2201,64 @@ mod tests {
         assert_eq!(OnDemand::model_use_priority(0x80), 6);
         assert_eq!(OnDemand::model_use_priority(0x09), 3); // 8 then &1 -> 3
     }
+
+    #[test]
+    fn packet53_requests_each_unique_source_land_and_loc_without_a_worker() {
+        use crate::client::{Client, ClientConfig, ClientRevision};
+        use crate::config::Cache;
+        use crate::io::Packet;
+        use std::sync::Arc;
+
+        let mut c = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 0,
+                cache_dir: env!("CARGO_MANIFEST_DIR").into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(Cache::default()),
+            Arc::new(Vec::new()),
+            Vec::new(),
+            ClientRevision::R377,
+        );
+        c.ingame = true;
+        c.scene_state = 2;
+        let mut od = OnDemand::new_unconnected();
+        od.map_index = vec![12900];
+        od.map_land = vec![11];
+        od.map_loc = vec![12];
+        c.on_demand = Some(od);
+        let corpus: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/revision_377/packets.json"
+        ))
+        .unwrap();
+        let case = corpus["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["opcode"] == 53)
+            .unwrap();
+        let bytes = case["payload_hex"]
+            .as_str()
+            .unwrap()
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect();
+        let mut packet = Packet::new(bytes);
+        packet.set_frame_end(packet.length());
+        c.psize = packet.length() as i32;
+        c.handle_packet(53, &mut packet);
+        assert!(c.ingame, "{:?}", c.take_session_exit_reason());
+        assert_eq!(c.map_build_index, [12900]); // Three templates share one square.
+        assert_eq!(c.map_build_ground_file, [11]);
+        assert_eq!(c.map_build_location_file, [12]);
+        let od = c.on_demand.as_ref().unwrap();
+        assert_eq!(od.remaining(), 2); // Exactly one land and one location request.
+        assert!(od.worker.is_none());
+        assert!(od.tx.is_none());
+    }
 }

@@ -157,6 +157,107 @@ impl ClientBuild {
         );
     }
 
+    /// Java 377 `World.method16` / `method31`: copy one rotated 8x8 source
+    /// chunk onto the destination plane. Implicit heights use destination
+    /// coordinates with noise origin (0,0), not the source map's world origin.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn load_ground_region(
+        &mut self,
+        groundh: &mut LevelHeightmaps,
+        mapl: &mut [Vec<Vec<u8>>],
+        collision: &mut CollisionMap,
+        src: &[u8],
+        level: usize,
+        destination_x: i32,
+        destination_z: i32,
+        source_level: i32,
+        source_x: i32,
+        source_z: i32,
+        rotation: i32,
+    ) {
+        for x in destination_x..destination_x + 8 {
+            for z in destination_z..destination_z + 8 {
+                if (1..BuildArea::SIZE - 1).contains(&x) && (1..BuildArea::SIZE - 1).contains(&z) {
+                    collision.flags[x as usize][z as usize] &= !0x1000000;
+                }
+            }
+        }
+        let decoded = visit_land(src, |cell| {
+            let source_tile_x = i32::from(cell.x);
+            let source_tile_z = i32::from(cell.z);
+            if i32::from(cell.plane) != source_level
+                || !(source_x..source_x + 8).contains(&source_tile_x)
+                || !(source_z..source_z + 8).contains(&source_tile_z)
+            {
+                return;
+            }
+            let (x, z) = Self::rotate_region_point(source_tile_x & 7, source_tile_z & 7, rotation);
+            let x = x + destination_x;
+            let z = z + destination_z;
+            if !(0..BuildArea::SIZE).contains(&x) || !(0..BuildArea::SIZE).contains(&z) {
+                return;
+            }
+            let x = x as usize;
+            let z = z as usize;
+            mapl[level][x][z] = cell.flags;
+            self.floort1[level][x][z] = cell.underlay;
+            self.floort2[level][x][z] = cell.overlay;
+            self.floors[level][x][z] = cell.overlay_shape;
+            self.floorr[level][x][z] = ((i32::from(cell.overlay_rotation) + rotation) & 3) as u8;
+            groundh[level][x][z] = match cell.explicit_height {
+                Some(height) if level == 0 => -i32::from(height) * 8,
+                Some(height) => groundh[level - 1][x][z] - i32::from(height) * 8,
+                None if level == 0 => terrain_height(x as i32, z as i32),
+                None => groundh[level - 1][x][z] - 240,
+            };
+        });
+        debug_assert!(
+            decoded.is_ok()
+                || matches!(decoded, Err(MapCacheError::Invalid("trailing land bytes"))),
+            "prepared land record must be valid"
+        );
+    }
+
+    /// Java 377 `World.method14`: clear an unavailable 8x8 chunk and copy
+    /// its left/bottom seams. The corner prefers left, then bottom, then diagonal.
+    pub(crate) fn clear_ground_region(groundh: &mut LevelHeightmaps, level: usize, x: i32, z: i32) {
+        let x = x as usize;
+        let z = z as usize;
+        let heights = &mut groundh[level];
+        for row in &mut heights[x..x + 8] {
+            row[z..z + 8].fill(0);
+        }
+        if x > 0 {
+            for dz in 1..8 {
+                heights[x][z + dz] = heights[x - 1][z + dz];
+            }
+        }
+        if z > 0 {
+            for dx in 1..8 {
+                heights[x + dx][z] = heights[x + dx][z - 1];
+            }
+        }
+        heights[x][z] = if x > 0 && heights[x - 1][z] != 0 {
+            heights[x - 1][z]
+        } else if z > 0 && heights[x][z - 1] != 0 {
+            heights[x][z - 1]
+        } else if x > 0 && z > 0 && heights[x - 1][z - 1] != 0 {
+            heights[x - 1][z - 1]
+        } else {
+            0
+        };
+    }
+
+    /// Java 377 `WorldRegion.method461/462`.
+    fn rotate_region_point(x: i32, z: i32, rotation: i32) -> (i32, i32) {
+        match rotation & 3 {
+            0 => (x, z),
+            1 => (z, 7 - x),
+            2 => (7 - x, 7 - z),
+            _ => (7 - z, x),
+        }
+    }
+
     /// `finishBuild`'s ground-tile gate (Java `ClientBuild.java:972`):
     /// interior z (`1..SIZE-1`), and in low-mem the tile must not be
     /// ForceHighDetail and must resolve to `minusedlevel`. The x gate
@@ -333,6 +434,90 @@ impl ClientBuild {
                     loop_cycle,
                 );
             }
+        });
+        debug_assert!(decoded.is_ok(), "prepared location record must be valid");
+    }
+
+    /// Java 377 `World.method20` and `WorldRegion.method463/464`: filter
+    /// the source chunk/plane, rotate the footprint, then apply destination
+    /// bridge collision and the location's combined orientation.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn load_locations_region(
+        &mut self,
+        cache: &Cache,
+        world: &mut World,
+        collisions: &mut [CollisionMap; 4],
+        groundh: &LevelHeightmaps,
+        mapl: &[Vec<Vec<u8>>],
+        src: &[u8],
+        level: usize,
+        destination_x: i32,
+        destination_z: i32,
+        source_level: i32,
+        source_x: i32,
+        source_z: i32,
+        rotation: i32,
+        loop_cycle: i32,
+    ) {
+        let decoded = visit_locations(src, |placement| {
+            let source_tile_x = i32::from(placement.x);
+            let source_tile_z = i32::from(placement.z);
+            if i32::from(placement.plane) != source_level
+                || !(source_x..source_x + 8).contains(&source_tile_x)
+                || !(source_z..source_z + 8).contains(&source_tile_z)
+            {
+                return;
+            }
+            let Ok(id) = i32::try_from(placement.id) else {
+                return;
+            };
+            let loc = cache.loc(id as usize);
+            let (width, length) = if placement.rotation & 1 == 0 {
+                (loc.width, loc.length)
+            } else {
+                (loc.length, loc.width)
+            };
+            let (mut x, mut z) =
+                Self::rotate_region_point(source_tile_x & 7, source_tile_z & 7, rotation);
+            match rotation & 3 {
+                1 => z -= width - 1,
+                2 => {
+                    x -= width - 1;
+                    z -= length - 1;
+                }
+                3 => x -= length - 1,
+                _ => {}
+            }
+            let x = x + destination_x;
+            let z = z + destination_z;
+            if !(1..BuildArea::SIZE - 1).contains(&x) || !(1..BuildArea::SIZE - 1).contains(&z) {
+                return;
+            }
+            let collision_level =
+                if mapl[1][x as usize][z as usize] as i32 & MapFlag::LINK_BELOW != 0 {
+                    level as i32 - 1
+                } else {
+                    level as i32
+                };
+            let collision = if collision_level >= 0 {
+                Some(&mut collisions[collision_level as usize])
+            } else {
+                None
+            };
+            self.add_loc(
+                cache,
+                world,
+                collision,
+                groundh,
+                mapl,
+                level as i32,
+                x,
+                z,
+                id,
+                i32::from(placement.shape),
+                (i32::from(placement.rotation) + rotation) & 3,
+                loop_cycle,
+            );
         });
         debug_assert!(decoded.is_ok(), "prepared location record must be valid");
     }
@@ -1796,5 +1981,152 @@ impl ClientBuild {
         }
 
         0
+    }
+}
+
+#[cfg(test)]
+mod region_tests {
+    use super::*;
+
+    fn heights() -> LevelHeightmaps {
+        vec![vec![vec![0; 105]; 105]; 4]
+    }
+
+    fn oracle_land() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for plane in 0..4 {
+            for x in 0..64 {
+                for z in 0..64 {
+                    let selected = (plane, x, z) == (2, 2, 5);
+                    if selected {
+                        bytes.extend_from_slice(&[7, 3, 50, 82]);
+                    }
+                    bytes.extend_from_slice(&[1, if selected { 7 } else { 10 }]);
+                }
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn region_terrain_matches_executed_java_floor_rotations_and_destination_noise() {
+        let mut build = ClientBuild::new();
+        let mut groundh = heights();
+        let mut mapl = vec![vec![vec![0; 104]; 104]; 4];
+        let mut collision = CollisionMap::new();
+        for row in &mut collision.flags {
+            row.fill(0x1000000);
+        }
+        let land = oracle_land();
+        // Original Java World.method16 + WorldRegion, CLIENT-377-RUNTIME-1112.
+        for (rotation, (x, z, floor_rotation)) in
+            [(18, 29, 1), (29, 29, 2), (37, 26, 3), (42, 26, 0)]
+                .into_iter()
+                .enumerate()
+        {
+            build.load_ground_region(
+                &mut groundh,
+                &mut mapl,
+                &mut collision,
+                &land,
+                0,
+                16 + rotation as i32 * 8,
+                24,
+                2,
+                0,
+                0,
+                rotation as i32,
+            );
+            assert_eq!(groundh[0][x][z], -56);
+            assert_eq!(mapl[0][x][z], 1);
+            assert_eq!(build.floort1[0][x][z], 1);
+            assert_eq!(build.floort2[0][x][z], 3);
+            assert_eq!(build.floors[0][x][z], 1);
+            assert_eq!(build.floorr[0][x][z], floor_rotation);
+            assert_eq!(collision.flags[x][z] & 0x1000000, 0);
+        }
+        assert_eq!(collision.flags[8][8] & 0x1000000, 0x1000000);
+        let implicit = vec![0; 4 * 64 * 64];
+        build.load_ground_region(
+            &mut groundh,
+            &mut mapl,
+            &mut collision,
+            &implicit,
+            0,
+            64,
+            64,
+            2,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(groundh[0][66][69], -296);
+        build.load_ground_region(
+            &mut groundh,
+            &mut mapl,
+            &mut collision,
+            &implicit,
+            1,
+            64,
+            64,
+            2,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(groundh[1][66][69], -536);
+    }
+
+    #[test]
+    fn region_terrain_selects_the_source_chunk_before_rotating_low_bits() {
+        let mut land = Vec::new();
+        for plane in 0..4 {
+            for x in 0..64 {
+                for z in 0..64 {
+                    land.extend_from_slice(&[1, if (plane, x, z) == (2, 18, 29) { 9 } else { 10 }]);
+                }
+            }
+        }
+        let mut build = ClientBuild::new();
+        let mut groundh = heights();
+        let mut mapl = vec![vec![vec![0; 104]; 104]; 4];
+        build.load_ground_region(
+            &mut groundh,
+            &mut mapl,
+            &mut CollisionMap::new(),
+            &land,
+            0,
+            16,
+            24,
+            2,
+            16,
+            24,
+            0,
+        );
+        assert_eq!(groundh[0][18][29], -72);
+        assert_eq!(groundh[0][19][29], -80);
+        assert_eq!(groundh[2][18][29], 0);
+    }
+
+    #[test]
+    fn missing_region_clear_matches_java_edges_and_corner_precedence() {
+        let mut groundh = heights();
+        groundh[1][7][8] = -120;
+        groundh[1][8][7] = -160;
+        groundh[1][7][7] = -200;
+        groundh[1][7][9] = -81;
+        groundh[1][9][7] = -82;
+        groundh[1][9][9] = -999;
+        ClientBuild::clear_ground_region(&mut groundh, 1, 8, 8);
+        assert_eq!(groundh[1][8][8], -120);
+        assert_eq!(groundh[1][9][9], 0);
+        assert_eq!(groundh[1][8][9], -81);
+        assert_eq!(groundh[1][9][8], -82);
+        groundh[1][7][8] = 0;
+        ClientBuild::clear_ground_region(&mut groundh, 1, 8, 8);
+        assert_eq!(groundh[1][8][8], -160);
+        groundh[1][8][7] = 0;
+        ClientBuild::clear_ground_region(&mut groundh, 1, 8, 8);
+        assert_eq!(groundh[1][8][8], -200);
     }
 }
