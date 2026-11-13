@@ -193,7 +193,8 @@ fn widget_dialog_and_snapshot_ordered_frames() {
 }
 
 #[test]
-fn report_controls_preserve_274_stubs_and_289_ordered_frames() {
+fn report_controls_match_274_and_289_ordered_frames() {
+    // J274 Client.java:8829-8832 and J289 client.java:1963-1974.
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let mut c = client(revision);
         c.report_abuse_input = "a".into();
@@ -205,7 +206,7 @@ fn report_controls_preserve_274_stubs_and_289_ordered_frames() {
             },
         );
         assert!(!c.client_button(2));
-        assert_eq!(c.report_abuse_mute_option, revision == ClientRevision::R289);
+        assert!(c.report_abuse_mute_option);
         assert_eq!(c.out.pos, 0, "mute toggle sends no packet");
         for code in 601..=612 {
             c.out.pos = 0;
@@ -219,16 +220,26 @@ fn report_controls_preserve_274_stubs_and_289_ordered_frames() {
                 },
             );
             assert!(!c.client_button(2));
-            if revision == ClientRevision::R274 {
-                assert_eq!(c.out.pos, 0, "published 274 report reasons are idle");
-                assert_eq!(c.main_modal_id, 7, "274 stub must not close the modal");
-            } else {
-                assert_eq!(
-                    &c.out.data()[..c.out.pos],
-                    &[93, 94, 0, 0, 0, 0, 0, 0, 0, 1, (code - 601) as u8, 1]
-                );
-                assert_eq!(c.main_modal_id, -1);
-            }
+            let close_opcode = if revision.is_289() { 93 } else { 51 };
+            let report_opcode = if revision.is_289() { 94 } else { 137 };
+            assert_eq!(
+                &c.out.data()[..c.out.pos],
+                &[
+                    close_opcode,
+                    report_opcode,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    (code - 601) as u8,
+                    1
+                ]
+            );
+            assert_eq!(c.main_modal_id, -1);
         }
     }
 }

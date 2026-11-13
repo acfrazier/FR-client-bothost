@@ -7561,14 +7561,14 @@ impl Client {
                 }
             }
             return true;
-        } else if self.revision.is_289() && client_code == CC_REPORT_MUTE_289 {
-            // Preserve the existing revision-289 report UI mapping.
+        } else if !self.revision.is_377() && client_code == CC_REPORT_MUTE_289 {
+            // J274 Client.java:8829-8832 and J289 client.java:1963-1974.
             self.report_abuse_mute_option = !self.report_abuse_mute_option;
-        } else if self.revision.is_289()
+        } else if !self.revision.is_377()
             && (CC_REPORT_REASON_START..=CC_REPORT_REASON_END_289).contains(&client_code)
         {
-            // Java client_button 601..=612: closeModal then SEND_SNAPSHOT /
-            // REPORT_ABUSE (289 id 94, length 10): namehash, reason and mute.
+            // J274 and J289 close the modal, then send report name, reason,
+            // and mute option when the name is nonempty.
             self.close_modal();
             if !self.report_abuse_input.is_empty() {
                 let userhash = JString::to_userhash(&self.report_abuse_input) as i64;
