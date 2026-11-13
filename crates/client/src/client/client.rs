@@ -12358,6 +12358,7 @@ impl Client {
         let name = player.name.clone().unwrap_or_default();
         let combat_level = player.combat_level;
         let skill_level = player.skill_level;
+        let team = player.team_377;
 
         let tooltip = if skill_level == 0 {
             if let Some(local) = &self.local_player {
@@ -12391,6 +12392,16 @@ impl Client {
                     if let Some(local) = &self.local_player {
                         if combat_level > local.combat_level {
                             priority = MiniMenuAction::_PRIORITY;
+                        }
+                        // Java 289 client.java:9252-9258 and Java 377
+                        // Client.java:10642-10648 let nonzero teams override the
+                        // combat-level priority.
+                        if local.team_377 != 0 && team != 0 {
+                            priority = if local.team_377 == team {
+                                MiniMenuAction::_PRIORITY
+                            } else {
+                                0
+                            };
                         }
                     }
                 } else if self.player_op_priority[i] {
