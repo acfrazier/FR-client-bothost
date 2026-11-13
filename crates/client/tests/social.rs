@@ -428,10 +428,7 @@ fn report_abuse_name_input_matches_java() {
     );
     c.loop_cycle = 10;
     c.client_component(2);
-    assert_eq!(
-        c.if_(2).unwrap().text,
-        format!("{} ", c.report_abuse_input)
-    );
+    assert_eq!(c.if_(2).unwrap().text, format!("{} ", c.report_abuse_input));
 }
 
 #[test]

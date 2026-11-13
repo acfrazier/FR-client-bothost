@@ -11562,15 +11562,14 @@ impl Client {
         if self.main_modal_id != -1 && self.main_modal_id == self.report_abuse_com_id {
             if key == 8 {
                 self.report_abuse_input.pop();
-            } else if (97..=122).contains(&key)
+            } else if ((97..=122).contains(&key)
                 || (65..=90).contains(&key)
                 || (48..=57).contains(&key)
-                || key == 32
+                || key == 32)
+                && self.report_abuse_input.encode_utf16().count() < 12
             {
-                if self.report_abuse_input.encode_utf16().count() < 12 {
-                    self.report_abuse_input
-                        .push(char::from_u32(key as u32).unwrap());
-                }
+                self.report_abuse_input
+                    .push(char::from_u32(key as u32).unwrap());
             }
             return;
         }
