@@ -4516,7 +4516,7 @@ impl Renderer {
         };
 
         let mut updated = false;
-        let recursive_type = if client.revision.is_377() {
+        let recursive_type = if client.revision().is_377() {
             ComponentType::TYPE_LAYER
         } else {
             ComponentType::TYPE_UNUSED
