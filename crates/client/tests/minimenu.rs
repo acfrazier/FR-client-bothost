@@ -7,11 +7,11 @@
 use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, MiniMenuAction};
-use client::io::ClientRevision;
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::{ClientEntity, ClientNpc, ClientObj, ClientPlayer};
 use client::datastruct::LinkList;
+use client::io::ClientRevision;
 use client::render::Renderer;
 
 fn client() -> Client {
@@ -380,7 +380,6 @@ fn player_attack_priority_respects_nonzero_teams() {
         }
     }
 }
-
 
 /// A picked obj tile (entity 3) iterates the ground list tail->prev, with
 /// Take as the default op[2] fallback and Examine last per object.
