@@ -107,6 +107,7 @@ Moderator mute text follows the privilege level and mute option.
 
 The chat Report abuse button clears the previous name and mute choice, opens
 the report interface and routes typed keys to the report name.
+Warmed report-name draws reuse the component's text buffer on every revision.
 
 LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
 as Java does.

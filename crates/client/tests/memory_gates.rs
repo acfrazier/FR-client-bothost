@@ -345,3 +345,35 @@ fn warmed_289_welcome_components_allocate_nothing() {
         assert_eq!(c.if_(651).unwrap().text, "1 unread message");
     }
 }
+
+#[test]
+fn warmed_report_name_draws_allocate_nothing() {
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        let mut c = client(revision);
+        c.set_iface(
+            600,
+            IfType {
+                id: 600,
+                client_code: 600,
+                ..Default::default()
+            },
+        );
+        c.report_abuse_input = "abcdefghijkl".into();
+        c.client_component(600);
+        let count = allocations(|| {
+            for cycle in 0..1000 {
+                c.loop_cycle = cycle;
+                c.client_component(600);
+            }
+        });
+        assert_eq!(count, 0, "{revision:?} warmed report draws must reuse text");
+        assert_eq!(c.if_(600).unwrap().text, "abcdefghijkl ");
+        c.loop_cycle = 0;
+        c.client_component(600);
+        assert_eq!(c.if_(600).unwrap().text, "abcdefghijkl|");
+    }
+}

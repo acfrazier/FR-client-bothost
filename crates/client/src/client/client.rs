@@ -7828,7 +7828,8 @@ impl Client {
             }
         } else if client_code == CC_REPORT_INPUT {
             // J274 Client.java:2485-2491.
-            com.text = self.report_abuse_input.clone();
+            com.text.clear();
+            com.text.push_str(&self.report_abuse_input);
             com.text
                 .push(if self.loop_cycle % 20 < 10 { '|' } else { ' ' });
         } else if client_code == CC_DESIGN_PREVIEW {
