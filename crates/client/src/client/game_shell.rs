@@ -21,7 +21,6 @@ pub struct GameShell {
     /// Java `idleCycles`. Mouse/key entrypoints zero this; the 289 game loop
     /// emits IDLE_TIMER above 4500. Host input-class sends may zero it too.
     pub idle_cycles: u32,
-    pub(crate) telemetry_289: bool,
     pub(crate) ground_trace: Option<super::ground_trace_289::GroundTrace>,
     pub(crate) mouse_samples:
         Option<std::sync::Arc<std::sync::Mutex<super::mouse_recorder_289::MouseSamples>>>,
@@ -70,7 +69,6 @@ impl GameShell {
             mouse_y: -1,
             focused: true,
             idle_cycles: 0,
-            telemetry_289: false,
             ground_trace: None,
             mouse_samples: None,
             mouse_button: 0,
@@ -127,12 +125,7 @@ impl GameShell {
             trace.record_down(button, x, y);
         }
         self.idle_cycles = 0;
-        // Primary Applet_Sub1:349-352 latches click coordinates separately;
-        // only move/drag/exit changes the recorder pointer. Preserve R274.
-        if !self.telemetry_289 {
-            self.mouse_x = x;
-            self.mouse_y = y;
-        }
+        // J274 GameShell.java:294-360 latches clicks separately from mouse motion.
         self.mouse_button = button;
         self.next_mouse_click_button = button;
         self.next_mouse_click_x = x;
@@ -152,7 +145,7 @@ impl GameShell {
     /// Primary Applet_Sub1:536-550. Blur releases held keys, not queued text.
     pub fn apply_focus(&mut self, focused: bool) {
         self.focused = focused;
-        if !focused && self.telemetry_289 {
+        if !focused {
             self.key_held.fill(0);
         }
     }
@@ -166,10 +159,8 @@ impl GameShell {
     }
 
     fn publish_mouse(&mut self) {
-        if self.telemetry_289 {
-            let shared = self.mouse_samples.get_or_insert_with(Default::default);
-            shared.lock().unwrap().position = (self.mouse_x, self.mouse_y);
-        }
+        let shared = self.mouse_samples.get_or_insert_with(Default::default);
+        shared.lock().unwrap().position = (self.mouse_x, self.mouse_y);
     }
 
     /// One recorder observation. Window drivers normally use the scoped timer.
@@ -184,7 +175,6 @@ impl GameShell {
         self.publish_mouse();
         self.mouse_samples
             .as_ref()
-            .filter(|_| self.telemetry_289)
             .map(|shared| super::mouse_recorder_289::Recorder::start(shared.clone()))
     }
 

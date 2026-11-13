@@ -2096,8 +2096,6 @@ impl Client {
         let mut client = Client {
             shell: {
                 let mut shell = GameShell::new();
-                // J274 starts MouseTracking too; all supported revisions use this input path.
-                shell.telemetry_289 = true;
                 shell.ground_trace =
                     super::ground_trace_289::GroundTrace::from_env(construction.revision.is_289());
                 if construction.revision.is_289() {
@@ -3489,7 +3487,6 @@ impl Client {
             trace.complete("session_transfer");
         }
         self.shell.ground_trace = None;
-        self.shell.telemetry_289 = true;
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
         let mut out = std::mem::replace(&mut other.out, Packet::alloc_outbound(1));
@@ -12828,10 +12825,9 @@ impl Client {
         }
 
         if build.low_mem {
-            self.world
-                .fill_base_level_with_revision(self.minusedlevel, self.revision);
+            self.world.fill_base_level(self.minusedlevel);
         } else {
-            self.world.fill_base_level_with_revision(0, self.revision);
+            self.world.fill_base_level(0);
         }
 
         if self.map_build_region_377.is_some() {

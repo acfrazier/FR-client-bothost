@@ -28,7 +28,6 @@
 use crate::dash3d::{
     Decor, GroundDecor, GroundObject, GroundStamp, LocLayer, Occlude, Sprite, Square, Wall,
 };
-use crate::io::ClientRevision;
 
 pub const OCCLUDER_LEVELS: usize = 4;
 pub const MAX_OCCLUDERS: usize = 500;
@@ -178,13 +177,8 @@ impl World {
         self.last_sprite = None;
     }
 
-    pub fn fill_base_level(&mut self, level: i32) {
-        self.fill_base_level_with_revision(level, ClientRevision::R274);
-    }
-
     /// Materialize Java's empty-square painter dependencies for every revision.
-    /// Keep the revision at the build call without enlarging every client.
-    pub fn fill_base_level_with_revision(&mut self, level: i32, _revision: ClientRevision) {
+    pub fn fill_base_level(&mut self, level: i32) {
         self.min_level = level;
         // Java's base-level fills materialize empty squares even before geometry
         // has been added.
@@ -1251,41 +1245,23 @@ mod size_tests {
     }
 
     #[test]
-    fn r377_base_fill_creates_empty_squares_and_preserves_existing_contents() {
+    fn base_fill_creates_empty_squares_and_preserves_existing_contents() {
         let mut world = World::new(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4);
         let mut occupied = Square::new(1, 1, 2);
         occupied.draw_level = 7;
         world.squares[1][1][2] = Some(Box::new(occupied));
 
-        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
+        world.fill_base_level(1);
         assert_eq!(world.min_level, 1);
         assert!(world.squares[1].iter().flatten().all(Option::is_some));
         assert!(world.squares[0].iter().flatten().all(Option::is_none));
         assert_eq!(world.square(1, 1, 2).unwrap().draw_level, 7);
 
-        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
+        world.fill_base_level(1);
         assert_eq!(world.square(1, 1, 2).unwrap().draw_level, 7);
         world.reset_map();
-        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
+        world.fill_base_level(1);
         assert!(world.squares[1].iter().flatten().all(Option::is_some));
-    }
-
-    #[test]
-    fn explicit_r274_and_r289_base_fill_materialize_empty_squares() {
-        for revision in [
-            crate::io::ClientRevision::R274,
-            crate::io::ClientRevision::R289,
-        ] {
-            let mut world = World::new(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4);
-            world.fill_base_level_with_revision(1, revision);
-            assert_eq!(world.min_level, 1);
-            assert!(world.squares.iter().enumerate().all(|(level, tiles)| {
-                tiles
-                    .iter()
-                    .flatten()
-                    .all(|square| square.is_some() == (level == 1))
-            }));
-        }
     }
 }
 
