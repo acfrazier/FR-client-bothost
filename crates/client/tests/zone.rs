@@ -607,7 +607,10 @@ fn loc_anim_wall_decor_uses_tile_xz() {
     assert_eq!(decor.anim_shape, 4);
     assert_eq!(decor.anim_angle, 0);
     // J274 Client.java:5606-5610,5626 keeps all four tile heights distinct.
-    assert_eq!((decor.h_sw, decor.h_se, decor.h_ne, decor.h_nw), (100, 200, 300, 400));
+    assert_eq!(
+        (decor.h_sw, decor.h_se, decor.h_ne, decor.h_nw),
+        (100, 200, 300, 400)
+    );
     let mut rw = RenderWorld::new();
     rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 2, 5);
     let model = rw
@@ -707,10 +710,7 @@ fn loc_anim_out_of_range_shape_does_not_panic() {
 #[test]
 fn loc_anim_rejects_the_103_edge_like_java() {
     let _r = Renderer::new(false);
-    for (zone_x, zone_z, tile, x, z) in [
-        (96, 48, 0x73, 103, 51),
-        (48, 96, 0x37, 51, 103),
-    ] {
+    for (zone_x, zone_z, tile, x, z) in [(96, 48, 0x73, 103, 51), (48, 96, 0x37, 51, 103)] {
         let mut c = client();
         c.ingame = true;
         c.zone_update_x = zone_x;
