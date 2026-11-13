@@ -9001,6 +9001,10 @@ impl Client {
                 for npc in self.npc.iter_mut().flatten() {
                     npc.primary_anim = -1;
                 }
+                // Java keeps localPlayer in players[]; Rust stores a separate copy.
+                if let Some(local) = self.local_player.as_mut() {
+                    local.primary_anim = -1;
+                }
                 self.ptype = -1;
             }
 
@@ -10533,15 +10537,13 @@ impl Client {
                 let shape = info >> 2;
                 let rotate = info & 0x3;
 
-                // TS yields `undefined` for shape >= table length; skip the
-                // apply instead of panicking on the index. The +1 height
-                // reads need x+1/z+1 inside groundh (sized SIZE+1), so the
-                // same 0..SIZE bounds guard covers them.
+                // J274 Client.java:5606 requires x,z < 103 before reading the
+                // four corner heights.
                 if shape < LOC_SHAPE_TO_LAYER.len() as i32
                     && x >= 0
                     && z >= 0
-                    && x < BuildArea::SIZE
-                    && z < BuildArea::SIZE
+                    && x < BuildArea::SIZE - 1
+                    && z < BuildArea::SIZE - 1
                 {
                     let layer = LOC_SHAPE_TO_LAYER[shape as usize];
                     let level = self.minusedlevel as usize;
@@ -10576,9 +10578,9 @@ impl Client {
                                 decor.anim_seq = seq;
                                 decor.anim_shape = 4;
                                 decor.anim_angle = 0;
-                                // [sic] TS passes heightNE in the SE slot.
+                                // J274 Client.java:5607-5610,5626 keeps each corner.
                                 decor.h_sw = height_sw;
-                                decor.h_se = height_ne;
+                                decor.h_se = height_se;
                                 decor.h_ne = height_ne;
                                 decor.h_nw = height_nw;
                                 self.world.bump_loc_stamp(

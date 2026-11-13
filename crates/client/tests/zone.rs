@@ -589,6 +589,10 @@ fn loc_anim_wall_decor_uses_tile_xz() {
     c.scene_state = 2;
     c.ingame = true;
     c.zone_update_x = 0;
+    c.groundh[0][2][5] = 100;
+    c.groundh[0][3][5] = 200;
+    c.groundh[0][3][6] = 300;
+    c.groundh[0][2][6] = 400;
     c.zone_update_z = 0;
     c.world
         .set_decor(0, 2, 5, 0, 0, 0, 0x40000000, 0, 0, 0, 0, 0, 0, 0);
@@ -602,6 +606,8 @@ fn loc_anim_wall_decor_uses_tile_xz() {
     assert_eq!(decor.anim_seq, 0);
     assert_eq!(decor.anim_shape, 4);
     assert_eq!(decor.anim_angle, 0);
+    // J274 Client.java:5606-5610,5626 keeps all four tile heights distinct.
+    assert_eq!((decor.h_sw, decor.h_se, decor.h_ne, decor.h_nw), (100, 200, 300, 400));
     let mut rw = RenderWorld::new();
     rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 2, 5);
     let model = rw
@@ -696,6 +702,33 @@ fn loc_anim_out_of_range_shape_does_not_panic() {
     assert!(c.ingame);
     // The out-of-range shape skipped the apply: no anim override recorded.
     assert_eq!(c.world.get_wall(0, 1, 1).unwrap().anim_seq, -1);
+}
+
+#[test]
+fn loc_anim_rejects_the_103_edge_like_java() {
+    let _r = Renderer::new(false);
+    for (zone_x, zone_z, tile, x, z) in [
+        (96, 48, 0x73, 103, 51),
+        (48, 96, 0x37, 51, 103),
+    ] {
+        let mut c = client();
+        c.ingame = true;
+        c.zone_update_x = zone_x;
+        c.zone_update_z = zone_z;
+        c.world
+            .set_decor(0, x, z, 0, 0, 0, 0x40000000, 0, 0, 0, 0, 0, 0, 0);
+        let mut p = Packet::alloc(0);
+        p.p1(tile);
+        p.p1(0x10); // shape 4 → WALL_DECOR
+        p.p2(0);
+        p.pos = 0;
+        c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+        assert_eq!(
+            c.world.get_decor(0, x, z).unwrap().anim_seq,
+            -1,
+            "J274 Client.java:5606 accepts only x,z < 103"
+        );
+    }
 }
 
 /// No wall on the tile → LOC_ANIM is a no-op (bytes consumed, no panic).
