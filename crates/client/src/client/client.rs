@@ -6520,7 +6520,7 @@ impl Client {
     }
 
     fn apply_varp_289(&mut self, id: i32, value: i32) -> R289Publication {
-        let changed = self.var.get(id as usize).copied() != Some(value);
+        let changed = self.var.get(id as usize).copied().unwrap_or(0) != value;
         grow_write(&mut self.var_serv, id, value);
         if changed {
             grow_write(&mut self.var, id, value);
@@ -6542,7 +6542,7 @@ impl Client {
             let Some(&value) = self.var_serv.get(i) else {
                 continue;
             };
-            if self.var.get(i).copied() != Some(value) {
+            if self.var.get(i).copied().unwrap_or(0) != value {
                 grow_write(&mut self.var, i as i32, value);
                 self.client_var(i as i32);
                 changed = true;

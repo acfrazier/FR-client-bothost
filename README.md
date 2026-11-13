@@ -92,6 +92,8 @@ Interface animation resets recurse only through type-1 children in all
 revisions. Type-0 nested layers retain their descendant animation state.
 The 289 open-interface handlers request redraws only for the areas that
 Java redraws. An already-closed side or chat layer adds no redraw request.
+Unwritten varps have Java's implicit zero value. Receiving or synchronizing
+zero does not change settings or request a redraw.
 
 ## Tests
 
