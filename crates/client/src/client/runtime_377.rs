@@ -1172,49 +1172,11 @@ impl Client {
             heights[x_index][z_index + 1],
         );
         let layer = LOC_SHAPE_TO_LAYER[shape as usize];
-        let loop_cycle = self.loop_cycle;
         // The shared renderer materialises each existing scene slot after its
         // stamp changes. Record only decoded animation state, never legacy bytes.
         match layer {
             LocLayer::WALL => {
-                if let Some(wall) = self.world.get_wall_mut(self.minusedlevel, x, z) {
-                    if shape == crate::dash3d::LocShape::WALL_L {
-                        wall.wall_model2_377 = Some(crate::dash3d::wall::WallModel2State377 {
-                            sequence: Some(sequence),
-                            angle: (angle + 1) & 0x3,
-                            h_sw: sw,
-                            h_se: se,
-                            h_ne: ne,
-                            h_nw: nw,
-                            start_cycle: loop_cycle,
-                        });
-                    } else if wall.anim_seq == -1
-                        && wall.wall_model2_377.is_none()
-                        && (wall.typecode2 & 0x1f) == crate::dash3d::LocShape::WALL_L
-                    {
-                        // Before a non-2 packet replaces the first model,
-                        // retain the original static second model (Java
-                        // field1538), including placement-time heights.
-                        let info = wall.typecode2 & 0xff;
-                        wall.wall_model2_377 = Some(crate::dash3d::wall::WallModel2State377 {
-                            sequence: None,
-                            angle: (((info >> 6) + 1) & 0x3),
-                            h_sw: wall.h_sw,
-                            h_se: wall.h_se,
-                            h_ne: wall.h_ne,
-                            h_nw: wall.h_nw,
-                            start_cycle: 0,
-                        });
-                    }
-                    wall.anim_seq = sequence;
-                    wall.anim_shape = shape;
-                    wall.anim_angle = angle;
-                    wall.h_sw = sw;
-                    wall.h_se = se;
-                    wall.h_ne = ne;
-                    wall.h_nw = nw;
-                    self.world.bump_loc_stamp(self.minusedlevel, x, z, layer);
-                }
+                self.animate_wall(x, z, shape, angle, sequence, (sw, se, ne, nw));
             }
             LocLayer::WALL_DECOR => {
                 if let Some(decor) = self.world.get_decor_mut(self.minusedlevel, x, z) {
@@ -1254,6 +1216,57 @@ impl Client {
             }
             _ => unreachable!("validated location shape"),
         }
+    }
+    pub(super) fn animate_wall(
+        &mut self,
+        x: i32,
+        z: i32,
+        shape: i32,
+        angle: i32,
+        sequence: i32,
+        heights: (i32, i32, i32, i32),
+    ) {
+        let level = self.minusedlevel;
+        let loop_cycle = self.loop_cycle;
+        let (sw, se, ne, nw) = heights;
+        let Some(wall) = self.world.get_wall_mut(level, x, z) else {
+            return;
+        };
+
+        if shape == crate::dash3d::LocShape::WALL_L {
+            wall.wall_model2_state = Some(crate::dash3d::wall::WallModel2State {
+                sequence: Some(sequence),
+                angle: (angle + 1) & 0x3,
+                h_sw: sw,
+                h_se: se,
+                h_ne: ne,
+                h_nw: nw,
+                start_cycle: loop_cycle,
+            });
+        } else if wall.anim_seq == -1
+            && wall.wall_model2_state.is_none()
+            && (wall.typecode2 & 0x1f) == crate::dash3d::LocShape::WALL_L
+        {
+            // Preserve the original model2, including placement-time heights.
+            let info = wall.typecode2 & 0xff;
+            wall.wall_model2_state = Some(crate::dash3d::wall::WallModel2State {
+                sequence: None,
+                angle: (((info >> 6) + 1) & 0x3),
+                h_sw: wall.h_sw,
+                h_se: wall.h_se,
+                h_ne: wall.h_ne,
+                h_nw: wall.h_nw,
+                start_cycle: 0,
+            });
+        }
+        wall.anim_seq = sequence;
+        wall.anim_shape = shape;
+        wall.anim_angle = angle;
+        wall.h_sw = sw;
+        wall.h_se = se;
+        wall.h_ne = ne;
+        wall.h_nw = nw;
+        self.world.bump_loc_stamp(level, x, z, LocLayer::WALL);
     }
 
     fn apply_players_377(&mut self, mut info: PlayerInfo377<'_>) -> R289Publication {
@@ -1674,7 +1687,7 @@ fn apply_appearance_377(
     // The appearance cursor reads g1b; ObjType.team is decoded with g1.
     player.pk_icon_377 = appearance.head_icon as i8;
     player.prayer_icon_377 = appearance.skull_icon as i8;
-    player.team_377 = 0;
+    player.team = 0;
     for item in appearance.equipment.iter().flatten().copied() {
         let Some(item_id) = item
             .checked_sub(512)
@@ -1684,7 +1697,7 @@ fn apply_appearance_377(
         };
         if let Some(obj) = cache.objs.get(item_id) {
             if obj.team != 0 {
-                player.team_377 = obj.team as u8;
+                player.team = obj.team as u8;
             }
         }
     }
@@ -1799,7 +1812,7 @@ fn hit_377(
 mod tests {
     use super::*;
 
-    fn client_with_cache(cache: Cache) -> Client {
+    fn client_with_revision(cache: Cache, revision: ClientRevision) -> Client {
         let mut client = Client::from_shared_with_revision(
             ClientConfig {
                 host: "127.0.0.1".into(),
@@ -1811,11 +1824,15 @@ mod tests {
             Arc::new(cache),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
-            ClientRevision::R377,
+            revision,
         );
         client.ingame = true;
         client.local_player = Some(ClientPlayer::default());
         client
+    }
+
+    fn client_with_cache(cache: Cache) -> Client {
+        client_with_revision(cache, ClientRevision::R377)
     }
 
     fn client() -> Client {
@@ -1865,7 +1882,7 @@ mod tests {
         };
         let mut player = ClientPlayer {
             headicons: u8::MAX,
-            team_377: 77,
+            team: 77,
             ..ClientPlayer::default()
         };
 
@@ -1874,7 +1891,7 @@ mod tests {
         assert_eq!(player.headicons, 0);
         assert_eq!(player.pk_icon_377, -1);
         assert_eq!(player.prayer_icon_377, 8);
-        assert_eq!(player.team_377, 9);
+        assert_eq!(player.team, 9);
         assert_eq!(&player.appearance[..4], &[512, 513, 514, 65_535]);
     }
 
@@ -1912,7 +1929,7 @@ mod tests {
         apply_appearance_377(&mut player, &appearance, &cache);
         assert_eq!(player.pk_icon_377, -128);
         assert_eq!(player.prayer_icon_377, 127);
-        assert_eq!(player.team_377, 255);
+        assert_eq!(player.team, 255);
     }
 
     #[test]
@@ -2782,13 +2799,13 @@ mod tests {
             client.doAction(0);
             assert_eq!(client.resumed_pause_button, side == -1 && chat == -1);
         }
-        // The existing 289 local-close path always clears the debounce.
+        // Java 289 also retains the debounce when no side/chat modal closes.
         let mut client = client();
         client.revision = crate::client::ClientRevision::R289;
         client.resumed_pause_button = true;
         client.menu_action[0] = crate::client::MiniMenuAction::CLOSE_BUTTON;
         client.doAction(0);
-        assert!(!client.resumed_pause_button);
+        assert!(client.resumed_pause_button);
     }
 
     #[test]
@@ -3448,8 +3465,8 @@ mod tests {
         let wall = client.world.get_wall(0, 12, 19).unwrap();
         assert_eq!(wall.anim_seq, 1);
         assert_eq!(
-            wall.wall_model2_377,
-            Some(crate::dash3d::wall::WallModel2State377 {
+            wall.wall_model2_state,
+            Some(crate::dash3d::wall::WallModel2State {
                 sequence: None,
                 angle: 1,
                 h_sw: 10,
@@ -3473,11 +3490,11 @@ mod tests {
             .world
             .get_wall(0, 12, 19)
             .unwrap()
-            .wall_model2_377
+            .wall_model2_state
             .expect("shape-2 packet records field1538");
         assert_eq!(
             previous,
-            crate::dash3d::wall::WallModel2State377 {
+            crate::dash3d::wall::WallModel2State {
                 sequence: Some(1),
                 angle: 0,
                 h_sw: 100,
@@ -3499,7 +3516,7 @@ mod tests {
 
         let wall = client.world.get_wall(0, 12, 19).unwrap();
         assert_eq!((wall.anim_seq, wall.anim_shape, wall.anim_angle), (2, 0, 1));
-        assert_eq!(wall.wall_model2_377, Some(previous));
+        assert_eq!(wall.wall_model2_state, Some(previous));
 
         let mut renderer = crate::render::RenderWorld::new();
         match renderer
@@ -3522,6 +3539,184 @@ mod tests {
             }
             _ => panic!("the retained second wall model must remain animated"),
         }
+    }
+
+    fn legacy_wall_animation_client(revision: ClientRevision) -> Client {
+        let mut cache = Cache::default();
+        cache.seqs.resize_with(8, Default::default);
+        let mut client = client_with_revision(cache, revision);
+        client.zone_update_x = 12;
+        client.zone_update_z = 19;
+        client.loop_cycle = 100;
+        client.groundh[0][12][19] = 100;
+        client.groundh[0][13][19] = 200;
+        client.groundh[0][13][20] = 300;
+        client.groundh[0][12][20] = 400;
+        client.world.set_wall(
+            0,
+            12,
+            19,
+            0,
+            1,
+            2,
+            100 << 14,
+            crate::dash3d::LocShape::WALL_L,
+            10,
+            20,
+            30,
+            40,
+        );
+        client
+    }
+
+    fn dispatch_legacy_wall_loc_anim(
+        client: &mut Client,
+        revision: ClientRevision,
+        shape: i32,
+        angle: i32,
+        sequence: i32,
+    ) {
+        let info = ((shape << 2) | angle) as u8;
+        let mut packet = Packet::new(vec![0, info, (sequence >> 8) as u8, sequence as u8]);
+        match revision {
+            ClientRevision::R274 => {
+                client.dispatch_packet(ServerProt::LOC_ANIM, &mut packet);
+            }
+            ClientRevision::R289 => {
+                let _ = client.dispatch_packet_289(ServerProt289::ZONE_LOC_ANIM, &mut packet);
+            }
+            ClientRevision::R377 => unreachable!("this helper exercises legacy revisions"),
+        }
+        assert_eq!(packet.pos, 4);
+    }
+
+    fn assert_wall_anim(
+        model: Option<&crate::dash3d::SceneModel>,
+        sequence: usize,
+        shape: i32,
+        angle: i32,
+        heights: (i32, i32, i32, i32),
+        cycle: i32,
+    ) {
+        match model {
+            Some(crate::dash3d::SceneModel::LocAnim(anim)) => {
+                assert_eq!(anim.anim, Some(sequence));
+                assert_eq!((anim.shape, anim.angle), (shape, angle));
+                assert_eq!(
+                    (
+                        anim.height_sw,
+                        anim.height_se,
+                        anim.height_ne,
+                        anim.height_nw,
+                    ),
+                    heights
+                );
+                assert_eq!(anim.anim_cycle, cycle);
+            }
+            _ => panic!("wall model must resolve to ClientLocAnim"),
+        }
+    }
+
+    fn assert_legacy_wall_animation(revision: ClientRevision) {
+        let mut client = legacy_wall_animation_client(revision);
+        let static_model2 = std::sync::Arc::new(crate::dash3d::Model::default());
+        let mut renderer = crate::render::RenderWorld::new();
+        renderer.set_wall_model(
+            &client.world,
+            0,
+            12,
+            19,
+            None,
+            Some(crate::dash3d::SceneModel::Shared(std::sync::Arc::clone(
+                &static_model2,
+            ))),
+        );
+
+        dispatch_legacy_wall_loc_anim(
+            &mut client,
+            revision,
+            crate::dash3d::LocShape::WALL_STRAIGHT,
+            1,
+            4,
+        );
+        assert_wall_anim(
+            renderer.wall_model1(&client.world, &client.cache, client.loop_cycle, 0, 12, 19),
+            4,
+            crate::dash3d::LocShape::WALL_STRAIGHT,
+            1,
+            (100, 200, 300, 400),
+            100,
+        );
+        assert!(
+            matches!(
+                renderer.wall_model2(&client.world, &client.cache, client.loop_cycle, 0, 12, 19),
+                Some(crate::dash3d::SceneModel::Shared(model))
+                    if std::sync::Arc::ptr_eq(model, &static_model2)
+            ),
+            "a non-2 LOC_ANIM must replace only model1"
+        );
+
+        client.loop_cycle = 104;
+        client.groundh[0][12][19] = 500;
+        client.groundh[0][13][19] = 600;
+        client.groundh[0][13][20] = 700;
+        client.groundh[0][12][20] = 800;
+        dispatch_legacy_wall_loc_anim(&mut client, revision, crate::dash3d::LocShape::WALL_L, 3, 5);
+        assert_wall_anim(
+            renderer.wall_model1(&client.world, &client.cache, client.loop_cycle, 0, 12, 19),
+            5,
+            2,
+            7,
+            (500, 600, 700, 800),
+            104,
+        );
+        assert_wall_anim(
+            renderer.wall_model2(&client.world, &client.cache, client.loop_cycle, 0, 12, 19),
+            5,
+            2,
+            0,
+            (500, 600, 700, 800),
+            104,
+        );
+
+        client.loop_cycle = 108;
+        client.groundh[0][12][19] = 900;
+        client.groundh[0][13][19] = 1000;
+        client.groundh[0][13][20] = 1100;
+        client.groundh[0][12][20] = 1200;
+        dispatch_legacy_wall_loc_anim(
+            &mut client,
+            revision,
+            crate::dash3d::LocShape::WALL_STRAIGHT,
+            2,
+            6,
+        );
+        assert_wall_anim(
+            renderer.wall_model1(&client.world, &client.cache, client.loop_cycle, 0, 12, 19),
+            6,
+            crate::dash3d::LocShape::WALL_STRAIGHT,
+            2,
+            (900, 1000, 1100, 1200),
+            108,
+        );
+        assert_wall_anim(
+            renderer.wall_model2(&client.world, &client.cache, client.loop_cycle, 0, 12, 19),
+            5,
+            2,
+            0,
+            (500, 600, 700, 800),
+            104,
+        );
+    }
+
+    #[test]
+    fn r274_loc_anim_replaces_only_the_first_wall_model() {
+        assert_legacy_wall_animation(ClientRevision::R274);
+    }
+
+    #[test]
+    fn r289_loc_anim_replaces_only_the_first_wall_model() {
+        assert_legacy_wall_animation(ClientRevision::R289);
     }
 
     #[test]

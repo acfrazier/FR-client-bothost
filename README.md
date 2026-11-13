@@ -84,6 +84,38 @@ and optional rotated `data/config/private.pem`. Jag CRCs come from
 
 More CLI detail: [`crates/client-play/README.md`](crates/client-play/README.md).
 
+## Java dispatcher fidelity
+
+Revision 289 chat-head cache keys use Java's wrapping sum, including the
+transformed NPC offset. Different hair and hat appearances retain distinct keys.
+
+Interface animation resets recurse only through type-1 children in all
+revisions. Type-0 nested layers retain their descendant animation state.
+
+The 289 open-interface handlers request redraws only for the areas that
+Java redraws. An already-closed side or chat layer adds no redraw request.
+
+Unwritten varps have Java's implicit zero value. Receiving or synchronizing
+zero does not change settings or request a redraw.
+
+The 289 welcome components display last-login, unread-message and recovery
+state with Java's text and colours. Codes 650 and 655 share the login text.
+The address uses host-provided DNS text or the dotted IP without network IO.
+Moderator mute text follows the privilege level and mute option.
+
+LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
+as Java does.
+
+The 289 IF_SETOBJECT sentinel clears only the model type. The stored model
+ID and transform values remain unchanged.
+
+Brightness settings always invalidate object icons and request a frame
+redraw. Values outside 1–4 leave the brightness itself unchanged.
+
+Revision 289 decodes location opcode 77 into the sparse morph table also
+used by 377. Scene models and Examine select the current varbit form.
+Revision 274 retains its non-morphing location format.
+
 ## Tests
 
 ```bash
@@ -147,14 +179,19 @@ client without a second allocation or copy.
 original-engine synthetic fixture and Java-derived terrain/rotation expectations.
 These offline tests are not a live Recruitment Drive or rendered-pixel proof.
 
-Revision 377 uses separate Java-sized media tables: 100 slots each for
-mapscene and mapfunction images, with 72 and 70 images loaded. Its player
+Animated ground decorations use their placement angle in every revision.
+
+All revisions use 100-slot mapscene and mapfunction tables.
+The 274/289 loaders stop each table at its first missing image.
+Revision 377 keeps separate tables, with 72 and 70 images loaded. Its player
 PK, prayer and hint icons remain separate, and its minimap supports the
-fifth (team) dot and multiway overlay. The default 274 profile and the
-274/289 sprite paths keep their existing tables and behavior.
+fifth (team) dot and multiway overlay. The 274 minimap marks online friends.
+Revision 289 uses that friend sprite for matching nonzero teams, and different
+nonzero teams override friendship. Revision 377 retains friend-first priority.
 The PK and prayer indices use signed bytes. The equipment-team value and
 legacy headicon bitmask use unsigned bytes, preserving the existing inline
 player layout and all wire values.
+Revision 289 reads the last nonzero worn-object team after each appearance update.
 The 377 runtime validates `SET_MULTIWAY` before applying its unsigned byte
 to the Java multiway overlay state.
 
@@ -188,8 +225,10 @@ level presentation, not a modern floating XP overlay. Revision 377's
 inventory buttons 1–5 and item drag use Java's transformed packet bodies,
 including bank 10/X amounts, shop quantities, smithing and trade. Every
 Java 377 `OP*` menu packet has a revision-specific writer and dispatch;
-the 274/289 layouts and default revision stay unchanged. A cold 377 login
-clears the multiway overlay, while a reconnect preserves it as Java does.
+the 274/289 layouts and default revision stay unchanged. Every cold login
+clears the multiway flag and menu anticheat counters. Reconnect preserves them.
+
+All revisions send nonempty private-message text without a recipient-hash guard.
 
 Revision-377 public chat uses Java's case-insensitive colour and effect
 prefixes, then writes colour with `p1_alt2` and effect with `p1_alt1`.
@@ -259,11 +298,11 @@ four corner heights, wall/decoration shapes, angles, and strict edge bounds.
 A wall animation with packet shape other than 2 replaces only the first
 model. The second model keeps its static placement or earlier animation,
 including when multiple packets arrive before the first rendered frame.
-The 274/289 animation paths remain unchanged.
+The same wall replacement rule applies to revisions 274 and 289.
 
 The 377 local Close action unloads the side, chat and main layers, restoring
-decoded component defaults while retaining inventory contents. As Java 377
-does, only an open side or chat layer clears the Continue debounce.
+decoded component defaults while retaining inventory contents. In every revision,
+only an open side or chat layer clears the Continue debounce.
 `live_interactions_377::local_close_unloads_guide_text_and_resets_continue_377`
 checks this on a fresh account with real Guide dialogue and no state seeds.
 Run that ignored test by its exact name to avoid the longer tutorial proof.

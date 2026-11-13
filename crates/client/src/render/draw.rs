@@ -3617,7 +3617,7 @@ impl Renderer {
     /// functions, ground-object/npc/player dots, hint arrows, the flag
     /// marker, and the white local-player square. `minimap_state == 2`
     /// blackens the masked-out region and draws only the compass (TS
-    /// 11286-11299). R377 preserves the Java friend/team dot precedence.
+    /// 11286-11299). Friend and team precedence follows each revision.
     /// The `areaGame.setPixels()` target switches are no-ops (the `Pix2D`
     /// surface is bound here).
     pub(crate) fn minimap_draw(&mut self, client: &mut Client) {
@@ -3626,7 +3626,7 @@ impl Renderer {
         };
         let player_x = player.x;
         let player_z = player.z;
-        let local_team_377 = player.team_377;
+        let local_team = player.team;
         let Some(map) = self.area_map.as_mut() else {
             return;
         };
@@ -3772,8 +3772,8 @@ impl Renderer {
                 );
             }
         }
-        // Java 377 precedence is online friend, same nonzero team, then
-        // ordinary player dot. Legacy revisions keep their original dot.
+        // Java 289 lets nonzero teams override friendship. Java 377 gives
+        // online friends priority and uses a separate team sprite.
         for i in 0..client.player_count as usize {
             let player_id = client.player_ids[i];
             let Some(p) = client
@@ -3795,13 +3795,27 @@ impl Renderer {
                     });
                     if is_online_friend {
                         mapdots4
-                    } else if local_team_377 != 0 && p.team_377 == local_team_377 {
+                    } else if local_team != 0 && p.team == local_team {
                         mapdots5
                     } else {
                         mapdots3
                     }
                 } else {
-                    mapdots3
+                    let userhash = JString::to_userhash(p.name.as_deref().unwrap()) as i64;
+                    let friend = (0..client.friend_count.max(0) as usize).any(|friend| {
+                        client.friend_node_id[friend] != 0
+                            && client.friend_userhash[friend] == userhash
+                    });
+                    let friend = if client.revision().is_289() && local_team != 0 && p.team != 0 {
+                        local_team == p.team
+                    } else {
+                        friend
+                    };
+                    if friend {
+                        mapdots4
+                    } else {
+                        mapdots3
+                    }
                 };
                 minimap_draw_dot(
                     &mut surface,
@@ -4487,9 +4501,8 @@ impl Renderer {
     }
 
     /// `animateInterface` from client-ts (10552): advance the animation of
-    /// `id`'s children by `delta`, recursing `TYPE_LAYER` children (the
-    /// layer recursion is 0, not TS `type === 1`, matching
-    /// `if_anim_reset`). A `TYPE_MODEL` child with a model anim selects the
+    /// `id`'s children by `delta`, recursing `TYPE_LAYER` children.
+    /// A `TYPE_MODEL` child with a model anim selects the
     /// active/inactive seq (`get_if_active` picks `model_anim2` else
     /// `model_anim`), adds `delta` to `anim_cycle`, and steps `anim_frame`
     /// while the cycle exceeds the frame delay, wrapping with `loops` (TS

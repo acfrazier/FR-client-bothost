@@ -65,7 +65,7 @@ fn player(name: &str, x: i32, z: i32, team: u8) -> ClientPlayer {
         },
         ready: true,
         name: Some(name.to_string()),
-        team_377: team,
+        team,
         ..ClientPlayer::default()
     }
 }
@@ -88,7 +88,7 @@ fn player_dot_client(revision: ClientRevision) -> Client {
             z: 3200,
             ..Default::default()
         },
-        team_377: 42,
+        team: 42,
         ..ClientPlayer::default()
     });
     client.player_count = 3;
@@ -111,6 +111,7 @@ fn minimap_377_uses_friend_then_team_then_ordinary_dots() {
     let mut renderer_377 = renderer();
     renderer_377.media = media.clone();
     let mut client_377 = player_dot_client(ClientRevision::R377);
+    client_377.players[0].as_mut().unwrap().team = 7;
     // Production `prepare_game` sizes the scanline masks before this draw.
     renderer_377.build_minimap_masks(&mut client_377);
     renderer_377.minimap_draw(&mut client_377);
@@ -118,17 +119,42 @@ fn minimap_377_uses_friend_then_team_then_ordinary_dots() {
     assert_eq!(pixel(pixels_377, 172, 103, 79), 0x333333);
     assert_eq!(pixel(pixels_377, 172, 108, 79), 0x444444);
     assert_eq!(pixel(pixels_377, 172, 113, 79), 0x222222);
+}
 
+#[test]
+fn fidelity_b1_legacy_minimap_uses_userhash_and_289_team_override() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let mut renderer_legacy = renderer();
-        renderer_legacy.media = media.clone();
-        let mut client_legacy = player_dot_client(revision);
-        renderer_legacy.build_minimap_masks(&mut client_legacy);
-        renderer_legacy.minimap_draw(&mut client_legacy);
-        let pixels_legacy = &renderer_legacy.area_map.as_ref().unwrap().pixels;
-        assert_eq!(pixel(pixels_legacy, 172, 103, 79), 0x222222);
-        assert_eq!(pixel(pixels_legacy, 172, 108, 79), 0x222222);
-        assert_eq!(pixel(pixels_legacy, 172, 113, 79), 0x222222);
+        for (online, local_team, remote_team, expected_friend) in [
+            (true, 0, 0, true),
+            (false, 0, 0, false),
+            (false, 42, 42, true),
+            (true, 42, 7, false),
+            (true, 0, 7, true),
+            (true, 42, 0, true),
+        ] {
+            let mut client = player_dot_client(revision);
+            client.player_count = 1;
+            client.local_player.as_mut().unwrap().team = local_team;
+            client.players[0].as_mut().unwrap().team = remote_team;
+            client.friend_userhash[0] = crate::util::JString::to_userhash("friend") as i64;
+            client.friend_username[0] = "Not the displayed name".into();
+            client.friend_node_id[0] = if online { 301 } else { 0 };
+            let mut renderer = renderer();
+            renderer.media = dot_media();
+            renderer.build_minimap_masks(&mut client);
+            renderer.minimap_draw(&mut client);
+            let friend = if revision.is_289() {
+                expected_friend
+            } else {
+                online
+            };
+            let expected = if friend { 0x333333 } else { 0x222222 };
+            assert_eq!(
+                pixel(&renderer.area_map.as_ref().unwrap().pixels, 172, 103, 79),
+                expected,
+                "{revision:?}: online={online}, local={local_team}, remote={remote_team}"
+            );
+        }
     }
 }
 

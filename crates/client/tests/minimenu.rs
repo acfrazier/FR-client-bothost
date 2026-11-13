@@ -6,11 +6,12 @@
 // 127.0.0.1 is refused instantly).
 use std::sync::Arc;
 
-use client::client::{Client, ClientConfig, MiniMenuAction};
+use client::client::{Client, ClientConfig, ClientRevision, MiniMenuAction};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
-use client::config::{LocType, NpcType, ObjType};
+use client::config::{Cache, LocType, NpcType, ObjType};
 use client::dash3d::{ClientEntity, ClientNpc, ClientObj, ClientPlayer};
 use client::datastruct::LinkList;
+use client::io::{synthetic_jag, JagFile};
 use client::render::Renderer;
 
 fn client() -> Client {
@@ -21,6 +22,50 @@ fn client() -> Client {
         members: true,
         lowmem: false,
     })
+}
+
+fn client_for(revision: ClientRevision) -> Client {
+    Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        revision,
+    )
+}
+
+fn multiloc_cache() -> Cache {
+    fn named_loc(name: &str) -> Vec<u8> {
+        let mut data = vec![2];
+        data.extend_from_slice(name.as_bytes());
+        data.extend_from_slice(&[10, 0]);
+        data
+    }
+
+    let mut root = vec![77, 0, 0, 2, 0, 1, 0, 2, 0xff, 0xff, 2];
+    root.extend_from_slice(b"Root after opcode 77");
+    root.extend_from_slice(&[10, 0]);
+    let records = [root, named_loc("Closed form"), named_loc("Open form")];
+    let mut loc_data = Vec::new();
+    let mut loc_index = Vec::new();
+    loc_data.extend_from_slice(&(records.len() as u16).to_be_bytes());
+    loc_index.extend_from_slice(&(records.len() as u16).to_be_bytes());
+    for record in &records {
+        loc_index.extend_from_slice(&(record.len() as u16).to_be_bytes());
+        loc_data.extend_from_slice(record);
+    }
+    let varbit_data = [0, 1, 1, 0, 0, 1, 2, 0];
+    let varp_data = [0, 1, 0];
+    let jag = synthetic_jag(&[
+        ("loc.dat", loc_data.as_slice()),
+        ("loc.idx", loc_index.as_slice()),
+        ("varbit.dat", &varbit_data),
+        ("varp.dat", &varp_data),
+    ]);
+    Cache::unpack(&JagFile::new(jag))
 }
 
 #[test]
@@ -195,6 +240,7 @@ fn add_world_options_loc_examine_from_pick() {
             .push(LocType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().locs[1].name = "Tree".into();
+    Arc::get_mut(&mut c.cache).unwrap().locs[1].id = type_id;
     Arc::get_mut(&mut c.cache).unwrap().locs[1].op =
         vec![Some("Chop".into()), None, None, None, None];
     c.world
@@ -215,7 +261,46 @@ fn add_world_options_loc_examine_from_pick() {
         .iter()
         .position(|&a| a == MiniMenuAction::OP_LOC6)
         .unwrap();
-    assert_eq!(c.menu_param_a[examine], typecode);
+    assert_eq!(c.menu_param_a[examine], type_id << 14);
+}
+
+#[test]
+fn r289_loc_opcode_77_consumes_payload_and_resolves_varbit_forms() {
+    let cache = multiloc_cache();
+
+    assert_eq!(cache.locs[0].name, "Root after opcode 77");
+    assert!(cache.loc_has_morph(0));
+    assert!(!cache.loc_has_morph(1));
+    assert_eq!(cache.resolve_loc(0, &[0]).unwrap().id, 1);
+    assert_eq!(cache.resolve_loc(0, &[2]).unwrap().id, 2);
+    assert!(cache.resolve_loc(0, &[4]).is_none());
+}
+
+#[test]
+fn r289_examine_uses_the_selected_multiloc_form() {
+    let _renderer = Renderer::new(false);
+    let mut c = client_for(ClientRevision::R289);
+    c.cache = Arc::new(multiloc_cache());
+    c.var.resize(1, 0);
+    c.var[0] = 2;
+    c.menu_num_entries = 1;
+
+    let (x, z) = (10, 12);
+    let root_id = 0;
+    let typecode = (2 << 29) | (root_id << 14) | (z << 7) | x;
+    c.pick_count = 1;
+    c.pick_typecodes[0] = typecode;
+    c.world
+        .add_scenery(0, x, z, 0, typecode, 0, 1, 1, 0, 0, 0, 0, 0);
+    assert!(c.world.type_code2(0, x, z, typecode) >= 0);
+
+    c.add_world_options();
+
+    let examine = (0..c.menu_num_entries as usize)
+        .find(|&i| c.menu_action[i] == MiniMenuAction::OP_LOC6)
+        .expect("Examine option");
+    assert_eq!(c.menu_option[examine], "Examine @cya@Open form");
+    assert_eq!(c.menu_param_a[examine], 2 << 14);
 }
 
 /// A picked npc (entity 1) lists its non-attack ops, then Attack with a

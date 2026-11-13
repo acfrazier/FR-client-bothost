@@ -297,3 +297,51 @@ fn warmed_inbound_decode_and_apply_allocation_gates_cover_each_revision() {
         eprintln!("{revision:?} inbound allocation baseline: {counts:?}");
     }
 }
+
+#[test]
+fn warmed_289_welcome_components_allocate_nothing() {
+    let mut c = client(ClientRevision::R289);
+    let codes = [613, 650, 651, 652, 653, 654, 655];
+    for code in codes {
+        c.set_iface(
+            code as usize,
+            IfType {
+                id: code,
+                client_code: code,
+                ..Default::default()
+            },
+        );
+    }
+    c.staffmodlevel = 1;
+    let draw = |c: &mut Client, pass: usize| {
+        let (login_days, recovery_days, messages, warning, mute) = [
+            (0, 0, 0, 0, true),
+            (1, 1, 1, 0, false),
+            (27, 27, 12345, 0, true),
+            (0, 200, 0, 0, false),
+            (1, 201, 1, 1, false),
+        ][pass % 5];
+        c.last_login_ip = 0xff020304u32 as i32;
+        c.days_since_login = login_days;
+        c.days_since_recovery_change = recovery_days;
+        c.last_login_message_count = messages;
+        c.members_warning = warning;
+        c.report_abuse_mute_option = mute;
+        for code in codes {
+            c.client_component(code);
+        }
+    };
+    for dns in [Some("a-long-hostname-for-the-login.example".into()), None] {
+        c.last_login_dns_display = dns;
+        for pass in 0..5 {
+            draw(&mut c, pass);
+        }
+        let count = allocations(|| {
+            for pass in 0..1000 {
+                draw(&mut c, pass);
+            }
+        });
+        assert_eq!(count, 0, "warmed 289 welcome draws must reuse text buffers");
+        assert_eq!(c.if_(651).unwrap().text, "1 unread message");
+    }
+}

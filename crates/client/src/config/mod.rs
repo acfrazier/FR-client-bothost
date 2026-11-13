@@ -24,7 +24,7 @@ pub use flo_type::FloType;
 pub use idk_type::IdkType;
 pub use if_type::{IfType, IfTypeMut};
 pub use if_type_377::{IfType377, InterfaceArchive377};
-pub use loc_type::LocType;
+pub use loc_type::{LocMorph, LocType};
 pub use npc_type::NpcType;
 pub use obj_type::ObjType;
 pub use seq_type::SeqType;
@@ -41,6 +41,8 @@ pub struct Cache {
     pub objs: Vec<ObjType>,
     pub npcs: Vec<NpcType>,
     pub locs: Vec<LocType>,
+    /// Sparse, location-ID-sorted morph records decoded by either cache loader.
+    pub loc_morphs: Vec<(usize, LocMorph)>,
     pub flos: Vec<FloType>,
     pub idks: Vec<IdkType>,
     pub seqs: Vec<SeqType>,
@@ -62,6 +64,7 @@ impl Cache {
     /// before spotanim, since `SpotType` links to loaded `SeqType`s).
     pub fn unpack(jag: &JagFile) -> Self {
         let seqs = SeqType::unpack(jag);
+        let (locs, loc_morphs) = LocType::unpack(jag);
         let mut spots = SpotType::unpack(jag);
         for spot in &mut spots {
             spot.seq =
@@ -70,7 +73,8 @@ impl Cache {
         Cache {
             objs: ObjType::unpack(jag),
             npcs: NpcType::unpack(jag),
-            locs: LocType::unpack(jag),
+            locs,
+            loc_morphs,
             flos: FloType::unpack(jag),
             idks: IdkType::unpack(jag),
             seqs,
@@ -115,5 +119,21 @@ impl Cache {
 
     pub fn varp(&self, id: usize) -> &VarpType {
         &self.varps[id]
+    }
+}
+#[cfg(test)]
+mod memory_tests {
+    use super::Cache;
+
+    #[test]
+    fn cache_layout_keeps_default_struct_headroom() {
+        // The shared sparse morph table adds one Vec handle (24 B on 64-bit).
+        let baseline = 10 * std::mem::size_of::<Vec<()>>() + std::mem::size_of::<Option<Box<()>>>();
+        let limit = baseline + 64;
+        let size = std::mem::size_of::<Cache>();
+        assert!(
+            size <= limit,
+            "Cache size {size} B exceeds {baseline} B baseline plus 64 B headroom ({limit} B)"
+        );
     }
 }

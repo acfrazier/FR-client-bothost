@@ -13,6 +13,7 @@
 //! zero through a full login + build + sim run.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
@@ -3783,6 +3784,16 @@ impl Client {
             self.tut_com_id = -1;
             self.tut_com_message = None;
             self.tut_flash_icon = -1;
+            self.in_multizone = 0;
+            self.oplogic1 = 0;
+            self.oplogic2 = 0;
+            self.oplogic3 = 0;
+            self.oplogic4 = 0;
+            self.oplogic5 = 0;
+            self.oplogic6 = 0;
+            self.oplogic7 = 0;
+            self.oplogic8 = 0;
+            self.oplogic9 = 0;
             self.minimap_level = -1;
             self.minimap_flag_x = 0;
             self.minimap_flag_z = 0;
@@ -6061,10 +6072,9 @@ impl Client {
         self.minimap_state = payload.g1();
     }
 
-    /// `ifAnimReset` from client-ts (10534): walk `id`'s children, zeroing
-    /// each child's `anim_frame`/`anim_cycle` and recursing `TYPE_LAYER`
-    /// children (the layer recursion is 0, not TS `type === 1`). Missing
-    /// children or missing child ids stop the walk.
+    /// Java's `ifAnimReset` resets direct children and recurses only into
+    /// type-1 children (274 Client.java:2017, 289 client.java:8824,
+    /// 377 Client.java:11544). Missing children stop the walk.
     pub fn if_anim_reset(&mut self, id: i32) {
         let Some(children) = self.if_(id as usize).and_then(|com| com.children.clone()) else {
             return;
@@ -6076,7 +6086,7 @@ impl Client {
             let Some(child) = self.if_(child_id as usize) else {
                 return;
             };
-            if child.r#type == ComponentType::TYPE_LAYER {
+            if child.r#type == ComponentType::TYPE_UNUSED {
                 self.if_anim_reset(child.id);
             }
             if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
@@ -6511,7 +6521,7 @@ impl Client {
     }
 
     fn apply_varp_289(&mut self, id: i32, value: i32) -> R289Publication {
-        let changed = self.var.get(id as usize).copied() != Some(value);
+        let changed = self.var.get(id as usize).copied().unwrap_or(0) != value;
         grow_write(&mut self.var_serv, id, value);
         if changed {
             grow_write(&mut self.var, id, value);
@@ -6533,7 +6543,7 @@ impl Client {
             let Some(&value) = self.var_serv.get(i) else {
                 continue;
             };
-            if self.var.get(i).copied() != Some(value) {
+            if self.var.get(i).copied().unwrap_or(0) != value {
                 grow_write(&mut self.var, i as i32, value);
                 self.client_var(i as i32);
                 changed = true;
@@ -6677,7 +6687,6 @@ impl Client {
                 if let Some(com) = self.iface_mut(component as usize) {
                     if object == 65535 {
                         com.model1_type = 0;
-                        com.model1_id = 0;
                     } else {
                         com.model1_type = 4;
                         com.model1_id = object;
@@ -6697,13 +6706,13 @@ impl Client {
                 let head = self.local_player.as_ref().map(|local| {
                     local
                         .transmog
-                        .map(|npc_id| npc_id as i32)
+                        .map(|npc_id| (npc_id as i32).wrapping_add(305419896))
                         .unwrap_or_else(|| {
-                            (local.appearance[8] as i32) << 6
-                                | (local.appearance[0] as i32) << 12
-                                | (local.colour[0] as i32) << 24
-                                | (local.colour[4] as i32) << 18
-                                | local.appearance[11] as i32
+                            (i32::from(local.colour[0]) << 24)
+                                .wrapping_add(i32::from(local.colour[4]) << 18)
+                                .wrapping_add(i32::from(local.appearance[0]) << 12)
+                                .wrapping_add(i32::from(local.appearance[8]) << 6)
+                                .wrapping_add(i32::from(local.appearance[11]))
                         })
                 });
                 if let (Some(com), Some(head)) = (self.iface_mut(component as usize), head) {
@@ -6714,33 +6723,41 @@ impl Client {
             R289InterfaceOperation::IfOpenChat(id) => {
                 self.if_anim_reset(id);
                 self.observe_main_modal_close();
+                if self.side_modal_id != -1 {
+                    self.redraw_side = true;
+                    self.redraw_icons = true;
+                }
                 self.chat_modal_id = id;
                 self.side_modal_id = -1;
                 self.main_modal_id = -1;
                 self.redraw_chat = true;
-                self.redraw_side = true;
-                self.redraw_icons = true;
                 self.resumed_pause_button = false;
             }
             R289InterfaceOperation::IfOpenMain(id) => {
                 self.if_anim_reset(id);
                 self.observe_main_modal_open();
+                if self.side_modal_id != -1 {
+                    self.redraw_side = true;
+                    self.redraw_icons = true;
+                }
+                if self.chat_modal_id != -1 || self.dialog_input_open {
+                    self.redraw_chat = true;
+                }
                 self.main_modal_id = id;
                 self.side_modal_id = -1;
                 self.chat_modal_id = -1;
                 self.dialog_input_open = false;
-                self.redraw_chat = true;
-                self.redraw_side = true;
-                self.redraw_icons = true;
                 self.resumed_pause_button = false;
             }
             R289InterfaceOperation::IfOpenMainSide { main, side } => {
                 self.observe_main_modal_open();
+                if self.chat_modal_id != -1 || self.dialog_input_open {
+                    self.redraw_chat = true;
+                }
                 self.main_modal_id = main;
                 self.side_modal_id = side;
                 self.chat_modal_id = -1;
                 self.dialog_input_open = false;
-                self.redraw_chat = true;
                 self.redraw_side = true;
                 self.redraw_icons = true;
                 self.resumed_pause_button = false;
@@ -6748,11 +6765,13 @@ impl Client {
             R289InterfaceOperation::IfOpenSide(id) => {
                 self.if_anim_reset(id);
                 self.observe_main_modal_close();
+                if self.chat_modal_id != -1 || self.dialog_input_open {
+                    self.redraw_chat = true;
+                }
                 self.side_modal_id = id;
                 self.main_modal_id = -1;
                 self.chat_modal_id = -1;
                 self.dialog_input_open = false;
-                self.redraw_chat = true;
                 self.redraw_side = true;
                 self.redraw_icons = true;
                 self.resumed_pause_button = false;
@@ -6813,7 +6832,6 @@ impl Client {
                 .unwrap_or(-1);
             if self.welcome_interface_id != -1 {
                 self.main_modal_id = self.welcome_interface_id;
-                self.redraw_frame = true;
             }
             self.report_abuse_input.clear();
             self.report_abuse_mute_option = false;
@@ -7832,6 +7850,107 @@ impl Client {
             } else {
                 com.graphic_name = self.idk_design_button2.clone().unwrap_or_default();
             }
+        } else if self.revision.is_289() {
+            // Java 289 client.java:4733-4818. Reuse the component's text
+            // buffer because these consumers run on every interface draw.
+            match client_code {
+                613 => {
+                    if self.staffmodlevel < 1 {
+                        com.text.clear();
+                    } else if self.report_abuse_mute_option {
+                        com.colour = 16711680;
+                        "Moderator option: Mute player for 48 hours: <ON>"
+                            .clone_into(&mut com.text);
+                    } else {
+                        com.colour = 16777215;
+                        "Moderator option: Mute player for 48 hours: <OFF>"
+                            .clone_into(&mut com.text);
+                    }
+                }
+                650 | 655 => {
+                    com.text.clear();
+                    if self.last_login_ip != 0 {
+                        com.text.push_str("You last logged in ");
+                        match self.days_since_login {
+                            0 => com.text.push_str("earlier today"),
+                            1 => com.text.push_str("yesterday"),
+                            days => write!(com.text, "{days} days ago").unwrap(),
+                        }
+                        com.text.push_str(" from: ");
+                        if let Some(dns) = &self.last_login_dns_display {
+                            com.text.push_str(dns);
+                        } else {
+                            write!(
+                                com.text,
+                                "{}",
+                                std::net::Ipv4Addr::from(self.last_login_ip as u32)
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+                651 => match self.last_login_message_count {
+                    0 => {
+                        "0 unread messages".clone_into(&mut com.text);
+                        com.colour = 16776960;
+                    }
+                    1 => {
+                        "1 unread message".clone_into(&mut com.text);
+                        com.colour = 65280;
+                    }
+                    count if count > 1 => {
+                        com.text.clear();
+                        write!(com.text, "{count} unread messages").unwrap();
+                        com.colour = 65280;
+                    }
+                    _ => {}
+                },
+                652 => match self.days_since_recovery_change {
+                    201 => {
+                        if self.members_warning == 1 {
+                            "@yel@This is a non-members world: @whi@Since you are a member we"
+                                .clone_into(&mut com.text);
+                        } else {
+                            com.text.clear();
+                        }
+                    }
+                    200 => {
+                        "You have not yet set any password recovery questions."
+                            .clone_into(&mut com.text);
+                    }
+                    days => {
+                        com.text.clear();
+                        match days {
+                            0 => com.text.push_str("Earlier today"),
+                            1 => com.text.push_str("Yesterday"),
+                            _ => write!(com.text, "{days} days ago").unwrap(),
+                        }
+                        com.text.push_str(" you changed your recovery questions");
+                    }
+                },
+                653 => {
+                    let text = match self.days_since_recovery_change {
+                        201 if self.members_warning == 1 => {
+                            "@whi@recommend you use a members world instead. You may use"
+                        }
+                        201 => "",
+                        200 => "We strongly recommend you do so now to secure your account.",
+                        _ => "If you do not remember making this change then cancel it immediately",
+                    };
+                    text.clone_into(&mut com.text);
+                }
+                654 => {
+                    let text = match self.days_since_recovery_change {
+                        201 if self.members_warning == 1 => {
+                            "@whi@this world but member benefits are unavailable whilst here."
+                        }
+                        201 => "",
+                        _ => "Do this from the 'account management' area on our front webpage",
+                    };
+                    text.clone_into(&mut com.text);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -7880,13 +7999,14 @@ impl Client {
             self.side_modal_id = -1;
             self.redraw_side = true;
             self.redraw_icons = true;
+            self.resumed_pause_button = false;
         }
         if self.chat_modal_id != -1 {
             self.chat_modal_id = -1;
             self.redraw_chat = true;
+            self.resumed_pause_button = false;
         }
         self.main_modal_id = -1;
-        self.resumed_pause_button = false;
     }
 
     /// `buildMinimenu` from Client.ts (2514-2599): rebuild the minimenu
@@ -10543,17 +10663,14 @@ impl Client {
                     // renderer's lazy cache re-resolves).
                     match layer {
                         LocLayer::WALL => {
-                            if let Some(wall) = self.world.get_wall_mut(self.minusedlevel, x, z) {
-                                wall.anim_seq = seq;
-                                wall.anim_shape = shape;
-                                wall.anim_angle = rotate;
-                                wall.h_sw = height_sw;
-                                wall.h_se = height_se;
-                                wall.h_ne = height_ne;
-                                wall.h_nw = height_nw;
-                                self.world
-                                    .bump_loc_stamp(self.minusedlevel, x, z, LocLayer::WALL);
-                            }
+                            self.animate_wall(
+                                x,
+                                z,
+                                shape,
+                                rotate,
+                                seq,
+                                (height_sw, height_se, height_ne, height_nw),
+                            );
                         }
                         LocLayer::WALL_DECOR => {
                             // `getDecor(level, z, x)` in the TS swaps its
@@ -11563,10 +11680,7 @@ impl Client {
                     let userhash = JString::to_userhash(&self.social_input) as i64;
                     self.del_friend(userhash);
                 }
-                if self.social_input_type == 3
-                    && !self.social_input.is_empty()
-                    && (self.revision.is_377() || self.social_userhash != 0)
-                {
+                if self.social_input_type == 3 && !self.social_input.is_empty() {
                     if self.revision.is_377() {
                         super::outbound_377::message_private_377(
                             &mut self.out,
@@ -12095,11 +12209,7 @@ impl Client {
                 if let Some(loc) = loc {
                     let loc_name = loc.name.clone();
                     let loc_ops = loc.op.clone();
-                    let examine_code = if self.revision().is_377() {
-                        loc.id << 14
-                    } else {
-                        typecode
-                    };
+                    let examine_code = loc.id << 14;
                     if self.use_mode == 1 {
                         let option =
                             format!("Use {} with @cya@{}", self.obj_selected_name, loc_name);
@@ -14233,17 +14343,18 @@ impl Client {
         }
         if clientcode == 1 {
             let brightness = match value {
-                1 => 0.9,
-                2 => 0.8,
-                3 => 0.7,
-                4 => 0.6,
-                _ => return,
+                1 => Some(0.9),
+                2 => Some(0.8),
+                3 => Some(0.7),
+                4 => Some(0.6),
+                _ => None,
             };
-            Pix3D::init_colour_table(brightness);
-            // The texture-palette half of the brightness change runs on the
-            // renderer (the texels are its state); defer it to the next
-            // `game_draw` via `pending_brightness`.
-            self.pending_brightness = Some(brightness);
+            if let Some(brightness) = brightness {
+                Pix3D::init_colour_table(brightness);
+                // The texture-palette half runs on the renderer, so defer
+                // it to the next `game_draw`.
+                self.pending_brightness = Some(brightness);
+            }
             ObjType::clear_sprite_cache();
             self.redraw_frame = true;
             return;

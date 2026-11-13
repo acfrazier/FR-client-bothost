@@ -67,8 +67,8 @@ pub struct ClientPlayer {
     pub pk_icon_377: i8,
     /// Java 377 signed prayer icon index (`field1670`); -1 means absent.
     pub prayer_icon_377: i8,
-    /// Java 377 nonzero equipment-team value (`field1688`).
-    pub team_377: u8,
+    /// Java 289/377 nonzero equipment-team value.
+    pub team: u8,
     pub appearance: [u16; 12],
     pub colour: [u16; 5],
     pub combat_level: i32,
@@ -115,7 +115,7 @@ impl Default for ClientPlayer {
             headicons: 0,
             pk_icon_377: -1,
             prayer_icon_377: -1,
-            team_377: 0,
+            team: 0,
             appearance: [0; 12],
             colour: [0; 5],
             combat_level: 0,

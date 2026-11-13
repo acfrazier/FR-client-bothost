@@ -1393,7 +1393,8 @@ fn cleanup_b_player_head_uses_transmog_and_malformed_frame_mutates_nothing_first
     c.psize = 2;
     let mut head = Packet::new(hex_bytes("0005"));
     c.handle_packet(ServerProt289::IF_SETPLAYERHEAD, &mut head);
-    assert_eq!(c.if_(5).unwrap().model1_id, 321);
+    // Java 289 client.java:3190 includes the transformed-NPC cache offset.
+    assert_eq!(c.if_(5).unwrap().model1_id, 305419896 + 321);
     let before = c.ifaces_mut[5].as_ref().unwrap().text.clone();
     c.psize = 3;
     let mut malformed = Packet::new(hex_bytes("000568"));

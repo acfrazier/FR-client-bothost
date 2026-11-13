@@ -299,9 +299,9 @@ impl Client {
         }
     }
 
-    /// Reset the Java input fields and menu counters after cold login acceptance.
+    /// Reset the Java input fields after cold login acceptance.
     ///
-    /// Java: `Client.java:2742-2746,2761-2762,2821-2841`.
+    /// Java: `Client.java:2742-2746,2761-2762`.
     pub(crate) fn cold_login_input_377(&mut self) {
         self.outbound.r377_mut().last_click_time = 0;
         self.outbound.r377_mut().duplicates = 0;
@@ -311,16 +311,6 @@ impl Client {
         if let Some(shared) = &self.shell.mouse_samples {
             shared.lock().unwrap().samples.clear();
         }
-        self.oplogic1 = 0;
-        self.oplogic2 = 0;
-        self.oplogic3 = 0;
-        self.oplogic4 = 0;
-        self.oplogic5 = 0;
-        self.oplogic6 = 0;
-        self.oplogic7 = 0;
-        self.oplogic8 = 0;
-        self.oplogic9 = 0;
-        self.in_multizone = 0;
     }
 
     fn mouse_packet_377(&mut self) {
@@ -2262,7 +2252,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_anticheat_cold_login_resets_all_shared_counters() {
+    fn input_reset_leaves_shared_cold_login_counters_to_acceptance() {
         let mut client = client_with_revision(ClientRevision::R377);
         client.oplogic1 = 119;
         client.oplogic2 = 61;
@@ -2274,6 +2264,8 @@ mod tests {
         client.oplogic8 = 8;
         client.oplogic9 = 9;
         client.in_multizone = 1;
+        client.shell.focused = false;
+        client.shell.idle_cycles = 7;
         client.cold_login_input_377();
         assert_eq!(
             [
@@ -2287,9 +2279,13 @@ mod tests {
                 client.oplogic8,
                 client.oplogic9,
             ],
-            [0; 9]
+            [119, 61, 142, 83, 114, 6, 7, 8, 9]
         );
-        assert_eq!(client.in_multizone, 0);
+        assert_eq!(client.in_multizone, 1);
+        assert!(client.shell.focused);
+        assert_eq!(client.shell.idle_cycles, 0);
+        // The actual response-2 reset is shared by all revisions and covered
+        // by the real relog handshakes in tests/fidelity_b7.rs.
     }
 
     #[test]

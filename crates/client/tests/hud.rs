@@ -1145,16 +1145,19 @@ fn side_click_close_button_sends_close_modal() {
 }
 
 #[test]
-fn close_modal_clears_resumed_pause_button() {
+fn close_button_clears_pause_only_for_an_open_side_modal() {
     let _r = Renderer::new(false);
-    let mut c = client();
-    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
-    let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), button]);
-    c.resumed_pause_button = true;
-    click_side(&mut c, 560, 210);
-    assert_eq!(c.side_modal_id, -1);
-    assert!(!c.resumed_pause_button);
+    for modal_open in [false, true] {
+        let mut c = client();
+        let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+        let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
+        bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), button]);
+        c.side_modal_id = if modal_open { 1 } else { -1 };
+        c.resumed_pause_button = true;
+        click_side(&mut c, 560, 210);
+        assert_eq!(c.side_modal_id, -1);
+        assert_eq!(c.resumed_pause_button, !modal_open);
+    }
 }
 
 #[test]
@@ -1836,7 +1839,7 @@ fn animate_interface_advances_model_frame() {
 }
 
 #[test]
-fn if_anim_reset_zeros_nested_layer_child() {
+fn if_anim_reset_preserves_nested_layer_child() {
     let _r = Renderer::new(false);
     let mut c = client();
     let root = IfType {
@@ -1864,8 +1867,8 @@ fn if_anim_reset_zeros_nested_layer_child() {
     c.set_iface(3, model);
     c.set_iface_mut(3, model_mut);
     c.if_anim_reset(1);
-    assert_eq!(c.if_(3).unwrap().anim_frame, 0);
-    assert_eq!(c.if_(3).unwrap().anim_cycle, 0);
+    assert_eq!(c.if_(3).unwrap().anim_frame, 4);
+    assert_eq!(c.if_(3).unwrap().anim_cycle, 9);
 }
 
 #[test]

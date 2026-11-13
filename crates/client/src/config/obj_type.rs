@@ -58,8 +58,7 @@ pub struct ObjType {
     pub resizez: i32,
     pub ambient: i32,
     pub contrast: i32,
-    /// Client config code 115 (team cape). It is not used by the renderer,
-    /// but consuming it is required to keep the following fields aligned.
+    /// Client config code 115, used by player equipment teams.
     pub team: i32,
 }
 
