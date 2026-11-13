@@ -6723,33 +6723,41 @@ impl Client {
             R289InterfaceOperation::IfOpenChat(id) => {
                 self.if_anim_reset(id);
                 self.observe_main_modal_close();
+                if self.side_modal_id != -1 {
+                    self.redraw_side = true;
+                    self.redraw_icons = true;
+                }
                 self.chat_modal_id = id;
                 self.side_modal_id = -1;
                 self.main_modal_id = -1;
                 self.redraw_chat = true;
-                self.redraw_side = true;
-                self.redraw_icons = true;
                 self.resumed_pause_button = false;
             }
             R289InterfaceOperation::IfOpenMain(id) => {
                 self.if_anim_reset(id);
                 self.observe_main_modal_open();
+                if self.side_modal_id != -1 {
+                    self.redraw_side = true;
+                    self.redraw_icons = true;
+                }
+                if self.chat_modal_id != -1 || self.dialog_input_open {
+                    self.redraw_chat = true;
+                }
                 self.main_modal_id = id;
                 self.side_modal_id = -1;
                 self.chat_modal_id = -1;
                 self.dialog_input_open = false;
-                self.redraw_chat = true;
-                self.redraw_side = true;
-                self.redraw_icons = true;
                 self.resumed_pause_button = false;
             }
             R289InterfaceOperation::IfOpenMainSide { main, side } => {
                 self.observe_main_modal_open();
+                if self.chat_modal_id != -1 || self.dialog_input_open {
+                    self.redraw_chat = true;
+                }
                 self.main_modal_id = main;
                 self.side_modal_id = side;
                 self.chat_modal_id = -1;
                 self.dialog_input_open = false;
-                self.redraw_chat = true;
                 self.redraw_side = true;
                 self.redraw_icons = true;
                 self.resumed_pause_button = false;
@@ -6757,11 +6765,13 @@ impl Client {
             R289InterfaceOperation::IfOpenSide(id) => {
                 self.if_anim_reset(id);
                 self.observe_main_modal_close();
+                if self.chat_modal_id != -1 || self.dialog_input_open {
+                    self.redraw_chat = true;
+                }
                 self.side_modal_id = id;
                 self.main_modal_id = -1;
                 self.chat_modal_id = -1;
                 self.dialog_input_open = false;
-                self.redraw_chat = true;
                 self.redraw_side = true;
                 self.redraw_icons = true;
                 self.resumed_pause_button = false;
