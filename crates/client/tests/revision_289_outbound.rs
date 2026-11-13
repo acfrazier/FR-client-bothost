@@ -774,13 +774,19 @@ fn cycle5_counts_only_drawn_mode2_crosshairs() {
 }
 
 #[test]
-fn legacy_focus_keeps_existing_held_behavior() {
+fn r274_input_telemetry_captures_mouse_samples_and_focus() {
     let mut c = client(ClientRevision::R274);
+    c.mouse_tracked = true;
+    c.shell.apply_mouse_move(10, 20);
+    for _ in 0..40 {
+        c.shell.sample_mouse();
+    }
     c.shell.apply_key(true, 37, 1);
     c.shell.apply_focus(false);
-    assert_eq!(c.shell.key_held[1], 1);
+    assert_eq!(c.shell.key_held[1], 0);
     c.game_loop();
-    assert_eq!(c.out.pos, 0);
+    // J274 Client.java:9347-9405 sends the sampled move; :9449-9458 sends blur.
+    assert_eq!(&c.out.data()[..c.out.pos], &[222, 2, 0x0a, 0xb4, 73, 0]);
 }
 #[test]
 fn r274_event_packets_match_java_click_camera_and_focus_bytes() {

@@ -379,11 +379,15 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
         let n = s.read(&mut buf).unwrap();
         assert!(n > 0);
         assert_eq!(buf[0], 16); // cold login
-        s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
+        s.write_all(&[2, 0, 1]).unwrap(); // response 2, staff=0, mouseTrack=1
         s.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut mouse_header = [0u8; 2];
+        s.read_exact(&mut mouse_header).unwrap();
+        let mut mouse = vec![0u8; mouse_header[1] as usize];
+        s.read_exact(&mut mouse).unwrap();
         let mut click = [0u8; 5];
         s.read_exact(&mut click).unwrap();
-        click
+        (mouse, click)
     });
 
     let mut c = Client::new(ClientConfig {
@@ -440,6 +444,10 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     assert_eq!(c.use_mode, 0);
     assert_eq!(c.target_mode, 0);
     assert_eq!(c.wave_count, 0);
+    c.shell.apply_mouse_move(10, 20);
+    for _ in 0..40 {
+        c.shell.sample_mouse();
+    }
     c.shell.mouse_click_button = 1;
     c.shell.mouse_click_time = 2000;
     c.shell.mouse_click_x = 10;
@@ -475,7 +483,8 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
         r.image_title2.is_none(),
         "prepare_game must unload the title regions"
     );
-    let click = server.join().unwrap();
+    let (mouse, click) = server.join().unwrap();
+    assert_eq!(mouse, [0x0a, 0xb4], "cold login must retain 274 mouse telemetry");
     let packed = u32::from_be_bytes(click[1..5].try_into().unwrap());
     assert_eq!(packed >> 20, 40, "cold login resets previous-click time");
 }
