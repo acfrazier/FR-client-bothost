@@ -13356,9 +13356,10 @@ impl Client {
             return;
         }
         // TS 2191-2192: the scene/minimap pass after the inbound reads.
-        if self.revision.is_289() {
+        // Java 274 Client.java:9347-9458 sends the same input events as 289.
+        if !self.revision.is_377() {
             self.input_packets_289();
-        } else if self.revision.is_377() {
+        } else {
             self.input_packets_377();
         }
         // The SIM half runs here unconditionally — `check_scene` →

@@ -761,6 +761,27 @@ fn legacy_focus_keeps_existing_held_behavior() {
     c.game_loop();
     assert_eq!(c.out.pos, 0);
 }
+#[test]
+fn r274_event_packets_match_java_click_camera_and_focus_bytes() {
+    let mut c = client(ClientRevision::R274);
+    c.mouse_tracked = false;
+    c.shell.apply_focus(false);
+    c.shell.key_held[1] = 1;
+    c.orbit_camera_pitch = 0x123;
+    c.orbit_camera_yaw = 0x456;
+    c.shell.mouse_click_button = 2;
+    c.shell.mouse_click_x = 10;
+    c.shell.mouse_click_y = 20;
+    c.shell.mouse_click_time = 50;
+    c.last_outbound = Instant::now();
+
+    c.game_loop();
+
+    assert_eq!(
+        &c.out.data()[..c.out.pos],
+        &[20, 0, 0x18, 0x3b, 0xce, 53, 1, 0x23, 4, 0x56, 73, 0]
+    );
+}
 
 #[test]
 fn cycle4_input_poll_counts_calls_even_without_keys() {
