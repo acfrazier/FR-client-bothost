@@ -97,7 +97,7 @@ pub struct Media {
     pub mapdots2: Option<Pix32>,
     pub mapdots3: Option<Pix32>,
     pub mapdots4: Option<Pix32>,
-    /// `mapscene`/`mapfunction` sprites from client-ts (254-255): the
+    /// Java's 100-slot `mapscene`/`mapfunction` tables:
     /// minimap wall/scene icons.
     pub mapscene: Vec<Option<Pix8>>,
     pub mapfunction: Vec<Option<Pix32>>,
@@ -162,8 +162,8 @@ impl Media {
             mapdots2: None,
             mapdots3: None,
             mapdots4: None,
-            mapscene: vec![None; 50],
-            mapfunction: vec![None; 50],
+            mapscene: vec![None; 100],
+            mapfunction: vec![None; 100],
             sprites_377: None,
         }
     }
@@ -327,12 +327,17 @@ impl Media {
             if revision.is_377() {
                 media.sprites_377 = Some(Media377::depack(&jag));
             } else {
-                // Keep the pre-existing 274/289 table shape and load counts.
-                for i in 0..50 {
-                    media.mapscene[i] = Pix8::depack(&jag, "mapscene", i as i32);
+                for (i, slot) in media.mapscene.iter_mut().enumerate() {
+                    let Some(sprite) = Pix8::depack(&jag, "mapscene", i as i32) else {
+                        break;
+                    };
+                    *slot = Some(sprite);
                 }
-                for i in 0..50 {
-                    media.mapfunction[i] = Pix32::depack(&jag, "mapfunction", i as i32);
+                for (i, slot) in media.mapfunction.iter_mut().enumerate() {
+                    let Some(sprite) = Pix32::depack(&jag, "mapfunction", i as i32) else {
+                        break;
+                    };
+                    *slot = Some(sprite);
                 }
             }
 
@@ -365,5 +370,52 @@ impl Media {
         let mut surface = Pix2D::with_pixels(&mut area.pixels, area.width, area.height);
         sprite.quick_plot_sprite(&mut surface, 0, 0);
         Some(area)
+    }
+}
+
+#[cfg(test)]
+mod fidelity_tests {
+    use super::*;
+    use crate::io::synthetic_jag;
+
+    #[test]
+    fn fidelity_b10_legacy_loads_high_map_icons_and_retains_empty_tail() {
+        for count in [3, 51, 100, 101] {
+            let mut index = vec![0, 1, 0, 1, 2, 0x12, 0x34, 0x56];
+            for _ in 0..count {
+                index.extend([0, 0, 0, 1, 0, 1, 0]);
+            }
+            let mut data = vec![0, 0];
+            data.extend(std::iter::repeat_n(1, count));
+            let jag = synthetic_jag(&[
+                ("index.dat", &index),
+                ("mapscene.dat", &data),
+                ("mapfunction.dat", &data),
+            ]);
+            let dir =
+                std::env::temp_dir().join(format!("fidelity-b10-{}-{count}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("media"), jag).unwrap();
+            for revision in [ClientRevision::R274, ClientRevision::R289] {
+                let media = Media::depack(dir.to_str().unwrap(), revision);
+                assert_eq!(media.mapscene.len(), 100);
+                assert_eq!(media.mapfunction.len(), 100);
+                let slot_bytes = std::mem::size_of_val(media.mapscene.as_slice())
+                    + std::mem::size_of_val(media.mapfunction.as_slice());
+                assert!(slot_bytes <= 20_160, "shared slots retain 5% headroom");
+                println!("Shared map-icon table bytes: {slot_bytes}");
+                assert_eq!(media.mapscene.iter().flatten().count(), count.min(100));
+                assert_eq!(media.mapfunction.iter().flatten().count(), count.min(100));
+                assert_eq!(
+                    media.mapscene[count.min(100) - 1].as_ref().unwrap().data,
+                    [1]
+                );
+                assert_eq!(
+                    media.mapfunction[count.min(100) - 1].as_ref().unwrap().data,
+                    [0x123456]
+                );
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 }

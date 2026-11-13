@@ -147,8 +147,9 @@ client without a second allocation or copy.
 original-engine synthetic fixture and Java-derived terrain/rotation expectations.
 These offline tests are not a live Recruitment Drive or rendered-pixel proof.
 
-Revision 377 uses separate Java-sized media tables: 100 slots each for
-mapscene and mapfunction images, with 72 and 70 images loaded. Its player
+All revisions use 100-slot mapscene and mapfunction tables.
+The 274/289 loaders stop each table at its first missing image.
+Revision 377 keeps separate tables, with 72 and 70 images loaded. Its player
 PK, prayer and hint icons remain separate, and its minimap supports the
 fifth (team) dot and multiway overlay. The 274 minimap marks online friends.
 Revision 289 uses that friend sprite for matching nonzero teams, and different
