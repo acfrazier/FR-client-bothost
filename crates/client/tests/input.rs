@@ -37,7 +37,12 @@ fn latch_click_clears_pending_button() {
 #[test]
 fn mouse_up_releases_button() {
     let mut sh = GameShell::new();
-    sh.apply_mouse_down(1, 10, 20);
+    // mousePressed leaves mouseX/Y unchanged: Java 274 GameShell.java:294-313,
+    // Java 289 GameShell.java:412-430, Java 377 GameShell.java:332-359.
+    sh.apply_mouse_move(10, 20);
+    sh.apply_mouse_down(1, 30, 40);
+    sh.latch_click();
+    assert_eq!((sh.mouse_click_x, sh.mouse_click_y), (30, 40));
     sh.apply_mouse_up();
     assert_eq!(sh.mouse_button, 0);
     assert_eq!(sh.mouse_x, 10);
