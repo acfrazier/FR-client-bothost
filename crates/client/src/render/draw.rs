@@ -639,9 +639,8 @@ impl Renderer {
             if client.is_menu_open && client.menu_area == 0 {
                 self.draw_minimenu(client, &mut surface);
             }
-            // R289 Java:1799-1800: multiway HUD, headicons[1] at (472,296).
-            // Keep the default R274 presentation unchanged.
-            if client.revision().is_289() && client.in_multizone == 1 {
+            // J274 Client.java:1571 and J289:1799-1800 use headicons[1].
+            if !client.revision().is_377() && client.in_multizone == 1 {
                 if let Some(icon) = self.media.headicons[1].as_ref() {
                     icon.plot_sprite(&mut surface, 472, 296);
                 }
