@@ -445,11 +445,11 @@ fn player_attack_priority_respects_nonzero_teams() {
             c.menu_num_entries = 0;
             let mut local = ClientPlayer::at(5, 5);
             local.combat_level = 10;
-            local.team_377 = local_team;
+            local.team = local_team;
             c.local_player = Some(local);
             let mut target = ClientPlayer::at(6, 6);
             target.combat_level = target_level;
-            target.team_377 = target_team;
+            target.team = target_team;
             c.players[9] = Some(Box::new(target));
             c.player_op[0] = Some("Attack".into());
 
