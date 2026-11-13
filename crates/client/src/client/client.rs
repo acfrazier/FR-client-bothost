@@ -1257,7 +1257,7 @@ pub struct Client {
     pub oplogic8: i32,
     pub oplogic9: i32,
     pub cyclelogic2: i32,
-    pub(crate) cyclelogic7_289: i32,
+    pub(crate) cyclelogic7_legacy: i32,
     pub(crate) outbound: OutboundState,
     /// `Client.cyclelogic6` from client-ts (a TS static, instance here):
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC6` from
@@ -2231,7 +2231,7 @@ impl Client {
             oplogic8: 0,
             oplogic9: 0,
             cyclelogic2: 0,
-            cyclelogic7_289: 0,
+            cyclelogic7_legacy: 0,
             outbound: OutboundState::new(construction.revision),
             cyclelogic6: 0,
             report_abuse_input: String::new(),
@@ -13417,11 +13417,11 @@ impl Client {
                 ],
             );
         }
-        // Primary 289 J:6023-6027: after drag consumption, before walking.
-        if self.revision.is_289() {
-            self.cyclelogic7_289 += 1;
-            if self.cyclelogic7_289 > 62 {
-                self.cyclelogic7_289 = 0;
+        // J274 Client.java:9550-9554 and J289:6023-6027 share this cadence.
+        if !self.revision.is_377() {
+            self.cyclelogic7_legacy += 1;
+            if self.cyclelogic7_legacy > 62 {
+                self.cyclelogic7_legacy = 0;
                 self.out
                     .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7));
             }

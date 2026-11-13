@@ -1091,7 +1091,7 @@ fn camera_arrow_latch_and_twenty_loop_gate() {
 
 #[test]
 fn cycle7_real_loop_boundary_and_legacy_default() {
-    // J:6023-6027: increment before >62; opcode232 has no payload.
+    // J274 Client.java:9550-9554 emits 89; J289 emits 232 with no payload.
     for revision in [ClientRevision::R289, ClientRevision::R274] {
         let mut c = client(revision);
         for _ in 0..62 {
@@ -1106,7 +1106,7 @@ fn cycle7_real_loop_boundary_and_legacy_default() {
             if revision.is_289() {
                 &[232][..]
             } else {
-                &[][..]
+                &[89][..]
             }
         );
     }
