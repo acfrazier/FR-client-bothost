@@ -599,8 +599,8 @@ impl Renderer {
                     s.plot_sprite(&mut surface, client.cross_x - 8 - 4, client.cross_y - 8 - 4);
                 }
             } else if client.cross_mode == 2 {
-                // Primary 289 J:1773-1778: count drawn op crosshairs only.
-                if client.revision().is_289() {
+                // J274 Client.java:1550-1554 counts drawn op crosshairs only.
+                if !client.revision().is_377() {
                     client.outbound.legacy().cyclelogic5 += 1;
                     if client.outbound.legacy().cyclelogic5 > 57 {
                         client.outbound.legacy().cyclelogic5 = 0;
@@ -639,9 +639,8 @@ impl Renderer {
             if client.is_menu_open && client.menu_area == 0 {
                 self.draw_minimenu(client, &mut surface);
             }
-            // R289 Java:1799-1800: multiway HUD, headicons[1] at (472,296).
-            // Keep the default R274 presentation unchanged.
-            if client.revision().is_289() && client.in_multizone == 1 {
+            // J274 Client.java:1571 and J289:1799-1800 use headicons[1].
+            if !client.revision().is_377() && client.in_multizone == 1 {
                 if let Some(icon) = self.media.headicons[1].as_ref() {
                     icon.plot_sprite(&mut surface, 472, 296);
                 }
@@ -3218,9 +3217,9 @@ impl Renderer {
                         Colour::DARKBLUE,
                     );
                 }
-            } else if client.revision().is_289() && client.tut_com_message.is_some() {
-                // Primary 289 method129 (5273-5275): pending text replaces
-                // interfaces/chat, even after the tutorial closes or if empty.
+            } else if !client.revision().is_377() && client.tut_com_message.is_some() {
+                // J274 Client.java:4968-4970; pending text replaces the chat.
+                // The interface may remain open or already have closed.
                 if let Some(b12) = self.media.b12.as_ref() {
                     b12.centre_string(
                         &mut surface,

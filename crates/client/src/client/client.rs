@@ -1258,7 +1258,7 @@ pub struct Client {
     pub oplogic8: i32,
     pub oplogic9: i32,
     pub cyclelogic2: i32,
-    pub(crate) cyclelogic7_289: i32,
+    pub(crate) cyclelogic7_legacy: i32,
     pub(crate) outbound: OutboundState,
     /// `Client.cyclelogic6` from client-ts (a TS static, instance here):
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC6` from
@@ -2096,8 +2096,8 @@ impl Client {
         let mut client = Client {
             shell: {
                 let mut shell = GameShell::new();
-                shell.telemetry_289 =
-                    construction.revision.is_289() || construction.revision.is_377();
+                // J274 starts MouseTracking too; all supported revisions use this input path.
+                shell.telemetry_289 = true;
                 shell.ground_trace =
                     super::ground_trace_289::GroundTrace::from_env(construction.revision.is_289());
                 if construction.revision.is_289() {
@@ -2232,12 +2232,12 @@ impl Client {
             oplogic8: 0,
             oplogic9: 0,
             cyclelogic2: 0,
-            cyclelogic7_289: 0,
+            cyclelogic7_legacy: 0,
             outbound: OutboundState::new(construction.revision),
             cyclelogic6: 0,
             report_abuse_input: String::new(),
             report_abuse_mute_option: false,
-            report_abuse_com_id: 0,
+            report_abuse_com_id: -1,
 
             dir_map: vec![0; BUILD_AREA_TILES],
             dist_map: vec![0; BUILD_AREA_TILES],
@@ -3489,7 +3489,7 @@ impl Client {
             trace.complete("session_transfer");
         }
         self.shell.ground_trace = None;
-        self.shell.telemetry_289 = self.revision.is_289() || self.revision.is_377();
+        self.shell.telemetry_289 = true;
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
         let mut out = std::mem::replace(&mut other.out, Packet::alloc_outbound(1));
@@ -3752,7 +3752,7 @@ impl Client {
             stream.set_deadline(None).map_err(|e| {
                 self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
             })?;
-            if self.revision.is_289() {
+            if !self.revision.is_377() {
                 self.cold_login_input_289();
             } else if self.revision.is_377() {
                 self.cold_login_input_377();
@@ -3765,12 +3765,22 @@ impl Client {
             self.ptype1 = -1;
             self.ptype2 = -1;
             self.psize = 0;
-            self.scene_state = 0;
-            self.menu_num_entries = 0;
             self.last_response = Some(Instant::now());
             // Java `Client.java` 3004: the grant clears the reboot countdown.
             self.reboot_timer = 0;
             self.logout_timer = 0;
+            // Java 274 Client.java:3626-3644,3673-3677; Java 289
+            // Client.java:3006-3057 reset the transient HUD/input state.
+            self.hint_type = 0;
+            self.menu_num_entries = 0;
+            self.is_menu_open = false;
+            self.use_mode = 0;
+            self.target_mode = 0;
+            self.scene_state = 0;
+            self.wave_count = 0;
+            self.minimap_state = 0;
+            self.main_overlay_id = -1;
+            self.dialog_input_open = false;
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
             self.begin_session_frames();
@@ -6840,12 +6850,12 @@ impl Client {
     }
 
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
-    /// (99→1), write the new line at slot 0, and redraw. R289 Java method99
-    /// (1819-1824) also captures every kind-0 tutorial notice, including
-    /// local notices and empty text; leave the base R274 path unchanged.
+    /// (99→1), write the new line at slot 0, and redraw. J274 Client.java
+    /// (3787-3790) and J289 method99 (1819-1824) capture every kind-0
+    /// tutorial notice, including local notices and empty text.
     /// Each appended line bumps `chat_seq` once (before the slot shift).
     pub fn add_chat(&mut self, r#type: i32, text: &str, sender: &str) {
-        if self.revision.is_289() && r#type == 0 && self.tut_com_id != -1 {
+        if !self.revision.is_377() && r#type == 0 && self.tut_com_id != -1 {
             self.tut_com_message = Some(text.to_string());
             self.shell.mouse_click_button = 0;
         }
@@ -7579,14 +7589,14 @@ impl Client {
                 }
             }
             return true;
-        } else if self.revision.is_289() && client_code == CC_REPORT_MUTE_289 {
-            // Preserve the existing revision-289 report UI mapping.
+        } else if !self.revision.is_377() && client_code == CC_REPORT_MUTE_289 {
+            // J274 Client.java:8829-8832 and J289 client.java:1963-1974.
             self.report_abuse_mute_option = !self.report_abuse_mute_option;
-        } else if self.revision.is_289()
+        } else if !self.revision.is_377()
             && (CC_REPORT_REASON_START..=CC_REPORT_REASON_END_289).contains(&client_code)
         {
-            // Java client_button 601..=612: closeModal then SEND_SNAPSHOT /
-            // REPORT_ABUSE (289 id 94, length 10): namehash, reason and mute.
+            // J274 and J289 close the modal, then send report name, reason,
+            // and mute option when the name is nonempty.
             self.close_modal();
             if !self.report_abuse_input.is_empty() {
                 let userhash = JString::to_userhash(&self.report_abuse_input) as i64;
@@ -7816,6 +7826,11 @@ impl Client {
             if com.scroll_height <= height {
                 com.scroll_height = height + 1;
             }
+        } else if client_code == CC_REPORT_INPUT {
+            // J274 Client.java:2485-2491.
+            com.text = self.report_abuse_input.clone();
+            com.text
+                .push(if self.loop_cycle % 20 < 10 { '|' } else { ' ' });
         } else if client_code == CC_DESIGN_PREVIEW {
             // TS 10773-10820: spin the preview model around the y axis
             // every frame; the combined kit model (built above) is cached
@@ -7968,10 +7983,9 @@ impl Client {
     /// See `handle_side_if_clicks`: chat-modal button clicks flow through
     /// `build_minimenu` + `mouse_loop`/`doAction`.
     pub fn handle_chat_if_clicks(&mut self) {
-        // Java 289 6042-6046: only LEFT + non-null message acknowledges.
-        // The interface may remain open (or already have closed). R274's
-        // base handler was a no-op; do not add acknowledgement there.
-        if self.revision.is_289()
+        // J274 Client.java:9567-9571 and J289 6042-6046 acknowledge only a
+        // left click while a tutorial message is pending.
+        if !self.revision.is_377()
             && self.shell.mouse_click_button == 1
             && self.tut_com_message.is_some()
         {
@@ -9106,6 +9120,10 @@ impl Client {
                 }
                 for npc in self.npc.iter_mut().flatten() {
                     npc.primary_anim = -1;
+                }
+                // Java keeps localPlayer in players[]; Rust stores a separate copy.
+                if let Some(local) = self.local_player.as_mut() {
+                    local.primary_anim = -1;
                 }
                 self.ptype = -1;
             }
@@ -10639,15 +10657,13 @@ impl Client {
                 let shape = info >> 2;
                 let rotate = info & 0x3;
 
-                // TS yields `undefined` for shape >= table length; skip the
-                // apply instead of panicking on the index. The +1 height
-                // reads need x+1/z+1 inside groundh (sized SIZE+1), so the
-                // same 0..SIZE bounds guard covers them.
+                // J274 Client.java:5606 requires x,z < 103 before reading the
+                // four corner heights.
                 if shape < LOC_SHAPE_TO_LAYER.len() as i32
                     && x >= 0
                     && z >= 0
-                    && x < BuildArea::SIZE
-                    && z < BuildArea::SIZE
+                    && x < BuildArea::SIZE - 1
+                    && z < BuildArea::SIZE - 1
                 {
                     let layer = LOC_SHAPE_TO_LAYER[shape as usize];
                     let level = self.minusedlevel as usize;
@@ -10679,9 +10695,9 @@ impl Client {
                                 decor.anim_seq = seq;
                                 decor.anim_shape = 4;
                                 decor.anim_angle = 0;
-                                // [sic] TS passes heightNE in the SE slot.
+                                // J274 Client.java:5607-5610,5626 keeps each corner.
                                 decor.h_sw = height_sw;
-                                decor.h_se = height_ne;
+                                decor.h_se = height_se;
                                 decor.h_ne = height_ne;
                                 decor.h_nw = height_nw;
                                 self.world.bump_loc_stamp(
@@ -11637,8 +11653,8 @@ impl Client {
     /// Local chat echo uses `toSentenceCase`, `WordFilter.filter`, and
     /// `add_chat`.
     pub fn handle_chat_input(&mut self) {
-        if self.revision.is_289() {
-            // J:10743-10750: count poll calls, not queued characters.
+        if !self.revision.is_377() {
+            // J274 Client.java:10193-10199: count poll calls, not queued characters.
             self.outbound.legacy().cyclelogic4 += 1;
             if self.outbound.legacy().cyclelogic4 > 192 {
                 self.outbound.legacy().cyclelogic4 = 0;
@@ -11659,6 +11675,21 @@ impl Client {
     /// Existing single-character `handleInputKey` chat-branch body.
     /// Does not count a revision-289 per-frame input poll.
     pub fn consume_chat_key(&mut self, key: i32) {
+        // J274 Client.java:10208-10212,10404-10407; Enter is ignored.
+        if self.main_modal_id != -1 && self.main_modal_id == self.report_abuse_com_id {
+            if key == 8 {
+                self.report_abuse_input.pop();
+            } else if ((97..=122).contains(&key)
+                || (65..=90).contains(&key)
+                || (48..=57).contains(&key)
+                || key == 32)
+                && self.report_abuse_input.encode_utf16().count() < 12
+            {
+                self.report_abuse_input
+                    .push(char::from_u32(key as u32).unwrap());
+            }
+            return;
+        }
         if self.social_input_open {
             if (32..=122).contains(&key) && self.social_input.len() < 80 {
                 self.social_input.push(char::from_u32(key as u32).unwrap());
@@ -12436,6 +12467,7 @@ impl Client {
         let name = player.name.clone().unwrap_or_default();
         let combat_level = player.combat_level;
         let skill_level = player.skill_level;
+        let team = player.team_377;
 
         let tooltip = if skill_level == 0 {
             if let Some(local) = &self.local_player {
@@ -12469,6 +12501,16 @@ impl Client {
                     if let Some(local) = &self.local_player {
                         if combat_level > local.combat_level {
                             priority = MiniMenuAction::_PRIORITY;
+                        }
+                        // Java 289 client.java:9252-9258 and Java 377
+                        // Client.java:10642-10648 let nonzero teams override the
+                        // combat-level priority.
+                        if local.team_377 != 0 && team != 0 {
+                            priority = if local.team_377 == team {
+                                MiniMenuAction::_PRIORITY
+                            } else {
+                                0
+                            };
                         }
                     }
                 } else if self.player_op_priority[i] {
@@ -13466,9 +13508,10 @@ impl Client {
             return;
         }
         // TS 2191-2192: the scene/minimap pass after the inbound reads.
-        if self.revision.is_289() {
+        // Java 274 Client.java:9347-9458 sends the same input events as 289.
+        if !self.revision.is_377() {
             self.input_packets_289();
-        } else if self.revision.is_377() {
+        } else {
             self.input_packets_377();
         }
         // The SIM half runs here unconditionally — `check_scene` →
@@ -13526,11 +13569,11 @@ impl Client {
                 ],
             );
         }
-        // Primary 289 J:6023-6027: after drag consumption, before walking.
-        if self.revision.is_289() {
-            self.cyclelogic7_289 += 1;
-            if self.cyclelogic7_289 > 62 {
-                self.cyclelogic7_289 = 0;
+        // J274 Client.java:9550-9554 and J289:6023-6027 share this cadence.
+        if !self.revision.is_377() {
+            self.cyclelogic7_legacy += 1;
+            if self.cyclelogic7_legacy > 62 {
+                self.cyclelogic7_legacy = 0;
                 self.out
                     .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7));
             }
@@ -13667,14 +13710,12 @@ impl Client {
         for i in 0..5 {
             self.cam_shake_cycle[i] += 1;
         }
-        // A host-owned session is unattended by default: the host, not the
-        // Java inactivity policy, owns its lifetime, so the timer stays
-        // suppressed for both revisions without manufacturing user input or
-        // packets. A host that asks for it ([`Client::set_host_idle_timer`])
-        // gets the Java 289 timer instead.
+        // A host-owned session is unattended by default; otherwise each Java
+        // revision runs its inactivity timer. A host can opt in with
+        // [`Client::set_host_idle_timer`].
         if self.idle_timer_suppressed() {
             self.shell.idle_cycles = 0;
-        } else if self.revision.is_289() || self.revision.is_377() {
+        } else {
             self.shell.idle_cycles += 1;
             if self.shell.idle_cycles > 4500 {
                 self.shell.idle_cycles -= 500;

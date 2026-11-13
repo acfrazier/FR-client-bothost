@@ -379,7 +379,15 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
         let n = s.read(&mut buf).unwrap();
         assert!(n > 0);
         assert_eq!(buf[0], 16); // cold login
-        s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
+        s.write_all(&[2, 0, 1]).unwrap(); // response 2, staff=0, mouseTrack=1
+        s.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut mouse_header = [0u8; 2];
+        s.read_exact(&mut mouse_header).unwrap();
+        let mut mouse = vec![0u8; mouse_header[1] as usize];
+        s.read_exact(&mut mouse).unwrap();
+        let mut click = [0u8; 5];
+        s.read_exact(&mut click).unwrap();
+        (mouse, click)
     });
 
     let mut c = Client::new(ClientConfig {
@@ -398,12 +406,54 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     c.minimap_flag_x = 1;
     c.minimap_flag_z = 2;
     c.chat_text[0] = "leftover".into();
+    c.scene_state = 0;
+    c.shell.mouse_click_button = 1;
+    c.shell.mouse_click_time = 1000;
+    c.shell.mouse_click_x = 10;
+    c.shell.mouse_click_y = 20;
+    c.last_outbound = Instant::now();
+    c.game_loop();
+    assert_eq!(c.out.data()[0], 20, "R274 click event seeds the timer");
+    c.out.pos = 0;
+    c.scene_state = 2;
     c.logout();
+    c.shell.focused = false;
+    c.shell.idle_cycles = 73;
     let chat_gen_after_logout = c.gens.chat;
     r.title_screen_draw(&mut c); // consumes the game frame (Task 4b)
     assert!(r.area_chat.is_none());
+    c.hint_type = 10;
+    c.main_overlay_id = 42;
+    c.minimap_state = 2;
+    c.is_menu_open = true;
+    c.dialog_input_open = true;
+    c.use_mode = 1;
+    c.target_mode = 1;
+    c.wave_count = 4;
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
+    // J274 Client.java:3609-3614 restores focus and clears mouse timing state.
+    assert!(c.shell.focused);
+    assert_eq!(c.shell.idle_cycles, 0);
+    // J274 Client.java:3626-3644,3673-3677 resets cold-session HUD/input state.
+    assert_eq!(c.hint_type, 0);
+    assert_eq!(c.main_overlay_id, -1);
+    assert_eq!(c.minimap_state, 0);
+    assert!(!c.is_menu_open);
+    assert!(!c.dialog_input_open);
+    assert_eq!(c.use_mode, 0);
+    assert_eq!(c.target_mode, 0);
+    assert_eq!(c.wave_count, 0);
+    c.shell.apply_mouse_move(10, 20);
+    for _ in 0..40 {
+        c.shell.sample_mouse();
+    }
+    c.shell.mouse_click_button = 1;
+    c.shell.mouse_click_time = 2000;
+    c.shell.mouse_click_x = 10;
+    c.shell.mouse_click_y = 20;
+    c.last_outbound = Instant::now();
+    c.game_loop();
     assert_eq!(c.active_icon, 3, "response 2 must select the inventory tab");
     assert_eq!(c.scene_state, 0);
     assert_eq!(c.side_modal_id, -1);
@@ -433,7 +483,14 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
         r.image_title2.is_none(),
         "prepare_game must unload the title regions"
     );
-    server.join().unwrap();
+    let (mouse, click) = server.join().unwrap();
+    assert_eq!(
+        mouse,
+        [0x0a, 0xb4],
+        "cold login must retain 274 mouse telemetry"
+    );
+    let packed = u32::from_be_bytes(click[1..5].try_into().unwrap());
+    assert_eq!(packed >> 20, 40, "cold login resets previous-click time");
 }
 
 #[test]

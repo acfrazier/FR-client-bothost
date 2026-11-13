@@ -2001,7 +2001,7 @@ fn cleanup_f_tutorial_message_state_is_independent_of_interface_transitions() {
 }
 
 #[test]
-fn cleanup_f_tutorial_274_preserves_base_noop_input_and_message_behavior() {
+fn cleanup_f_tutorial_274_acknowledges_message_and_preserves_right_click_menu() {
     for button in [1, 2] {
         let mut c = Client::new(cfg());
         c.ingame = true;
@@ -2011,11 +2011,13 @@ fn cleanup_f_tutorial_274_preserves_base_noop_input_and_message_behavior() {
         c.psize = p.length() as i32;
         c.handle_packet(ServerProt::MESSAGE_GAME, &mut p);
         c.add_chat(0, "local legacy notice", "");
-        assert!(c.tut_com_message.is_none());
+        assert_eq!(c.tut_com_message.as_deref(), Some("local legacy notice"));
         tutorial_input_click(&mut c, button, 560, 210);
         if button == 1 {
-            assert_eq!(&c.out.data()[..c.out.pos], &[9, 0, 2]);
+            assert!(c.tut_com_message.is_none());
+            assert_eq!(c.out.pos, 0);
         } else {
+            assert_eq!(c.tut_com_message.as_deref(), Some("local legacy notice"));
             assert!(c.is_menu_open);
             assert_eq!(c.out.pos, 0);
         }

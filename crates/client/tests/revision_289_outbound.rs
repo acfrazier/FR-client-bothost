@@ -193,7 +193,8 @@ fn widget_dialog_and_snapshot_ordered_frames() {
 }
 
 #[test]
-fn report_controls_preserve_274_stubs_and_289_ordered_frames() {
+fn report_controls_match_274_and_289_ordered_frames() {
+    // J274 Client.java:8829-8832 and J289 client.java:1963-1974.
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let mut c = client(revision);
         c.report_abuse_input = "a".into();
@@ -205,7 +206,7 @@ fn report_controls_preserve_274_stubs_and_289_ordered_frames() {
             },
         );
         assert!(!c.client_button(2));
-        assert_eq!(c.report_abuse_mute_option, revision == ClientRevision::R289);
+        assert!(c.report_abuse_mute_option);
         assert_eq!(c.out.pos, 0, "mute toggle sends no packet");
         for code in 601..=612 {
             c.out.pos = 0;
@@ -219,16 +220,26 @@ fn report_controls_preserve_274_stubs_and_289_ordered_frames() {
                 },
             );
             assert!(!c.client_button(2));
-            if revision == ClientRevision::R274 {
-                assert_eq!(c.out.pos, 0, "published 274 report reasons are idle");
-                assert_eq!(c.main_modal_id, 7, "274 stub must not close the modal");
-            } else {
-                assert_eq!(
-                    &c.out.data()[..c.out.pos],
-                    &[93, 94, 0, 0, 0, 0, 0, 0, 0, 1, (code - 601) as u8, 1]
-                );
-                assert_eq!(c.main_modal_id, -1);
-            }
+            let close_opcode = if revision.is_289() { 93 } else { 51 };
+            let report_opcode = if revision.is_289() { 94 } else { 137 };
+            assert_eq!(
+                &c.out.data()[..c.out.pos],
+                &[
+                    close_opcode,
+                    report_opcode,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    (code - 601) as u8,
+                    1
+                ]
+            );
+            assert_eq!(c.main_modal_id, -1);
         }
     }
 }
@@ -736,44 +747,85 @@ fn sampled_mouse_encodes_before_click() {
 
 #[test]
 fn cycle5_counts_only_drawn_mode2_crosshairs() {
-    let mut c = client(ClientRevision::R289);
+    // J274 Client.java:1550-1554; J289 uses the same 57-draw threshold.
     let mut r = client::render::Renderer::new(false);
-    c.scene_state = 2;
-    c.cross_mode = 2;
-    for _ in 0..57 {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = client(revision);
+        c.scene_state = 2;
+        c.cross_mode = 2;
+        for _ in 0..57 {
+            r.game_draw(&mut c);
+        }
+        assert_eq!(c.out.pos, 0);
+        c.scene_state = 1;
         r.game_draw(&mut c);
+        assert_eq!(c.out.pos, 0);
+        c.scene_state = 2;
+        r.game_draw(&mut c);
+        assert_eq!(
+            &c.out.data()[..c.out.pos],
+            if revision.is_289() {
+                &[85][..]
+            } else {
+                &[100][..]
+            }
+        );
     }
-    assert_eq!(c.out.pos, 0);
-    c.scene_state = 1;
-    r.game_draw(&mut c);
-    assert_eq!(c.out.pos, 0);
-    c.scene_state = 2;
-    r.game_draw(&mut c);
-    assert_eq!(&c.out.data()[..c.out.pos], &[85]);
 }
 
 #[test]
-fn legacy_focus_keeps_existing_held_behavior() {
+fn r274_input_telemetry_captures_mouse_samples_and_focus() {
     let mut c = client(ClientRevision::R274);
+    c.mouse_tracked = true;
+    c.shell.apply_mouse_move(10, 20);
+    for _ in 0..40 {
+        c.shell.sample_mouse();
+    }
     c.shell.apply_key(true, 37, 1);
     c.shell.apply_focus(false);
-    assert_eq!(c.shell.key_held[1], 1);
+    assert_eq!(c.shell.key_held[1], 0);
     c.game_loop();
-    assert_eq!(c.out.pos, 0);
+    // J274 Client.java:9347-9405 sends the sampled move; :9449-9458 sends blur.
+    assert_eq!(&c.out.data()[..c.out.pos], &[222, 2, 0x0a, 0xb4, 73, 0]);
+}
+#[test]
+fn r274_event_packets_match_java_click_camera_and_focus_bytes() {
+    let mut c = client(ClientRevision::R274);
+    c.mouse_tracked = false;
+    c.shell.apply_focus(false);
+    c.shell.key_held[1] = 1;
+    c.orbit_camera_pitch = 0x123;
+    c.orbit_camera_yaw = 0x456;
+    c.shell.mouse_click_button = 2;
+    c.shell.mouse_click_x = 10;
+    c.shell.mouse_click_y = 20;
+    c.shell.mouse_click_time = 50;
+    c.last_outbound = Instant::now();
+
+    c.game_loop();
+
+    assert_eq!(
+        &c.out.data()[..c.out.pos],
+        &[20, 0, 0x18, 0x3b, 0xce, 53, 1, 0x23, 4, 0x56, 73, 0]
+    );
 }
 
 #[test]
 fn cycle4_input_poll_counts_calls_even_without_keys() {
-    let mut c = client(ClientRevision::R289);
-    for _ in 0..192 {
+    // J274 Client.java:10193-10199; J289 sends the same 232 suffix.
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = client(revision);
+        let opcode = if revision.is_289() { 137 } else { 230 };
+        for _ in 0..192 {
+            c.handle_chat_input();
+        }
+        assert_eq!(c.out.pos, 0);
         c.handle_chat_input();
+        assert_eq!(&c.out.data()[..c.out.pos], &[opcode, 232]);
+        c.out.pos = 0;
+        c.handle_chat_input();
+        assert_eq!(c.out.pos, 0);
     }
-    assert_eq!(c.out.pos, 0);
-    c.handle_chat_input();
-    assert_eq!(&c.out.data()[..c.out.pos], &[137, 232]);
-    c.out.pos = 0;
-    c.handle_chat_input();
-    assert_eq!(c.out.pos, 0);
 }
 
 #[test]
@@ -792,19 +844,23 @@ fn click_is_packed_before_ui_consumes_it() {
 
 #[test]
 fn idle_real_loop_threshold_and_repeat_subtract_500() {
-    let mut c = client(ClientRevision::R289);
-    for tick in 1..=5001 {
-        c.last_outbound = Instant::now();
-        c.out.pos = 0;
-        c.game_loop();
-        let bytes = &c.out.data()[..c.out.pos];
-        assert_eq!(
-            bytes.last() == Some(&145),
-            tick == 4501 || tick == 5001,
-            "tick {tick}"
-        );
-        if tick == 4501 || tick == 5001 {
-            assert_eq!(c.logout_timer, 250);
+    // J274 Client.java:9589-9594; J289 has the same 4501/5001 thresholds.
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = client(revision);
+        let opcode = if revision.is_289() { 145 } else { 209 };
+        for tick in 1..=5001 {
+            c.last_outbound = Instant::now();
+            c.out.pos = 0;
+            c.game_loop();
+            let bytes = &c.out.data()[..c.out.pos];
+            assert_eq!(
+                bytes.last() == Some(&opcode),
+                tick == 4501 || tick == 5001,
+                "revision {revision:?}, tick {tick}"
+            );
+            if tick == 4501 || tick == 5001 {
+                assert_eq!(c.logout_timer, 250);
+            }
         }
     }
 }
@@ -1066,7 +1122,7 @@ fn camera_arrow_latch_and_twenty_loop_gate() {
 
 #[test]
 fn cycle7_real_loop_boundary_and_legacy_default() {
-    // J:6023-6027: increment before >62; opcode232 has no payload.
+    // J274 Client.java:9550-9554 emits 89; J289 emits 232 with no payload.
     for revision in [ClientRevision::R289, ClientRevision::R274] {
         let mut c = client(revision);
         for _ in 0..62 {
@@ -1081,7 +1137,7 @@ fn cycle7_real_loop_boundary_and_legacy_default() {
             if revision.is_289() {
                 &[232][..]
             } else {
-                &[][..]
+                &[89][..]
             }
         );
     }

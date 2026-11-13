@@ -163,9 +163,13 @@ fn reset_anims_clears_primary_anims() {
     let mut c = client();
     c.players[1] = Some(Box::new(ClientPlayer::at(0, 0)));
     c.players[1].as_mut().unwrap().primary_anim = 7;
+    let mut local = ClientPlayer::at(0, 0);
+    local.primary_anim = 8;
+    c.local_player = Some(local);
     let mut p = Packet::alloc(0);
     c.handle_packet(ServerProt::RESET_ANIMS, &mut p);
     assert_eq!(c.players[1].as_ref().unwrap().primary_anim, -1);
+    assert_eq!(c.local_player.as_ref().unwrap().primary_anim, -1);
 }
 
 #[test]

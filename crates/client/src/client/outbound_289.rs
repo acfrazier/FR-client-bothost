@@ -17,7 +17,8 @@ pub(crate) struct Outbound289 {
 
 impl Client {
     pub(crate) fn cold_login_input_289(&mut self) {
-        // J:8411-8415,8430. Last coordinate/camera/cycle counters persist.
+        // J274 Client.java:3610-3614, J289:8411-8415/8430. Reset click and
+        // focus capture; last coordinates/camera/cycle counters persist.
         self.outbound.legacy().last_click_time = 0;
         self.outbound.legacy().duplicates = 0;
         self.outbound.legacy().blurred = false;

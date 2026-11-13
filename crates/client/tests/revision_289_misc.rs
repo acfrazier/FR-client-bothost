@@ -208,6 +208,45 @@ fn minimap_click_and_multiway_paint_follow_dispatch() {
 }
 
 #[test]
+fn r274_multiway_icon_uses_the_legacy_headicon() {
+    use client::client::ClientPlayer;
+    use client::graphics::{Pix32, Pix8};
+    use client::render::{Media, Renderer};
+
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R274,
+    );
+    c.ingame = true;
+    c.local_player = Some(ClientPlayer::at(10, 10));
+    c.local_player.as_mut().unwrap().x = 1344;
+    c.local_player.as_mut().unwrap().z = 1344;
+    c.set_draw(true);
+    c.scene_state = 2;
+
+    let mut r = Renderer::new(false);
+    r.game_draw(&mut c);
+    let mut media = Media::empty();
+    media.mapback = Some(Pix8::new(172, 156, vec![0]));
+    let mut icon = Pix32::new(1, 1);
+    icon.data[0] = 0x123456;
+    media.headicons[1] = Some(icon);
+    r.media = std::sync::Arc::new(media);
+    c.in_multizone = 1;
+    r.game_draw(&mut c);
+
+    let game = r.area_game.as_ref().unwrap();
+    // J274 Client.java:1571 draws headicons[1] at (472,296).
+    assert_eq!(game.pixels[(296 * game.width + 472) as usize], 0x123456);
+}
+
+#[test]
 fn terrain_height_bridge_and_bad_plane_are_staged() {
     let mut c = client();
     c.groundh[1][4][5] = 100;

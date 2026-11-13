@@ -107,6 +107,10 @@ impl SeqType {
                 9 => self.preanim_move = dat.g1(),
                 10 => self.postanim_move = dat.g1(),
                 11 => self.duplicatebehaviour = dat.g1(),
+                // Java 289 SeqType.java:154-155 stores but never reads this g4.
+                12 => {
+                    let _ = dat.g4();
+                }
                 _ => eprintln!("Error unrecognised seq config code: {code}"),
             }
         }
@@ -166,5 +170,22 @@ impl SeqType {
         } else {
             delay_value
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::SeqType;
+    use crate::io::Packet;
+
+    #[test]
+    fn seq12_legacy_opcode_payload_keeps_next_record_aligned() {
+        // Java 289 SeqType.java:154-155 consumes one g4 before the terminator.
+        let mut dat = Packet::new(vec![12, 0, 0, 0, 0, 0, 5, 42, 0]);
+        let mut first = SeqType::default();
+        first.decode(&mut dat);
+        let mut second = SeqType::default();
+        second.decode(&mut dat);
+        assert_eq!(second.priority, 42);
+        assert_eq!(dat.pos, 9);
     }
 }

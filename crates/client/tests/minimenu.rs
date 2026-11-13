@@ -15,13 +15,20 @@ use client::io::{synthetic_jag, JagFile};
 use client::render::Renderer;
 
 fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+    client_with_revision(ClientRevision::R274)
+}
+
+fn client_with_revision(revision: ClientRevision) -> Client {
+    Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        revision,
+    )
 }
 
 fn client_for(revision: ClientRevision) -> Client {
@@ -424,6 +431,38 @@ fn add_world_options_player_ops_from_pick() {
         .position(|&a| a == MiniMenuAction::WALK)
         .unwrap();
     assert_eq!(c.menu_option[walk], "Walk here @whi@Bob@or1@ (level-12)");
+}
+
+#[test]
+fn player_attack_priority_respects_nonzero_teams() {
+    for revision in [ClientRevision::R289, ClientRevision::R377] {
+        for (local_team, target_team, target_level, expected_priority) in [
+            (1, 1, 1, MiniMenuAction::_PRIORITY),
+            (1, 2, 99, 0),
+            (0, 2, 99, MiniMenuAction::_PRIORITY),
+        ] {
+            let mut c = client_with_revision(revision);
+            c.menu_num_entries = 0;
+            let mut local = ClientPlayer::at(5, 5);
+            local.combat_level = 10;
+            local.team_377 = local_team;
+            c.local_player = Some(local);
+            let mut target = ClientPlayer::at(6, 6);
+            target.combat_level = target_level;
+            target.team_377 = target_team;
+            c.players[9] = Some(Box::new(target));
+            c.player_op[0] = Some("Attack".into());
+
+            c.add_player_options(9, 0, 0);
+
+            assert_eq!(
+                c.menu_action[0],
+                expected_priority + MiniMenuAction::OP_PLAYER1,
+                "{revision:?}: local team {local_team}, target team {target_team}, \
+                 target combat level {target_level}"
+            );
+        }
+    }
 }
 
 /// A picked obj tile (entity 3) iterates the ground list tail->prev, with
