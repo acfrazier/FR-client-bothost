@@ -463,9 +463,9 @@ struct TileModels {
     obj_model_stamp: i32,
     wall_model1: Option<SceneModel>,
     wall_model2: Option<SceneModel>,
-    /// Placement identity for `wall_model2`. A 377 non-2 LOC_ANIM may retain
+    /// Placement identity for `wall_model2`. A non-2 LOC_ANIM may retain
     /// the cached Java `field1538` only while the wall itself remains.
-    wall_model_key: Option<(i32, i32, Option<crate::dash3d::wall::WallModel2State377>)>,
+    wall_model_key: Option<(i32, i32, Option<crate::dash3d::wall::WallModel2State>)>,
     decor_model: Option<SceneModel>,
     gd_model: Option<SceneModel>,
     obj_bottom: Option<SceneModel>,
@@ -945,11 +945,8 @@ impl RenderWorld {
         let angle = info >> 6;
         let shape = info & 0x1f;
         let (h_sw, h_se, h_ne, h_nw) = (wall.h_sw, wall.h_se, wall.h_ne, wall.h_nw);
-        let wall_key = (wall.typecode, wall.typecode2, wall.model2_state_377());
-        let cached_model2 = if cache.revision_377.is_some()
-            && wall.anim_seq != -1
-            && wall.anim_shape != LocShape::WALL_L
-        {
+        let wall_key = (wall.typecode, wall.typecode2, wall.model2_state());
+        let cached_model2 = if wall.anim_seq != -1 && wall.anim_shape != LocShape::WALL_L {
             let slot = self.slot(world, level, x, z);
             if slot.wall_model_key == Some(wall_key) {
                 slot.wall_model2.take()
@@ -963,27 +960,23 @@ impl RenderWorld {
         let (model1, model2) = if wall.anim_seq != -1 {
             // The number of models uses the packet shape, not placement shape.
             if wall.anim_shape == LocShape::WALL_L {
-                let model2 = if cache.revision_377.is_some() {
-                    wall.wall_model2_377.and_then(|state| {
-                        state.sequence.map(|sequence| {
-                            SceneModel::LocAnim(ClientLocAnim::new(
-                                cache,
-                                loc_id,
-                                2,
-                                state.angle,
-                                state.h_sw,
-                                state.h_se,
-                                state.h_ne,
-                                state.h_nw,
-                                sequence,
-                                false,
-                                state.start_cycle,
-                            ))
-                        })
+                let model2 = wall.wall_model2_state.and_then(|state| {
+                    state.sequence.map(|sequence| {
+                        SceneModel::LocAnim(ClientLocAnim::new(
+                            cache,
+                            loc_id,
+                            2,
+                            state.angle,
+                            state.h_sw,
+                            state.h_se,
+                            state.h_ne,
+                            state.h_nw,
+                            sequence,
+                            false,
+                            state.start_cycle,
+                        ))
                     })
-                } else {
-                    None
-                };
+                });
                 (
                     Some(SceneModel::LocAnim(ClientLocAnim::new(
                         cache,
@@ -1015,52 +1008,48 @@ impl RenderWorld {
                     })),
                 )
             } else {
-                let model2 = if cache.revision_377.is_some() {
-                    cached_model2.or_else(|| match wall.wall_model2_377 {
-                        Some(state) => match state.sequence {
-                            Some(sequence) => Some(SceneModel::LocAnim(ClientLocAnim::new(
-                                cache,
-                                loc_id,
-                                2,
-                                state.angle,
-                                state.h_sw,
-                                state.h_se,
-                                state.h_ne,
-                                state.h_nw,
-                                sequence,
-                                false,
-                                state.start_cycle,
-                            ))),
-                            None => Self::decode_loc_model(
-                                loc_id,
-                                Self::loc_at(cache, loc_id),
-                                cache,
-                                2,
-                                state.angle,
-                                state.h_sw,
-                                state.h_se,
-                                state.h_ne,
-                                state.h_nw,
-                                loop_cycle,
-                            ),
-                        },
-                        None if shape == LocShape::WALL_L => Self::decode_loc_model(
+                let model2 = cached_model2.or_else(|| match wall.wall_model2_state {
+                    Some(state) => match state.sequence {
+                        Some(sequence) => Some(SceneModel::LocAnim(ClientLocAnim::new(
+                            cache,
+                            loc_id,
+                            2,
+                            state.angle,
+                            state.h_sw,
+                            state.h_se,
+                            state.h_ne,
+                            state.h_nw,
+                            sequence,
+                            false,
+                            state.start_cycle,
+                        ))),
+                        None => Self::decode_loc_model(
                             loc_id,
                             Self::loc_at(cache, loc_id),
                             cache,
                             2,
-                            (angle + 1) & 0x3,
-                            h_sw,
-                            h_se,
-                            h_ne,
-                            h_nw,
+                            state.angle,
+                            state.h_sw,
+                            state.h_se,
+                            state.h_ne,
+                            state.h_nw,
                             loop_cycle,
                         ),
-                        None => None,
-                    })
-                } else {
-                    None
-                };
+                    },
+                    None if shape == LocShape::WALL_L => Self::decode_loc_model(
+                        loc_id,
+                        Self::loc_at(cache, loc_id),
+                        cache,
+                        2,
+                        (angle + 1) & 0x3,
+                        h_sw,
+                        h_se,
+                        h_ne,
+                        h_nw,
+                        loop_cycle,
+                    ),
+                    None => None,
+                });
                 (
                     Some(SceneModel::LocAnim(ClientLocAnim::new(
                         cache,
@@ -1647,7 +1636,7 @@ impl RenderWorld {
     ) {
         let wall_model_key = tile_at(&world.squares, level, x, z)
             .and_then(|tile| tile.wall.as_deref())
-            .map(|wall| (wall.typecode, wall.typecode2, wall.model2_state_377()));
+            .map(|wall| (wall.typecode, wall.typecode2, wall.model2_state()));
         let slot = self.slot(world, level, x, z);
         slot.wall_model_stamp = world.loc_model_stamp(level, x, z, LocLayer::WALL);
         slot.wall_model1 = model1;
@@ -6719,7 +6708,7 @@ mod fill_java_order_tests {
 mod wall_anim_377_tests {
     use super::*;
     use crate::config::{runtime_377::InterfaceFields377, CacheRevision377};
-    use crate::dash3d::wall::WallModel2State377;
+    use crate::dash3d::wall::WallModel2State;
     use std::sync::Arc;
 
     fn cache_377() -> Cache {
@@ -6775,7 +6764,7 @@ mod wall_anim_377_tests {
         world
             .get_wall_mut(0, 0, 0)
             .expect("fixture wall")
-            .wall_model2_377 = Some(WallModel2State377 {
+            .wall_model2_state = Some(WallModel2State {
             sequence: None,
             angle: 1,
             h_sw: 10,
@@ -6798,7 +6787,7 @@ mod wall_anim_377_tests {
     fn r377_non_l_loc_anim_preserves_materialized_second_animation() {
         let cache = cache_377();
         let mut world = wall_world(LocShape::WALL_STRAIGHT);
-        let state = WallModel2State377 {
+        let state = WallModel2State {
             sequence: Some(7),
             angle: 2,
             h_sw: 11,
@@ -6812,7 +6801,7 @@ mod wall_anim_377_tests {
             wall.anim_seq = 7;
             wall.anim_shape = LocShape::WALL_L;
             wall.anim_angle = 1;
-            wall.wall_model2_377 = Some(state);
+            wall.wall_model2_state = Some(state);
         }
         let prior_model2 = SceneModel::LocAnim(ClientLocAnim::new(
             &cache,
@@ -6851,7 +6840,7 @@ mod wall_anim_377_tests {
     }
 
     #[test]
-    fn r289_non_l_loc_anim_still_clears_second_wall_model() {
+    fn r289_non_l_loc_anim_preserves_static_second_wall_model() {
         let mut cache = Cache::default();
         cache.seqs.resize_with(8, Default::default);
         let mut world = wall_world(LocShape::WALL_L);
@@ -6864,11 +6853,26 @@ mod wall_anim_377_tests {
             None,
             Some(SceneModel::Model(Model::default())),
         );
+        world
+            .get_wall_mut(0, 0, 0)
+            .expect("fixture wall")
+            .wall_model2_state = Some(WallModel2State {
+            sequence: None,
+            angle: 1,
+            h_sw: 10,
+            h_se: 20,
+            h_ne: 30,
+            h_nw: 40,
+            start_cycle: 0,
+        });
 
         animate_wall(&mut world, 4, LocShape::WALL_STRAIGHT, 1);
         assert!(
-            renderer.wall_model2(&world, &cache, 0, 0, 0, 0).is_none(),
-            "the legacy resolver keeps clearing model2 on non-2 LOC_ANIM"
+            matches!(
+                renderer.wall_model2(&world, &cache, 0, 0, 0, 0),
+                Some(SceneModel::Model(_))
+            ),
+            "a non-2 LOC_ANIM must not clear the static second wall model"
         );
     }
 }
@@ -6906,18 +6910,7 @@ mod ground_decor_anim_tests {
             let cache = cache(revision_377);
             let mut world = World::new(vec![vec![vec![0; 2]; 2]; 1], 1, 1, 1);
             world.fill_base_level(0);
-            world.set_ground_decor(
-                0,
-                0,
-                0,
-                0,
-                0,
-                (placement_angle << 6) | 22,
-                10,
-                20,
-                30,
-                40,
-            );
+            world.set_ground_decor(0, 0, 0, 0, 0, (placement_angle << 6) | 22, 10, 20, 30, 40);
             let mut renderer = RenderWorld::new();
 
             match renderer

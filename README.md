@@ -266,7 +266,7 @@ four corner heights, wall/decoration shapes, angles, and strict edge bounds.
 A wall animation with packet shape other than 2 replaces only the first
 model. The second model keeps its static placement or earlier animation,
 including when multiple packets arrive before the first rendered frame.
-The 274/289 animation paths remain unchanged.
+The same wall replacement rule applies to revisions 274 and 289.
 
 The 377 local Close action unloads the side, chat and main layers, restoring
 decoded component defaults while retaining inventory contents. In every revision,

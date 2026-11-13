@@ -392,16 +392,7 @@ impl ZoneOperation {
                 );
                 match LOC_SHAPE_TO_LAYER[shape as usize] {
                     LocLayer::WALL => {
-                        if let Some(w) = c.world.get_wall_mut(level, x, z) {
-                            w.anim_seq = seq;
-                            w.anim_shape = shape;
-                            w.anim_angle = angle;
-                            w.h_sw = sw;
-                            w.h_se = se;
-                            w.h_ne = ne;
-                            w.h_nw = nw;
-                            c.world.bump_loc_stamp(level, x, z, LocLayer::WALL);
-                        }
+                        c.animate_wall(x, z, shape, angle, seq, (sw, se, ne, nw));
                     }
                     LocLayer::WALL_DECOR => {
                         if let Some(w) = c.world.get_decor_mut(level, x, z) {

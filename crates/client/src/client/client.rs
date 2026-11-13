@@ -10554,17 +10554,14 @@ impl Client {
                     // renderer's lazy cache re-resolves).
                     match layer {
                         LocLayer::WALL => {
-                            if let Some(wall) = self.world.get_wall_mut(self.minusedlevel, x, z) {
-                                wall.anim_seq = seq;
-                                wall.anim_shape = shape;
-                                wall.anim_angle = rotate;
-                                wall.h_sw = height_sw;
-                                wall.h_se = height_se;
-                                wall.h_ne = height_ne;
-                                wall.h_nw = height_nw;
-                                self.world
-                                    .bump_loc_stamp(self.minusedlevel, x, z, LocLayer::WALL);
-                            }
+                            self.animate_wall(
+                                x,
+                                z,
+                                shape,
+                                rotate,
+                                seq,
+                                (height_sw, height_se, height_ne, height_nw),
+                            );
                         }
                         LocLayer::WALL_DECOR => {
                             // `getDecor(level, z, x)` in the TS swaps its
