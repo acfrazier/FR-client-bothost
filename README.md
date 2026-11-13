@@ -264,8 +264,8 @@ including when multiple packets arrive before the first rendered frame.
 The 274/289 animation paths remain unchanged.
 
 The 377 local Close action unloads the side, chat and main layers, restoring
-decoded component defaults while retaining inventory contents. As Java 377
-does, only an open side or chat layer clears the Continue debounce.
+decoded component defaults while retaining inventory contents. In every revision,
+only an open side or chat layer clears the Continue debounce.
 `live_interactions_377::local_close_unloads_guide_text_and_resets_continue_377`
 checks this on a fresh account with real Guide dialogue and no state seeds.
 Run that ignored test by its exact name to avoid the longer tutorial proof.

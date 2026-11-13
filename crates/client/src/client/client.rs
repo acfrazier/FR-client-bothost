@@ -7890,13 +7890,14 @@ impl Client {
             self.side_modal_id = -1;
             self.redraw_side = true;
             self.redraw_icons = true;
+            self.resumed_pause_button = false;
         }
         if self.chat_modal_id != -1 {
             self.chat_modal_id = -1;
             self.redraw_chat = true;
+            self.resumed_pause_button = false;
         }
         self.main_modal_id = -1;
-        self.resumed_pause_button = false;
     }
 
     /// `buildMinimenu` from Client.ts (2514-2599): rebuild the minimenu
