@@ -3783,6 +3783,16 @@ impl Client {
             self.tut_com_id = -1;
             self.tut_com_message = None;
             self.tut_flash_icon = -1;
+            self.in_multizone = 0;
+            self.oplogic1 = 0;
+            self.oplogic2 = 0;
+            self.oplogic3 = 0;
+            self.oplogic4 = 0;
+            self.oplogic5 = 0;
+            self.oplogic6 = 0;
+            self.oplogic7 = 0;
+            self.oplogic8 = 0;
+            self.oplogic9 = 0;
             self.minimap_level = -1;
             self.minimap_flag_x = 0;
             self.minimap_flag_z = 0;

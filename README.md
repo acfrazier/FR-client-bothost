@@ -190,8 +190,8 @@ level presentation, not a modern floating XP overlay. Revision 377's
 inventory buttons 1–5 and item drag use Java's transformed packet bodies,
 including bank 10/X amounts, shop quantities, smithing and trade. Every
 Java 377 `OP*` menu packet has a revision-specific writer and dispatch;
-the 274/289 layouts and default revision stay unchanged. A cold 377 login
-clears the multiway overlay, while a reconnect preserves it as Java does.
+the 274/289 layouts and default revision stay unchanged. Every cold login
+clears the multiway flag and menu anticheat counters. Reconnect preserves them.
 
 Revision-377 public chat uses Java's case-insensitive colour and effect
 prefixes, then writes colour with `p1_alt2` and effect with `p1_alt1`.

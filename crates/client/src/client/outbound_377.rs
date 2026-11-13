@@ -299,9 +299,9 @@ impl Client {
         }
     }
 
-    /// Reset the Java input fields and menu counters after cold login acceptance.
+    /// Reset the Java input fields after cold login acceptance.
     ///
-    /// Java: `Client.java:2742-2746,2761-2762,2821-2841`.
+    /// Java: `Client.java:2742-2746,2761-2762`.
     pub(crate) fn cold_login_input_377(&mut self) {
         self.outbound.r377_mut().last_click_time = 0;
         self.outbound.r377_mut().duplicates = 0;
@@ -311,16 +311,6 @@ impl Client {
         if let Some(shared) = &self.shell.mouse_samples {
             shared.lock().unwrap().samples.clear();
         }
-        self.oplogic1 = 0;
-        self.oplogic2 = 0;
-        self.oplogic3 = 0;
-        self.oplogic4 = 0;
-        self.oplogic5 = 0;
-        self.oplogic6 = 0;
-        self.oplogic7 = 0;
-        self.oplogic8 = 0;
-        self.oplogic9 = 0;
-        self.in_multizone = 0;
     }
 
     fn mouse_packet_377(&mut self) {
