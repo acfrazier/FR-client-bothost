@@ -102,6 +102,8 @@ LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
 as Java does.
 The 289 IF_SETOBJECT sentinel clears only the model type. The stored model
 ID and transform values remain unchanged.
+Brightness settings always invalidate object icons and request a frame
+redraw. Values outside 1–4 leave the brightness itself unchanged.
 
 ## Tests
 

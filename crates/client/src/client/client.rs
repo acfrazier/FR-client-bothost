@@ -14347,17 +14347,18 @@ impl Client {
         }
         if clientcode == 1 {
             let brightness = match value {
-                1 => 0.9,
-                2 => 0.8,
-                3 => 0.7,
-                4 => 0.6,
-                _ => return,
+                1 => Some(0.9),
+                2 => Some(0.8),
+                3 => Some(0.7),
+                4 => Some(0.6),
+                _ => None,
             };
-            Pix3D::init_colour_table(brightness);
-            // The texture-palette half of the brightness change runs on the
-            // renderer (the texels are its state); defer it to the next
-            // `game_draw` via `pending_brightness`.
-            self.pending_brightness = Some(brightness);
+            if let Some(brightness) = brightness {
+                Pix3D::init_colour_table(brightness);
+                // The texture-palette half runs on the renderer, so defer
+                // it to the next `game_draw`.
+                self.pending_brightness = Some(brightness);
+            }
             ObjType::clear_sprite_cache();
             self.redraw_frame = true;
             return;
