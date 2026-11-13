@@ -125,6 +125,7 @@ fn mouse_loop_viewport_click_arms_picking() {
     let mut c = client();
     c.ingame = true;
     c.local_player = Some(ClientPlayer::at(10, 10));
+    c.shell.apply_mouse_move(100, 80);
     c.shell.apply_mouse_down(1, 100, 80);
     c.shell.latch_click();
     c.build_minimenu();
