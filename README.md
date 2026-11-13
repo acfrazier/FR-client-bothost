@@ -88,20 +88,27 @@ More CLI detail: [`crates/client-play/README.md`](crates/client-play/README.md).
 
 Revision 289 chat-head cache keys use Java's wrapping sum, including the
 transformed NPC offset. Different hair and hat appearances retain distinct keys.
+
 Interface animation resets recurse only through type-1 children in all
 revisions. Type-0 nested layers retain their descendant animation state.
+
 The 289 open-interface handlers request redraws only for the areas that
 Java redraws. An already-closed side or chat layer adds no redraw request.
+
 Unwritten varps have Java's implicit zero value. Receiving or synchronizing
 zero does not change settings or request a redraw.
+
 The 289 welcome components display last-login, unread-message and recovery
 state with Java's text and colours. Codes 650 and 655 share the login text.
 The address uses host-provided DNS text or the dotted IP without network IO.
 Moderator mute text follows the privilege level and mute option.
+
 LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
 as Java does.
+
 The 289 IF_SETOBJECT sentinel clears only the model type. The stored model
 ID and transform values remain unchanged.
+
 Brightness settings always invalidate object icons and request a frame
 redraw. Values outside 1–4 leave the brightness itself unchanged.
 
