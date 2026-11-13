@@ -4501,9 +4501,8 @@ impl Renderer {
     }
 
     /// `animateInterface` from client-ts (10552): advance the animation of
-    /// `id`'s children by `delta`, recursing `TYPE_LAYER` children (the
-    /// layer recursion is 0, not TS `type === 1`, matching
-    /// `if_anim_reset`). A `TYPE_MODEL` child with a model anim selects the
+    /// `id`'s children by `delta`, recursing `TYPE_LAYER` children.
+    /// A `TYPE_MODEL` child with a model anim selects the
     /// active/inactive seq (`get_if_active` picks `model_anim2` else
     /// `model_anim`), adds `delta` to `anim_cycle`, and steps `anim_frame`
     /// while the cycle exceeds the frame delay, wrapping with `loops` (TS

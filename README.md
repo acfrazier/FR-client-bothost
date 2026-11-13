@@ -88,6 +88,8 @@ More CLI detail: [`crates/client-play/README.md`](crates/client-play/README.md).
 
 Revision 289 chat-head cache keys use Java's wrapping sum, including the
 transformed NPC offset. Different hair and hat appearances retain distinct keys.
+Interface animation resets recurse only through type-1 children in all
+revisions. Type-0 nested layers retain their descendant animation state.
 
 ## Tests
 

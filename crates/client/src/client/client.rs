@@ -6071,10 +6071,9 @@ impl Client {
         self.minimap_state = payload.g1();
     }
 
-    /// `ifAnimReset` from client-ts (10534): walk `id`'s children, zeroing
-    /// each child's `anim_frame`/`anim_cycle` and recursing `TYPE_LAYER`
-    /// children (the layer recursion is 0, not TS `type === 1`). Missing
-    /// children or missing child ids stop the walk.
+    /// Java's `ifAnimReset` resets direct children and recurses only into
+    /// type-1 children (274 Client.java:2017, 289 client.java:8824,
+    /// 377 Client.java:11544). Missing children stop the walk.
     pub fn if_anim_reset(&mut self, id: i32) {
         let Some(children) = self.if_(id as usize).and_then(|com| com.children.clone()) else {
             return;
@@ -6086,7 +6085,7 @@ impl Client {
             let Some(child) = self.if_(child_id as usize) else {
                 return;
             };
-            if child.r#type == ComponentType::TYPE_LAYER {
+            if child.r#type == ComponentType::TYPE_UNUSED {
                 self.if_anim_reset(child.id);
             }
             if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)

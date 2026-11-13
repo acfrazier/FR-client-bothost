@@ -1836,7 +1836,7 @@ fn animate_interface_advances_model_frame() {
 }
 
 #[test]
-fn if_anim_reset_zeros_nested_layer_child() {
+fn if_anim_reset_preserves_nested_layer_child() {
     let _r = Renderer::new(false);
     let mut c = client();
     let root = IfType {
@@ -1864,8 +1864,8 @@ fn if_anim_reset_zeros_nested_layer_child() {
     c.set_iface(3, model);
     c.set_iface_mut(3, model_mut);
     c.if_anim_reset(1);
-    assert_eq!(c.if_(3).unwrap().anim_frame, 0);
-    assert_eq!(c.if_(3).unwrap().anim_cycle, 0);
+    assert_eq!(c.if_(3).unwrap().anim_frame, 4);
+    assert_eq!(c.if_(3).unwrap().anim_cycle, 9);
 }
 
 #[test]
