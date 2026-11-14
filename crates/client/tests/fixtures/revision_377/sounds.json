@@ -1,0 +1,221 @@
+{
+  "capacity": 5000,
+  "decoded_bytes": 929467,
+  "high_ids": 1727,
+  "java_sources": {
+    "src/main/java/deob/ObfuscatedName.java": "12744e2b3bbf44e0ebffcb564f42efc48cb9b5034ec225a5d8491dbb2daf033f",
+    "src/main/java/jagex2/client/Client.java": "09f77c9540f2a2fa85cd9c4f158b5eff70baf0ae9d1c509478f53f6546f4cf6c",
+    "src/main/java/jagex2/client/GameShell.java": "442cc983a5739afa5b86f45d5e544b3ecde6a848f441d6d672c1d6e723d27f50",
+    "src/main/java/jagex2/client/MouseTracking.java": "326101257524f4f1e560e1f66c067c6d95e3effaa158bd47fd2b76fe3feb5bcb",
+    "src/main/java/jagex2/client/Stats.java": "8668fff8158e8739ae43b2b8fc829026dd6db6f21cbcba3a26a584bbd84f8150",
+    "src/main/java/jagex2/client/ViewBox.java": "b269dcef9e71d772d9b39acb12726a99c883158ad73f1b2748d6fe2b25738fd6",
+    "src/main/java/jagex2/config/Component.java": "f7248b957a6933f0197e51a730cfc56fac3a3e5d1fbef01e1b9b9b59f44ed1b2",
+    "src/main/java/jagex2/config/FloType.java": "85d3ba410101e7179b19f99afdc430cbb240473800a338c1b88b7611aaf729fe",
+    "src/main/java/jagex2/config/IdkType.java": "800a80d3022a883b1099d7d1904584800abf24104bad3618303a591119761f67",
+    "src/main/java/jagex2/config/LocType.java": "b272d6b38fbcdd5b5780b15f518a154e0a89be09aadd74c46347dfd781157946",
+    "src/main/java/jagex2/config/NpcType.java": "b4cb25b75d9dc896061d13c8c9f92fec0f912f7ba6c9f78ca60226cb11f83fcc",
+    "src/main/java/jagex2/config/ObjType.java": "bbb8435aa97072f2c76c55af324ce20764da4dc9a94be815a09dd8abaae088ce",
+    "src/main/java/jagex2/config/SeqType.java": "7daf285c739684c96b400ad16311be0a06c0ecd728b58604a6a5c6c321aa1df6",
+    "src/main/java/jagex2/config/SpotAnimType.java": "7d4511ab9715c2fe143e7861c424b9dda94ace55cbca19a8b4c67374a703fae6",
+    "src/main/java/jagex2/config/UnkType.java": "3d1503d244e3f5e6503a011766f81a02dc9a4e65bada162169541ff4fd3311f8",
+    "src/main/java/jagex2/config/VarbitType.java": "170c005c0b8516b84bbf6589d8af4ceafc323d956138e19e380515628289461d",
+    "src/main/java/jagex2/config/VarpType.java": "63326c633f754093b3e7e2bbbb163d114745a8f9d737b4081c40ee6b53401d71",
+    "src/main/java/jagex2/dash3d/AnimBase.java": "bf91b97a52f5c74163397a49d243a766106819a386ea5b8f48761646640df294",
+    "src/main/java/jagex2/dash3d/AnimFrame.java": "1bf7b1f5772269dc9ae0cb8e9c572132163396b8143f6b9abcb8c64d47cb146a",
+    "src/main/java/jagex2/dash3d/ClientEntity.java": "beb723a48811af20b66490a1ffc850e827fcd63bff636e95bfd9cb4ddfdd4169",
+    "src/main/java/jagex2/dash3d/ClientLocAnim.java": "831885bd48616ee76993867f8fe36f6a0bbc35a395d5e402da32e179f971cc06",
+    "src/main/java/jagex2/dash3d/ClientNpc.java": "314d7137c8ebba45641f72cda9bb9f5cdfaf0569958711080de6a285b7c3f760",
+    "src/main/java/jagex2/dash3d/ClientObj.java": "1b9b505f531101b0e2f5a2f80f26b52e31b9e1e245846998f736b9706f7ad7be",
+    "src/main/java/jagex2/dash3d/ClientPlayer.java": "1da1965a2bf35819133b27b6ec9c27f8b4a43a33282689efd655f4c6bcacf1a1",
+    "src/main/java/jagex2/dash3d/ClientProj.java": "73994e201600c0a0e4991e2d4a747a7468ac37e23cab3350d34fd5de92c3a4c2",
+    "src/main/java/jagex2/dash3d/CollisionMap.java": "59fbfc43a18f8f508eb0654e6a9ffb7e1666995cf3aa317c1fa89b3a81150c8f",
+    "src/main/java/jagex2/dash3d/Decor.java": "e48bfd49d18dd28397c807ee2925fa362758faed861bf0914d2294cdf9bd8c82",
+    "src/main/java/jagex2/dash3d/Ground.java": "81c3206529b2dd331c70467b92c342bd20dac847816c969ec835ded67096d665",
+    "src/main/java/jagex2/dash3d/GroundDecor.java": "623797685000e5a1304a8ac2fb184bc1002e4e1f2bcc9703f7efe90a8688fe1a",
+    "src/main/java/jagex2/dash3d/GroundObject.java": "9a3d8f6bdb1db8381d2bc360747beb0e1f45686e8d3e961220c7b5412a5daf6d",
+    "src/main/java/jagex2/dash3d/LocChange.java": "9fcfe76f9c19f987950d55f93860c09a1cca8846f016d31e07e90bb7ae640dd3",
+    "src/main/java/jagex2/dash3d/MapSpotAnim.java": "f0938ccb0e66982c41ab46311bb6b07128ee2a8d39d51e451ee365090876ac8c",
+    "src/main/java/jagex2/dash3d/Metadata.java": "128d956f5d17afcc28870b506065b31130c59d4697440033620870552cec0425",
+    "src/main/java/jagex2/dash3d/Model.java": "ac684118e7bc514829f60738ce824bed966465f11b89e4c7efddf0d56672c44f",
+    "src/main/java/jagex2/dash3d/ModelSource.java": "a16c7642581174db560bbdb244aab88cfe59ccf8cc96704949800eb114ab2d69",
+    "src/main/java/jagex2/dash3d/Occlude.java": "9f55be9973e10465ef62c1be57e79c76802c2b178e1dbdf62634f34a61c05919",
+    "src/main/java/jagex2/dash3d/QuickGround.java": "08eafa6a8c4bf1422424eee4932a0ce7a951a6408e6278e997c9f96b74192a52",
+    "src/main/java/jagex2/dash3d/Sprite.java": "b1325d5f5be654c2f39c90b94065332ca6ab99b37bf6390adf171d691f0aa567",
+    "src/main/java/jagex2/dash3d/Square.java": "6a2d5eef44c55ee3e07654040f35ef1601532642fbcfa1621c3877482ea7d170",
+    "src/main/java/jagex2/dash3d/VertexNormal.java": "3a864649e61968b0f05f51889fff04f4ebb0f1d09d55c0e41cfcbe01f9ce816a",
+    "src/main/java/jagex2/dash3d/Wall.java": "59267d00ccdd21a4d7cea666626e9084f9cb4b6674a85785f4bd127e43db5a28",
+    "src/main/java/jagex2/dash3d/World.java": "17068ae20e1e5f9c615f3ca083e0b9493f0ecaae238ba683ed8f4201f154a90c",
+    "src/main/java/jagex2/dash3d/World3D.java": "96d74edf334b2c259a738d53a83038f349f6ca5898e8733465eaa0c7bf237309",
+    "src/main/java/jagex2/dash3d/WorldRegion.java": "fd765bfd058aff240b83649a53d9b604cfe2fe65975d462aa8830c41ebbff637",
+    "src/main/java/jagex2/datastruct/DoublyLinkList.java": "94cc33ff3b98db43c8132cd92fdccc4851e1be8f1d9146d7b5153893ba20ff44",
+    "src/main/java/jagex2/datastruct/DoublyLinkable.java": "5dcf0497378a7200726a96533da1ed1aab248f3b9e1ba4649ebc146a4b7add11",
+    "src/main/java/jagex2/datastruct/HashTable.java": "5bb1724f07c9de379edb9acca8f2dc6d0bcd9eddf5d78cde5a90804b5bfb4756",
+    "src/main/java/jagex2/datastruct/LinkList.java": "bc3466124b8730ec43b2447495f4824e760c6524e7d7da0f2d8215692f3ae9ea",
+    "src/main/java/jagex2/datastruct/Linkable.java": "aa40dc59c897f651e435dd802fb3649afe162de8f087bc196db158e266a0887e",
+    "src/main/java/jagex2/datastruct/LruCache.java": "382132808a0b1078eca11e810b639a3f7415927cd0222d21e5d581c20cb3f30a",
+    "src/main/java/jagex2/graphics/Pix2D.java": "27e0b5a63907f20dbea70638b0c7d34db0783ebe1ab3206e4242c42cbc44abf8",
+    "src/main/java/jagex2/graphics/Pix32.java": "1b268d1d321b7aa62dd635268793cc4ea25ac60a54c6e1203a17ed06acaf0feb",
+    "src/main/java/jagex2/graphics/Pix3D.java": "6f232d6f029db92587a1ce53a09e3042f32dd633796809a76f24c3ba64b125d0",
+    "src/main/java/jagex2/graphics/Pix8.java": "f1298afc54b336b8e7a98f2494b8321accb076ba271c6df4184fc0f502bbf0a4",
+    "src/main/java/jagex2/graphics/PixFont.java": "d138425c1a9c99a994dee782d8c9ddf1c3e777e5eb01f81c5913bc98a7eec543",
+    "src/main/java/jagex2/graphics/PixMap.java": "9821458b2accc6f8603e48d8f2ac66bc222be1c6f3b1fbe2d0e43c255511b7e3",
+    "src/main/java/jagex2/io/BZip2.java": "9b9a3c3cbedd9800d6479238d09021c8bdc2d0dc63ad234d11bdf6b16310514a",
+    "src/main/java/jagex2/io/BZip2State.java": "954f066cd4bd7246d852706dab413944060a80e7df92c9886075b94e43a7a06f",
+    "src/main/java/jagex2/io/ClientStream.java": "2d54214c8f49d9fc6a46a9f4bae696403c761ed09b82dccaf7c6ebddf293e426",
+    "src/main/java/jagex2/io/FileStream.java": "8958936d8ded6b94502498f3e04f979ed80f5d76ffd997f4d4c101e1216820fd",
+    "src/main/java/jagex2/io/Isaac.java": "2447d1fe12adf366ad394c734e48761c46d9a784e04b58b8c1755c821e3cd258",
+    "src/main/java/jagex2/io/Jagfile.java": "ca4dd7783f522ac9a69b975505a8bab650b7fcb45a9c17dc6ade22637cbb9f07",
+    "src/main/java/jagex2/io/OnDemand.java": "6dede5b2e9fa6a7ed71a77bdb1718b2465418e625a44803ae753d6faeab99c69",
+    "src/main/java/jagex2/io/OnDemandProvider.java": "f1e8b376f2223601f0dae374fb8297b857b11771b7b388a45a51e9333683635d",
+    "src/main/java/jagex2/io/OnDemandRequest.java": "f0382ff7d211e65db6bf94420d5f233d63ced7cb88b113b17533089a552a5fbd",
+    "src/main/java/jagex2/io/Packet.java": "9036f54fe35f2391a46c92b9e0ab05bef5e8827de62dbf8eae602755174c019e",
+    "src/main/java/jagex2/io/Protocol.java": "6e7d6b49309217e120aaf69be23a5662ca89097168754e9ac67697695f6da52e",
+    "src/main/java/jagex2/jstring/JString.java": "adb3a9c32940c05b4bbda8353ba6c3306d14a09812e64f8e5347451f0b851abf",
+    "src/main/java/jagex2/sound/Envelope.java": "05c2a6ff4ce5d30b13f058edea1fa4479c61772d27aac57bd94d5a30acc41217",
+    "src/main/java/jagex2/sound/Filter.java": "14bd67cba7dc1aec358b6d437570edb6f28017958b5d41c7df8d8270dcd60aed",
+    "src/main/java/jagex2/sound/Tone.java": "0a42ef19f4e8ee98aac02d2268b874f69250c5b8f7a72357b2bd6392dfdb24c6",
+    "src/main/java/jagex2/sound/Wave.java": "87058c1a157dd309c3fbd640952fae416178657c1cf09477e733cfff50eae386",
+    "src/main/java/jagex2/wordenc/WordFilter.java": "89388ab2c42c1ec8d479190fec44fae01a333c7c79249ace4bf87913e3968717",
+    "src/main/java/jagex2/wordenc/WordPack.java": "e438427735af0e78ecde24a6b73bb43025c41596adf4c07f44e11bc8108c200a",
+    "src/main/java/sign/MidiPlayer.java": "8ffee7693d7cd3ef59f1959bab16809540a7eff11ddf094b6a1c7fd2aeeb0223",
+    "src/main/java/sign/signlink.java": "08b6aedcd49d9910a30f52772b66f10c6d952285946fede02c61471eaa70352f"
+  },
+  "oracle": "untouched Client-Java 377 Wave.unpack/method481",
+  "present": 2727,
+  "projection": "null or [delay, loop_begin, loop_end, ten null-or-[length,start] tones]",
+  "revision": 377,
+  "rows_sha256": "d00ea2e3d5ae0513399fc4c067b374c34ce3a3956c8c2f6bbee0caddce15fd78",
+  "samples": {
+    "0": [
+      0,
+      0,
+      0,
+      [
+        [
+          800,
+          0
+        ],
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    ],
+    "1000": [
+      0,
+      0,
+      0,
+      [
+        null,
+        null,
+        [
+          2000,
+          0
+        ],
+        [
+          2000,
+          0
+        ],
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    ],
+    "1278": [
+      7,
+      0,
+      0,
+      [
+        [
+          150,
+          10
+        ],
+        [
+          250,
+          160
+        ],
+        [
+          500,
+          360
+        ],
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    ],
+    "1863": [
+      0,
+      0,
+      0,
+      [
+        [
+          425,
+          0
+        ],
+        null,
+        [
+          100,
+          175
+        ],
+        [
+          40,
+          250
+        ],
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    ],
+    "2726": [
+      24,
+      0,
+      0,
+      [
+        [
+          500,
+          20
+        ],
+        [
+          500,
+          20
+        ],
+        [
+          525,
+          20
+        ],
+        [
+          500,
+          20
+        ],
+        [
+          350,
+          20
+        ],
+        [
+          150,
+          0
+        ],
+        null,
+        null,
+        null,
+        null
+      ]
+    ]
+  },
+  "sounds_sha256": "ddaee328de58930390ac9170c4da5d33a2fe04bc40a0b8224139a4f18d4cd513"
+}

@@ -3,6 +3,7 @@
 //! `SYNTH_SOUND`. No tinymidipcm, no Spessa.
 
 pub mod jagfx;
+pub mod jagfx_377;
 pub mod midi;
 pub mod output;
 pub mod tone;

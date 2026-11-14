@@ -28,6 +28,7 @@
 use crate::dash3d::{
     Decor, GroundDecor, GroundObject, GroundStamp, LocLayer, Occlude, Sprite, Square, Wall,
 };
+use crate::io::ClientRevision;
 
 pub const OCCLUDER_LEVELS: usize = 4;
 pub const MAX_OCCLUDERS: usize = 500;
@@ -178,7 +179,24 @@ impl World {
     }
 
     pub fn fill_base_level(&mut self, level: i32) {
+        self.fill_base_level_with_revision(level, ClientRevision::R274);
+    }
+
+    /// Keep Java's empty-square painter dependencies only for explicit 377
+    /// builds. Pass the revision at build time without enlarging every client.
+    pub fn fill_base_level_with_revision(&mut self, level: i32, revision: ClientRevision) {
         self.min_level = level;
+        if !revision.is_377() {
+            return;
+        }
+        // Java 377 World3D.method275: empty squares participate in the fill
+        // queue's adjacency ordering even though they emit no fragments.
+        for x in 0..self.max_tile_x {
+            for z in 0..self.max_tile_z {
+                self.squares[level as usize][x as usize][z as usize]
+                    .get_or_insert_with(|| Box::new(Square::new(level, x, z)));
+            }
+        }
     }
 
     pub fn push_down(&mut self, stx: i32, stz: i32) {
@@ -1229,6 +1247,44 @@ mod size_tests {
         }
         assert_eq!(n, 0, "empty plane must stay None holes, got {n}");
         assert_eq!(w.min_level, 0);
+    }
+
+    #[test]
+    fn r377_base_fill_creates_empty_squares_and_preserves_existing_contents() {
+        let mut world = World::new(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4);
+        let mut occupied = Square::new(1, 1, 2);
+        occupied.draw_level = 7;
+        world.squares[1][1][2] = Some(Box::new(occupied));
+
+        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
+        assert_eq!(world.min_level, 1);
+        assert!(world.squares[1].iter().flatten().all(Option::is_some));
+        assert!(world.squares[0].iter().flatten().all(Option::is_none));
+        assert_eq!(world.square(1, 1, 2).unwrap().draw_level, 7);
+
+        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
+        assert_eq!(world.square(1, 1, 2).unwrap().draw_level, 7);
+        world.reset_map();
+        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
+        assert!(world.squares[1].iter().flatten().all(Option::is_some));
+    }
+
+    #[test]
+    fn explicit_r274_and_r289_base_fill_keep_the_existing_sparse_behavior() {
+        for revision in [
+            crate::io::ClientRevision::R274,
+            crate::io::ClientRevision::R289,
+        ] {
+            let mut world = World::new(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4);
+            world.fill_base_level_with_revision(1, revision);
+            assert_eq!(world.min_level, 1);
+            assert!(world
+                .squares
+                .iter()
+                .flatten()
+                .flatten()
+                .all(Option::is_none));
+        }
     }
 }
 

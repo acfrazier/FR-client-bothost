@@ -810,6 +810,96 @@ fn idle_real_loop_threshold_and_repeat_subtract_500() {
 }
 
 #[test]
+fn host_owned_client_suppresses_the_idle_timer_unless_the_host_opts_in() {
+    let mut c = client(ClientRevision::R289);
+    c.set_external_reconnect_owner(true);
+    for _ in 0..5001 {
+        c.last_outbound = Instant::now();
+        c.out.pos = 0;
+        c.game_loop();
+        assert_ne!(
+            c.out.data()[..c.out.pos].last(),
+            Some(&145),
+            "a host-owned client sends no idle request by default"
+        );
+    }
+    assert_eq!(c.shell.idle_cycles, 0);
+    assert_eq!(c.logout_timer, 0);
+}
+
+#[test]
+fn host_idle_timer_runs_the_java_timer_for_a_host_owned_client() {
+    let mut c = client(ClientRevision::R289);
+    c.set_external_reconnect_owner(true);
+    c.set_host_idle_timer(true);
+    for tick in 1..=5001 {
+        c.last_outbound = Instant::now();
+        c.out.pos = 0;
+        c.game_loop();
+        let bytes = &c.out.data()[..c.out.pos];
+        assert_eq!(
+            bytes.last() == Some(&145),
+            tick == 4501 || tick == 5001,
+            "tick {tick}"
+        );
+        if tick == 4501 || tick == 5001 {
+            assert_eq!(c.logout_timer, 250);
+        }
+    }
+}
+
+#[test]
+fn host_idle_timer_is_switchable_per_frame_and_ignored_without_an_owner() {
+    let mut c = client(ClientRevision::R289);
+    c.set_external_reconnect_owner(true);
+    assert!(!c.host_idle_timer(), "off by default");
+    c.set_host_idle_timer(true);
+    assert!(c.host_idle_timer());
+    for _ in 0..100 {
+        c.game_loop();
+    }
+    assert_eq!(c.shell.idle_cycles, 100);
+    // A running script turns the timer off again; the count restarts.
+    c.set_host_idle_timer(false);
+    assert!(!c.host_idle_timer());
+    c.game_loop();
+    assert_eq!(c.shell.idle_cycles, 0);
+    // Dropping the owner clears the opt-in; the standalone client always
+    // runs the Java timer.
+    c.set_host_idle_timer(true);
+    c.set_external_reconnect_owner(false);
+    assert!(!c.host_idle_timer(), "the opt-in is for host-owned clients");
+    c.game_loop();
+    assert_eq!(c.shell.idle_cycles, 1);
+    c.set_external_reconnect_owner(true);
+    assert!(!c.host_idle_timer());
+    c.game_loop();
+    assert_eq!(
+        c.shell.idle_cycles, 0,
+        "re-owning the client does not restore the cleared opt-in"
+    );
+}
+
+#[test]
+fn host_idle_timer_request_reaches_the_server_and_its_logout_is_classified_as_idle() {
+    let mut c = client(ClientRevision::R289);
+    c.set_external_reconnect_owner(true);
+    c.set_host_idle_timer(true);
+    let mut server = attach_sink(&mut c);
+    write_idle_request(&mut c, &mut server);
+
+    let mut packet = Packet::new(vec![]);
+    c.psize = 0;
+    c.handle_packet(ServerProt289::LOGOUT, &mut packet);
+    assert_eq!(
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ServerLogout {
+            local_idle_request_pending: true,
+        })
+    );
+}
+
+#[test]
 fn successful_idle_write_then_r289_logout_is_observed_once() {
     let mut c = client(ClientRevision::R289);
     let mut server = attach_sink(&mut c);

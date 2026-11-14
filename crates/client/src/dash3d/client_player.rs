@@ -61,7 +61,14 @@ pub struct ClientPlayer {
     pub name: Option<String>,
     pub ready: bool,
     pub gender: i32,
-    pub headicons: i32,
+    /// Legacy 274/289 `g1` headicon bitmask.
+    pub headicons: u8,
+    /// Java 377 signed PK icon index (`field1678`); -1 means absent.
+    pub pk_icon_377: i8,
+    /// Java 377 signed prayer icon index (`field1670`); -1 means absent.
+    pub prayer_icon_377: i8,
+    /// Java 377 nonzero equipment-team value (`field1688`).
+    pub team_377: u8,
     pub appearance: [u16; 12],
     pub colour: [u16; 5],
     pub combat_level: i32,
@@ -106,6 +113,9 @@ impl Default for ClientPlayer {
             ready: false,
             gender: 0,
             headicons: 0,
+            pk_icon_377: -1,
+            prayer_icon_377: -1,
+            team_377: 0,
             appearance: [0; 12],
             colour: [0; 5],
             combat_level: 0,
@@ -145,7 +155,7 @@ impl ClientPlayer {
         buf.pos = 0;
 
         self.gender = buf.g1();
-        self.headicons = buf.g1();
+        self.headicons = buf.g1() as u8;
         self.transmog = None;
 
         for part in 0..12 {

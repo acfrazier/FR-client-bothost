@@ -18,9 +18,9 @@ pub(crate) struct Outbound289 {
 impl Client {
     pub(crate) fn cold_login_input_289(&mut self) {
         // J:8411-8415,8430. Last coordinate/camera/cycle counters persist.
-        self.outbound_289.last_click_time = 0;
-        self.outbound_289.duplicates = 0;
-        self.outbound_289.blurred = false;
+        self.outbound.legacy().last_click_time = 0;
+        self.outbound.legacy().duplicates = 0;
+        self.outbound.legacy().blurred = false;
         self.shell.focused = true;
         self.shell.idle_cycles = 0;
         if let Some(shared) = &self.shell.mouse_samples {
@@ -44,7 +44,7 @@ impl Client {
         self.out.p1_enc(opcode);
         self.out.p1(0);
         let start = self.out.pos;
-        let state = &mut self.outbound_289;
+        let state = self.outbound.legacy();
         // Authorized correction to J:5829's reversed cursor subtraction:
         // test the forward budget before each whole sample, retaining leftovers.
         while self.out.pos - start < 240 {
@@ -84,9 +84,10 @@ impl Client {
         self.mouse_packet_289();
         // J:5882-5907: snapshot before drag/tutorial/menu consume the click.
         if self.shell.mouse_click_button != 0 {
-            let elapsed = ((self.shell.mouse_click_time - self.outbound_289.last_click_time) / 50)
+            let elapsed = ((self.shell.mouse_click_time - self.outbound.legacy().last_click_time)
+                / 50)
                 .min(4095) as i32;
-            self.outbound_289.last_click_time = self.shell.mouse_click_time;
+            self.outbound.legacy().last_click_time = self.shell.mouse_click_time;
             let coordinate = self.shell.mouse_click_y.clamp(0, 502) * 765
                 + self.shell.mouse_click_x.clamp(0, 764);
             let button = i32::from(self.shell.mouse_click_button == 2);
@@ -94,7 +95,7 @@ impl Client {
                 .p1_enc(self.client_opcode(ClientProt::EVENT_MOUSE_CLICK));
             self.out.p4((elapsed << 20) + (button << 19) + coordinate);
         }
-        let state = &mut self.outbound_289;
+        let state = self.outbound.legacy();
         state.camera_delay = state.camera_delay.saturating_sub(1);
         if self.shell.key_held[1..=4].contains(&1) {
             state.camera_pending = true;
@@ -108,8 +109,8 @@ impl Client {
             self.out.p2(self.orbit_camera_pitch);
             self.out.p2(self.orbit_camera_yaw);
         }
-        if self.outbound_289.blurred == self.shell.focused {
-            self.outbound_289.blurred = !self.shell.focused;
+        if self.outbound.legacy().blurred == self.shell.focused {
+            self.outbound.legacy().blurred = !self.shell.focused;
             self.out
                 .p1_enc(self.client_opcode(ClientProt::EVENT_APPLET_FOCUS));
             self.out.p1(i32::from(self.shell.focused));

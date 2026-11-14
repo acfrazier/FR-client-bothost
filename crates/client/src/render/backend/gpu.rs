@@ -1975,6 +1975,9 @@ impl RenderBackend for GpuBackend {
             let level = if core.cinema_cam {
                 r.roof_check2(core)
             } else {
+                if core.revision().is_377() {
+                    core.top_level_packet_377(core.cam_pitch);
+                }
                 r.roof_check(core)
             };
 
@@ -2046,11 +2049,12 @@ impl RenderBackend for GpuBackend {
                 .unwrap()
                 .ensure_model_textures(&r.pix3d);
             let mut mesh = std::mem::take(&mut self.scene_mesh);
-            r.world.capture_scene(
+            r.world.capture_scene_with_varps(
                 &mut core.world,
                 &mut r.pix3d,
                 cache,
                 loop_cycle,
+                &core.var,
                 cam_x,
                 cam_y,
                 cam_z,

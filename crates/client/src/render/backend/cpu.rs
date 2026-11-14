@@ -112,6 +112,9 @@ impl RenderBackend for CpuBackend {
                         b.blit_into(&mut r.draw_area, 516, 4);
                     }
                 }
+                if core.revision().is_377() {
+                    core.redraw_frame_packet_377();
+                }
             }
         }
     }
@@ -179,6 +182,9 @@ impl RenderBackend for CpuBackend {
         let level = if core.cinema_cam {
             r.roof_check2(core)
         } else {
+            if core.revision().is_377() {
+                core.top_level_packet_377(core.cam_pitch);
+            }
             r.roof_check(core)
         };
 
@@ -247,12 +253,13 @@ impl RenderBackend for CpuBackend {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             surface.cls();
             pix3d.set_clipping(game.width, game.height);
-            world.render_all(
+            world.render_all_with_varps(
                 &mut core.world,
                 pix3d,
                 &mut surface,
                 cache,
                 loop_cycle,
+                &core.var,
                 cam_x,
                 cam_y,
                 cam_z,

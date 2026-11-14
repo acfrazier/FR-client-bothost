@@ -16,6 +16,8 @@ pub enum ClientRevision {
     R274,
     /// Source-grounded 289 offline/live profile (explicit opt-in).
     R289,
+    /// Fairy Ring revision 377 (explicit standalone opt-in).
+    R377,
 }
 
 impl ClientRevision {
@@ -23,6 +25,7 @@ impl ClientRevision {
         match self {
             ClientRevision::R274 => 274,
             ClientRevision::R289 => 289,
+            ClientRevision::R377 => 377,
         }
     }
 
@@ -31,6 +34,7 @@ impl ClientRevision {
         match self {
             ClientRevision::R274 => &SERVER_PROT_SIZES,
             ClientRevision::R289 => &SERVER_PROT_SIZES_289,
+            ClientRevision::R377 => &SERVER_PROT_SIZES_377,
         }
     }
 
@@ -40,6 +44,10 @@ impl ClientRevision {
 
     pub fn is_289(self) -> bool {
         matches!(self, ClientRevision::R289)
+    }
+
+    pub fn is_377(self) -> bool {
+        matches!(self, ClientRevision::R377)
     }
 }
 
@@ -117,6 +125,10 @@ impl ServerProt289 {
 // 289 `Class17.anIntArray209` lengths, generated from
 // `docs/revision-289/protocol-289.json` (primary pin 0c00ef24).
 include!("server_prot_sizes_289.inc.rs");
+
+// 377 `Protocol.SERVERPROT_LENGTH` lengths, generated from
+// `docs/revision-377/protocol-377.json` (primary pin 327880f6).
+include!("server_prot_sizes_377.inc.rs");
 
 #[cfg(test)]
 mod tests {

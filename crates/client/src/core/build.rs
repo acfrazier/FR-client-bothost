@@ -376,6 +376,9 @@ impl ClientBuild {
         let y = (height_sw + height_se + height_ne + height_nw) >> 2;
 
         let loc = cache.loc(loc_id as usize);
+        // Java 377 keeps a dynamic source for a morphing root even when
+        // the root has no models. Its selected child materialises later.
+        let morph = cache.loc_has_morph_377(loc_id as usize);
 
         let mut typecode = x
             .wrapping_add(z << 7)
@@ -391,7 +394,7 @@ impl ClientBuild {
             if !self.low_mem || loc.active || loc.forcedecor {
                 // `setGroundDecor` no-ops on a missing model (TS 803-805);
                 // the availability gate mirrors `getModel` without decoding.
-                if loc.get_model_available(LocShape::GROUND_DECOR, angle) {
+                if morph || loc.get_model_available(LocShape::GROUND_DECOR, angle) {
                     world.set_ground_decor(
                         level, x, z, y, typecode, typecode2, height_sw, height_se, height_ne,
                         height_nw,
@@ -417,7 +420,7 @@ impl ClientBuild {
                 (loc.width, loc.length)
             };
 
-            if loc.get_model_available(10, angle)
+            if (morph || loc.get_model_available(10, angle))
                 && world.add_scenery(
                     level, x, z, y, typecode, typecode2, width, height, yaw, height_sw, height_se,
                     height_ne, height_nw,
@@ -465,7 +468,7 @@ impl ClientBuild {
                 }
             }
         } else if shape >= LocShape::ROOF_STRAIGHT {
-            if loc.get_model_available(shape, angle) {
+            if morph || loc.get_model_available(shape, angle) {
                 world.add_scenery(
                     level, x, z, y, typecode, typecode2, 1, 1, 0, height_sw, height_se, height_ne,
                     height_nw,
@@ -487,7 +490,7 @@ impl ClientBuild {
         } else if shape == LocShape::WALL_STRAIGHT {
             // `setWall` no-ops on a missing model but the wall still blocks
             // walking (TS 924-928); only the visual placement is gated.
-            if loc.get_model_available(LocShape::WALL_STRAIGHT, angle) {
+            if morph || loc.get_model_available(LocShape::WALL_STRAIGHT, angle) {
                 world.set_wall(
                     level,
                     x,
@@ -552,7 +555,7 @@ impl ClientBuild {
                 world.move_decor(level, x, z, loc.wallwidth);
             }
         } else if shape == LocShape::WALL_DIAGONAL_CORNER {
-            if loc.get_model_available(LocShape::WALL_DIAGONAL_CORNER, angle) {
+            if morph || loc.get_model_available(LocShape::WALL_DIAGONAL_CORNER, angle) {
                 world.set_wall(
                     level,
                     x,
@@ -590,7 +593,8 @@ impl ClientBuild {
             let offset = (angle + 1) & 0x3;
 
             // `setWall` no-ops only when both models are missing.
-            if loc.get_model_available(2, angle + 4) || loc.get_model_available(2, offset) {
+            if morph || loc.get_model_available(2, angle + 4) || loc.get_model_available(2, offset)
+            {
                 world.set_wall(
                     level,
                     x,
@@ -633,7 +637,7 @@ impl ClientBuild {
                 world.move_decor(level, x, z, loc.wallwidth);
             }
         } else if shape == LocShape::WALL_SQUARE_CORNER {
-            if loc.get_model_available(LocShape::WALL_SQUARE_CORNER, angle) {
+            if morph || loc.get_model_available(LocShape::WALL_SQUARE_CORNER, angle) {
                 world.set_wall(
                     level,
                     x,
@@ -668,7 +672,7 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_DIAGONAL {
-            if loc.get_model_available(LocShape::WALL_DIAGONAL, angle) {
+            if morph || loc.get_model_available(LocShape::WALL_DIAGONAL, angle) {
                 world.add_scenery(
                     level, x, z, y, typecode, typecode2, 1, 1, 0, height_sw, height_se, height_ne,
                     height_nw,
@@ -698,7 +702,7 @@ impl ClientBuild {
 
             // `setDecor` no-ops on a missing model; only the visual
             // placement is gated.
-            let decor_available = loc.get_model_available(4, 0);
+            let decor_available = morph || loc.get_model_available(4, 0);
             if shape == LocShape::WALLDECOR_STRAIGHT_NOOFFSET {
                 if decor_available {
                     world.set_decor(
@@ -806,6 +810,7 @@ impl ClientBuild {
         let y = (height_sw + height_se + height_nw + height_ne) >> 2;
 
         let loc = cache.loc(loc_id as usize);
+        let morph = cache.loc_has_morph_377(loc_id as usize);
 
         let mut typecode = x
             .wrapping_add(z << 7)
@@ -818,7 +823,7 @@ impl ClientBuild {
         let typecode2 = ((angle << 6) + shape).wrapping_shl(24) >> 24;
 
         if shape == LocShape::GROUND_DECOR {
-            if loc.get_model_available(LocShape::GROUND_DECOR, angle) {
+            if morph || loc.get_model_available(LocShape::GROUND_DECOR, angle) {
                 world.set_ground_decor(
                     level, x, z, y, typecode, typecode2, height_sw, height_se, height_ne, height_nw,
                 );
@@ -842,7 +847,7 @@ impl ClientBuild {
                 (loc.width, loc.length)
             };
 
-            if loc.get_model_available(10, angle) {
+            if morph || loc.get_model_available(10, angle) {
                 world.add_scenery(
                     level, x, z, y, typecode, typecode2, width, height, yaw, height_sw, height_se,
                     height_ne, height_nw,
@@ -855,7 +860,7 @@ impl ClientBuild {
                 }
             }
         } else if shape >= LocShape::ROOF_STRAIGHT {
-            if loc.get_model_available(shape, angle) {
+            if morph || loc.get_model_available(shape, angle) {
                 world.add_scenery(
                     level, x, z, y, typecode, typecode2, 1, 1, 0, height_sw, height_se, height_ne,
                     height_nw,
@@ -868,7 +873,7 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_STRAIGHT {
-            if loc.get_model_available(LocShape::WALL_STRAIGHT, angle) {
+            if morph || loc.get_model_available(LocShape::WALL_STRAIGHT, angle) {
                 world.set_wall(
                     level,
                     x,
@@ -891,7 +896,7 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_DIAGONAL_CORNER {
-            if loc.get_model_available(LocShape::WALL_DIAGONAL_CORNER, angle) {
+            if morph || loc.get_model_available(LocShape::WALL_DIAGONAL_CORNER, angle) {
                 world.set_wall(
                     level,
                     x,
@@ -917,7 +922,8 @@ impl ClientBuild {
             let offset = (angle + 1) & 0x3;
 
             // `setWall` no-ops only when both models are missing.
-            if loc.get_model_available(2, angle + 4) || loc.get_model_available(2, offset) {
+            if morph || loc.get_model_available(2, angle + 4) || loc.get_model_available(2, offset)
+            {
                 world.set_wall(
                     level,
                     x,
@@ -940,7 +946,7 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_SQUARE_CORNER {
-            if loc.get_model_available(LocShape::WALL_SQUARE_CORNER, angle) {
+            if morph || loc.get_model_available(LocShape::WALL_SQUARE_CORNER, angle) {
                 world.set_wall(
                     level,
                     x,
@@ -963,7 +969,7 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_DIAGONAL {
-            if loc.get_model_available(LocShape::WALL_DIAGONAL, angle) {
+            if morph || loc.get_model_available(LocShape::WALL_DIAGONAL, angle) {
                 world.add_scenery(
                     level, x, z, y, typecode, typecode2, 1, 1, 0, height_sw, height_se, height_ne,
                     height_nw,
@@ -995,7 +1001,7 @@ impl ClientBuild {
 
             // `setDecor` no-ops on a missing model; only the visual
             // placement is gated.
-            let decor_available = loc.get_model_available(4, 0);
+            let decor_available = morph || loc.get_model_available(4, 0);
             if shape == LocShape::WALLDECOR_STRAIGHT_NOOFFSET {
                 if decor_available {
                     world.set_decor(

@@ -198,6 +198,35 @@ mod rusty {
                 sequencer.render(left, right);
             }
         }
+        /// Test-support entry point for the RPG Maker loop path. It uses the same
+        /// parser, prepared-song handling, sequencer, and render path as normal
+        /// playback; only the sequencer's loop flag is selectable here.
+        #[cfg(feature = "test-support")]
+        pub fn play_rpgmaker_with_loop_for_test(&mut self, data: &[u8], enabled: bool) -> bool {
+            let prepared = prepare(&self.cache_dir, self.sequencer.is_none(), data);
+            self.play_prepared_with_loop(PreparedSong(Box::new(prepared)), enabled)
+        }
+
+        fn play_prepared_with_loop(&mut self, song: PreparedSong, play_loop: bool) -> bool {
+            let Ok(prepared) = song.0.downcast::<Prepared>() else {
+                // Not from this backend's preparer: nothing was started.
+                return false;
+            };
+            let Prepared { sequencer, outcome } = *prepared;
+            if self.sequencer.is_none() {
+                self.sequencer = sequencer;
+            }
+            let midi_file = match outcome {
+                Outcome::Silent => return true,
+                Outcome::Rejected => return false,
+                Outcome::Song(midi_file) => midi_file,
+            };
+            let Some(sequencer) = &mut self.sequencer else {
+                return true;
+            };
+            sequencer.play(&midi_file, play_loop);
+            true
+        }
     }
 
     /// What a [`RustyMidi`] preparer hands back: the parsed song, and the
@@ -260,27 +289,11 @@ mod rusty {
         }
 
         fn play_prepared(&mut self, song: PreparedSong, _volume: i32, _fading: bool) -> bool {
-            let Ok(prepared) = song.0.downcast::<Prepared>() else {
-                // Not from this backend's preparer: nothing was started.
-                return false;
-            };
-            let Prepared { sequencer, outcome } = *prepared;
-            if self.sequencer.is_none() {
-                self.sequencer = sequencer;
-            }
-            let midi_file = match outcome {
-                Outcome::Silent => return true,
-                Outcome::Rejected => return false,
-                Outcome::Song(midi_file) => midi_file,
-            };
-            let Some(sequencer) = &mut self.sequencer else {
-                return true;
-            };
             // One-shot, like the native player behind Java `midisave`: a
             // finished song reports `is_playing()` false, so the next
-            // `saveMidi(fading=true)` replaces the file immediately.
-            sequencer.play(&midi_file, false);
-            true
+            // `saveMidi(fading=true)` replaces the file immediately. Loop
+            // playback stays behind the `test-support` entry point.
+            self.play_prepared_with_loop(song, false)
         }
 
         fn is_playing(&self) -> bool {

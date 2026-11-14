@@ -46,8 +46,8 @@ use crate::datastruct::LinkList;
 use crate::graphics::Pix3D;
 use crate::io::client_stream::{LoginCancel, StreamExitReason};
 use crate::io::{
-    ClientProt, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt,
-    ServerProt289,
+    ClientProt, ClientProt377, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet,
+    ServerProt, ServerProt289,
 };
 use crate::login_rsa;
 use crate::render::nav_debug::NavDebugPaint;
@@ -174,10 +174,13 @@ const PLAYER_OP_ACTIONS: [i32; 5] = [
 /// `main_modal_id` from the first interface with this code (TS
 /// `ClientCode.CC_REPORT_INPUT`).
 const CC_REPORT_INPUT: i32 = 600;
-/// Report-abuse reason buttons 601..=612 and mute toggle 613 (Java client_button).
+/// Report-action codes retained by each supported client profile.
 const CC_REPORT_REASON_START: i32 = 601;
-const CC_REPORT_REASON_END: i32 = 612;
-const CC_REPORT_MUTE: i32 = 613;
+const CC_REPORT_REASON_END_289: i32 = 612;
+const CC_REPORT_MUTE_289: i32 = 613;
+/// Java 377 includes rule 13 (reason 12); mute is a separate control.
+const CC_REPORT_REASON_END_377: i32 = 613;
+const CC_REPORT_MUTE_377: i32 = 620;
 
 /// Index of the local player in `players` (`Client.ts` `LOCAL_PLAYER_INDEX`);
 /// `game_draw_main`'s `addPlayers` uses it for the local-player typecode.
@@ -657,6 +660,8 @@ enum R289InterfaceOperation {
 mod actor_289;
 #[path = "misc_289.rs"]
 mod misc_289;
+#[path = "runtime_377.rs"]
+mod runtime_377;
 #[path = "zone_289.rs"]
 mod zone_289;
 
@@ -987,6 +992,45 @@ impl CheatSend {
     }
 }
 
+/// Mutually exclusive revision state. Legacy input remains inline; only an
+/// explicitly selected 377 client allocates the larger 377 telemetry state.
+/// The tagged slot preserves the established per-client memory footprint.
+pub(crate) enum OutboundState {
+    Legacy(super::outbound_289::Outbound289),
+    R377(Box<super::outbound_377::Outbound377>),
+}
+
+impl OutboundState {
+    fn new(revision: ClientRevision) -> Self {
+        if revision.is_377() {
+            Self::R377(Box::default())
+        } else {
+            Self::Legacy(Default::default())
+        }
+    }
+
+    pub(crate) fn legacy(&mut self) -> &mut super::outbound_289::Outbound289 {
+        match self {
+            Self::Legacy(state) => state,
+            Self::R377(_) => unreachable!("legacy input writer on a 377 session"),
+        }
+    }
+
+    pub(crate) fn r377(&self) -> &super::outbound_377::Outbound377 {
+        match self {
+            Self::R377(state) => state,
+            Self::Legacy(_) => unreachable!("377 input writer on a legacy session"),
+        }
+    }
+
+    pub(crate) fn r377_mut(&mut self) -> &mut super::outbound_377::Outbound377 {
+        match self {
+            Self::R377(state) => state,
+            Self::Legacy(_) => unreachable!("377 input writer on a legacy session"),
+        }
+    }
+}
+
 pub struct Client {
     pub shell: GameShell,
     /// The frame target the driver attaches (task 6 `PresentTarget`). `run`
@@ -1213,7 +1257,7 @@ pub struct Client {
     pub oplogic9: i32,
     pub cyclelogic2: i32,
     pub(crate) cyclelogic7_289: i32,
-    pub(crate) outbound_289: super::outbound_289::Outbound289,
+    pub(crate) outbound: OutboundState,
     /// `Client.cyclelogic6` from client-ts (a TS static, instance here):
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC6` from
     /// `addPlayers` when the dest flag is cleared on arrival.
@@ -1287,10 +1331,11 @@ pub struct Client {
     /// `tutFlashIcon` (TS): the flashing tutorial side tab, set by
     /// `TUT_FLASH` (-1 none).
     pub tut_flash_icon: i32,
-    /// `dialogInputOpen` (TS): the chat-mode enter-name dialog is up.
+    /// `dialogInputOpen` (TS): a server-opened chatback prompt is active.
+    /// R377's name-versus-amount mode lives in `Outbound377`.
     pub dialog_input_open: bool,
-    /// `dialogInput` (TS 138): the enter-name amount typed into the
-    /// `P_COUNTDIALOG` prompt, sent back with `RESUME_P_COUNTDIALOG`.
+    /// `dialogInput` text shared by amount prompts and the R377 name prompt;
+    /// each mode applies its own validation and response packet.
     pub dialog_input: String,
     /// `resumedPauseButton` (TS): the pause button latched since the last
     /// modal transition.
@@ -1638,6 +1683,7 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 const HOST_TITLE_EXTERNAL_OWNER: u8 = 1 << 0;
 const HOST_TITLE_CHROME: u8 = 1 << 1;
 const HOST_TITLE_LOGIN_REQUESTED: u8 = 1 << 2;
+const HOST_TITLE_IDLE_TIMER: u8 = 1 << 3;
 
 impl Client {
     /// Default construction: revision 274 public tables and framing.
@@ -1668,10 +1714,11 @@ impl Client {
         // to files for tests without a web server.
         let jag_checksum = Self::get_jag_checksums(&config.host, http_port)
             .unwrap_or_else(|_| Self::read_jag_checksums(&config.cache_dir));
-        let (cache, ifaces, ifaces_mut, error_loading) = match Self::load_cache(&config.cache_dir) {
-            Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
-            Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
-        };
+        let (cache, ifaces, ifaces_mut, error_loading) =
+            match Self::load_cache_revision(&config.cache_dir, config.lowmem, revision) {
+                Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
+                Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
+            };
         let on_demand = Self::load_on_demand(&config, None, revision).unwrap_or(None);
         let mut client = Self::construct(
             config,
@@ -1958,10 +2005,14 @@ impl Client {
         if !self.ingame {
             return CheatSend::Refused(CheatRefusal::NotIngame);
         }
-        let opcode = self.client_opcode(ClientProt::CLIENT_CHEAT);
-        self.out.p1_enc(opcode);
-        self.out.p1((command.len() + 1) as i32);
-        self.out.pjstr(command);
+        if self.revision.is_377() {
+            super::outbound_377::client_cheat_377(&mut self.out, command);
+        } else {
+            let opcode = self.client_opcode(ClientProt::CLIENT_CHEAT);
+            self.out.p1_enc(opcode);
+            self.out.p1((command.len() + 1) as i32);
+            self.out.pjstr(command);
+        }
         self.cheat_packets_sent = self.cheat_packets_sent.saturating_add(1);
         CheatSend::Sent
     }
@@ -2032,7 +2083,7 @@ impl Client {
                         .expect("ClientSessionProfile validates UTF-8 cache_dir")
                 });
         let midi = midi_backend(resource_cache_dir);
-        let jagfx = Self::unpack_jagfx(resource_cache_dir, config.lowmem);
+        let jagfx = Self::unpack_jagfx(resource_cache_dir, config.lowmem, construction.revision);
         let groundh: LevelHeightmaps =
             vec![
                 vec![vec![0i32; (BUILD_AREA_SIZE + 1) as usize]; (BUILD_AREA_SIZE + 1) as usize];
@@ -2041,7 +2092,8 @@ impl Client {
         let mut client = Client {
             shell: {
                 let mut shell = GameShell::new();
-                shell.telemetry_289 = construction.revision.is_289();
+                shell.telemetry_289 =
+                    construction.revision.is_289() || construction.revision.is_377();
                 shell.ground_trace =
                     super::ground_trace_289::GroundTrace::from_env(construction.revision.is_289());
                 if construction.revision.is_289() {
@@ -2177,7 +2229,7 @@ impl Client {
             oplogic9: 0,
             cyclelogic2: 0,
             cyclelogic7_289: 0,
-            outbound_289: Default::default(),
+            outbound: OutboundState::new(construction.revision),
             cyclelogic6: 0,
             report_abuse_input: String::new(),
             report_abuse_mute_option: false,
@@ -2493,8 +2545,12 @@ impl Client {
 
     /// TS maininit 1168-1171: unpack `sounds.dat` from the `sounds` jag
     /// unless lowmem. Missing/corrupt file stays an empty table.
-    fn unpack_jagfx(cache_dir: &str, lowmem: bool) -> JagFX {
-        JagFX::load_shared(cache_dir, lowmem)
+    fn unpack_jagfx(cache_dir: &str, lowmem: bool, revision: ClientRevision) -> JagFX {
+        if revision.is_377() {
+            JagFX::load_shared_377(cache_dir, lowmem)
+        } else {
+            JagFX::load_shared(cache_dir, lowmem)
+        }
     }
 
     /// Unpack `config` (and `interface` when present) from `cache_dir`,
@@ -2504,6 +2560,27 @@ impl Client {
     /// `Cache::default()` with empty ifaces. A real cache missing the
     /// required `config` jag — or one whose bytes are not a valid jag
     /// (dummy test files) — is `Err`, which becomes `errorLoading`.
+    fn load_cache_revision(
+        cache_dir: &str,
+        lowmem: bool,
+        revision: ClientRevision,
+    ) -> Result<LoadedCache, ()> {
+        if revision.is_377() {
+            return crate::config::runtime_377::load_cache_377(cache_dir, lowmem)
+                .map(|mut loaded| {
+                    loaded.cache.revision_377 = Some(Box::new(crate::config::CacheRevision377 {
+                        config: loaded.cache_fields_377,
+                        interfaces: loaded.interface_fields_377,
+                    }));
+                    (loaded.cache, loaded.ifaces, loaded.ifaces_mut)
+                })
+                .map_err(|error| {
+                    eprintln!("377 cache: {error}");
+                });
+        }
+        Self::load_cache(cache_dir)
+    }
+
     fn load_cache(cache_dir: &str) -> Result<LoadedCache, ()> {
         let cache_present = JAG_FILES
             .iter()
@@ -2974,7 +3051,7 @@ impl Client {
         // intentional and must not be skipped.
         if !self.cache_from_shared {
             let cache_dir = self.session_cache_dir();
-            match Self::load_cache(&cache_dir) {
+            match Self::load_cache_revision(&cache_dir, self.config.lowmem, self.revision) {
                 Ok((cache, ifaces, ifaces_mut)) => {
                     self.cache = Arc::new(cache);
                     self.ifaces = Arc::new(ifaces);
@@ -2989,7 +3066,7 @@ impl Client {
 
         // TS 1168-1171: unpack sounds.dat after the jag is on disk.
         if !self.config.lowmem {
-            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
+            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false, self.revision);
         }
 
         // Java unpacks textures during maininit (progress 45) before any
@@ -3399,12 +3476,15 @@ impl Client {
         };
         // Session baton carries the stream's revision with ISAAC/frame state
         // so size tables and dispatch cannot silently diverge midstream.
+        if self.revision.is_377() != other.revision.is_377() {
+            self.outbound = OutboundState::new(other.revision);
+        }
         self.revision = other.revision;
         if let Some(trace) = &mut self.shell.ground_trace {
             trace.complete("session_transfer");
         }
         self.shell.ground_trace = None;
-        self.shell.telemetry_289 = self.revision.is_289();
+        self.shell.telemetry_289 = self.revision.is_289() || self.revision.is_377();
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
         let mut out = std::mem::replace(&mut other.out, Packet::alloc_outbound(1));
@@ -3428,6 +3508,16 @@ impl Client {
     /// tests can pin the per-client uid in the wrapper bytes (the uid sits
     /// at offset 17, inside the block `rsaenc` ciphertexts).
     pub fn write_login_block(&mut self, seed: [i32; 4], username: &str, password: &str) {
+        if self.revision.is_377() {
+            super::outbound_377::write_login_block(
+                &mut self.out,
+                seed,
+                self.login_uid,
+                username,
+                password,
+            );
+            return;
+        }
         self.out.pos = 0;
         self.out.p1(10);
         self.out.p4(seed[0]);
@@ -3570,20 +3660,30 @@ impl Client {
             }
 
             let mut loginout = Packet::alloc(1);
-            if reconnect {
-                loginout.p1(18);
+            if self.revision.is_377() {
+                super::outbound_377::write_login_wrapper(
+                    &mut loginout,
+                    reconnect,
+                    self.config.lowmem,
+                    &self.jag_checksum,
+                    &self.out,
+                );
             } else {
-                loginout.p1(16);
+                if reconnect {
+                    loginout.p1(18);
+                } else {
+                    loginout.p1(16);
+                }
+                loginout.p1((self.out.pos + 36 + 1 + 1 + 2) as i32);
+                loginout.p1(255);
+                // 274 default / 289 explicit session profile (client.java:8378 p2 289).
+                loginout.p2(self.revision.as_i32());
+                loginout.p1(if self.config.lowmem { 1 } else { 0 });
+                for i in 0..9 {
+                    loginout.p4(self.jag_checksum[i]);
+                }
+                loginout.pdata(self.out.data(), 0, self.out.pos);
             }
-            loginout.p1((self.out.pos + 36 + 1 + 1 + 2) as i32);
-            loginout.p1(255);
-            // 274 default / 289 explicit session profile (client.java:8378 p2 289).
-            loginout.p2(self.revision.as_i32());
-            loginout.p1(if self.config.lowmem { 1 } else { 0 });
-            for i in 0..9 {
-                loginout.p4(self.jag_checksum[i]);
-            }
-            loginout.pdata(self.out.data(), 0, self.out.pos);
 
             self.out.random = Some(Isaac::new(&seed));
             for s in seed.iter_mut() {
@@ -3649,6 +3749,8 @@ impl Client {
             })?;
             if self.revision.is_289() {
                 self.cold_login_input_289();
+            } else if self.revision.is_377() {
+                self.cold_login_input_377();
             }
             self.ingame = true;
             self.out.pos = 0;
@@ -3661,6 +3763,8 @@ impl Client {
             self.scene_state = 0;
             self.menu_num_entries = 0;
             self.last_response = Some(Instant::now());
+            // Java `Client.java` 3004: the grant clears the reboot countdown.
+            self.reboot_timer = 0;
             self.logout_timer = 0;
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
@@ -3751,6 +3855,9 @@ impl Client {
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
             self.begin_session_frames();
+            // Java `Client.java` 3127: the reconnect grant clears the
+            // countdown too.
+            self.reboot_timer = 0;
             self.menu_num_entries = 0;
             self.scene_load_start_time = Instant::now();
             self.reset_packet_observations();
@@ -3849,12 +3956,19 @@ impl Client {
         (x * BUILD_AREA_SIZE + z) as usize
     }
 
-    /// Revision-selected outbound opcode id. R274 keeps public ClientProt
-    /// constants; R289 maps through ClientProt289 (fail-closed on unmapped).
-    /// `pub(crate)` so render/draw paths share the same emit remap as
-    /// `client.rs` interact sites (stage-3 production gate).
+    /// Select only compatible shared writers. R377-specific bodies are emitted
+    /// by `outbound_377`; an unsupported legacy writer poisons the pending batch.
+    /// `game_loop` drops that entire batch and closes before any bytes are sent.
     pub(crate) fn client_opcode(&self, p: crate::io::ClientProt) -> i32 {
-        crate::io::map_client_prot(self.revision, p).id
+        let opcode = crate::io::map_client_prot(self.revision, p).id;
+        if opcode < 0 && self.outbound.r377().unmapped.get().is_none() {
+            eprintln!(
+                "377 unsupported outbound legacy opcode={}; discarding pending batch",
+                p.id
+            );
+            self.outbound.r377().unmapped.set(Some(p.id));
+        }
+        opcode
     }
 
     /// Walk `dir_map` from dest back to src, recording every tile, then
@@ -3927,6 +4041,7 @@ impl Client {
         }
 
         // TS 8553-8556: an open enter-name dialog closes on any action.
+        self.clear_name_dialog_mode_377();
         if self.dialog_input_open {
             self.dialog_input_open = false;
             self.redraw_chat = true;
@@ -3973,45 +4088,69 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                if action == MiniMenuAction::OP_OBJ1 {
-                    if (b & 0x3) == 0 {
-                        self.oplogic7 += 1;
+                if self.revision.is_377() {
+                    let x = b + self.map_build_base_x;
+                    let z = c + self.map_build_base_z;
+                    match action {
+                        MiniMenuAction::OP_OBJ1 => {
+                            super::outbound_377::opobj1_377(&mut self.out, a, x, z);
+                        }
+                        MiniMenuAction::OP_OBJ2 => self.opobj2_packet_377(a, x, z),
+                        MiniMenuAction::OP_OBJ3 => {
+                            if (a & 0x3) == 0 {
+                                self.oplogic4 += 1;
+                            }
+                            if self.oplogic4 >= 84 {
+                                super::outbound_377::anticheat_oplogic4_377(&mut self.out);
+                                self.oplogic4 = 0;
+                            }
+                            super::outbound_377::opobj3_377(&mut self.out, a, x, z);
+                        }
+                        MiniMenuAction::OP_OBJ4 => {
+                            super::outbound_377::opobj4_377(&mut self.out, a, x, z);
+                        }
+                        _ => super::outbound_377::opobj5_377(&mut self.out, a, x, z),
                     }
-                    if self.oplogic7 >= 123 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC7));
-                        self.out.p4(0);
+                } else {
+                    if action == MiniMenuAction::OP_OBJ1 {
+                        if (b & 0x3) == 0 {
+                            self.oplogic7 += 1;
+                        }
+                        if self.oplogic7 >= 123 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC7));
+                            self.out.p4(0);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ1));
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ1));
-                }
-                if action == MiniMenuAction::OP_OBJ2 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ2));
-                }
-                if action == MiniMenuAction::OP_OBJ3 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ3));
-                }
-                if action == MiniMenuAction::OP_OBJ4 {
-                    self.oplogic8 += c;
-                    if self.oplogic8 >= 75 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC8));
-                        self.out.p1(19);
+                    if action == MiniMenuAction::OP_OBJ2 {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ2));
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ4));
-                }
-                if action == MiniMenuAction::OP_OBJ5 {
-                    self.oplogic3 += self.map_build_base_z;
-                    if self.oplogic3 >= 118 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC3));
-                        self.out.p4(0);
+                    if action == MiniMenuAction::OP_OBJ3 {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ3));
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
+                    if action == MiniMenuAction::OP_OBJ4 {
+                        self.oplogic8 += c;
+                        if self.oplogic8 >= 75 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC8));
+                            self.out.p1(19);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ4));
+                    }
+                    if action == MiniMenuAction::OP_OBJ5 {
+                        self.oplogic3 += self.map_build_base_z;
+                        if self.oplogic3 >= 118 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC3));
+                            self.out.p4(0);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
+                    }
+                    self.out.p2(b + self.map_build_base_x);
+                    self.out.p2(c + self.map_build_base_z);
+                    self.out.p2(a);
                 }
-
-                self.out.p2(b + self.map_build_base_x);
-                self.out.p2(c + self.map_build_base_z);
-                self.out.p2(a);
             }
         }
 
@@ -4041,11 +4180,21 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPOBJT));
-                self.out.p2(b + self.map_build_base_x);
-                self.out.p2(c + self.map_build_base_z);
-                self.out.p2(a);
-                self.out.p2(self.target_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opobjt_377(
+                        &mut self.out,
+                        a,
+                        b + self.map_build_base_x,
+                        c + self.map_build_base_z,
+                        self.target_com_id,
+                    );
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJT));
+                    self.out.p2(b + self.map_build_base_x);
+                    self.out.p2(c + self.map_build_base_z);
+                    self.out.p2(a);
+                    self.out.p2(self.target_com_id);
+                }
             }
         }
 
@@ -4064,13 +4213,25 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPOBJU));
-                self.out.p2(b + self.map_build_base_x);
-                self.out.p2(c + self.map_build_base_z);
-                self.out.p2(a);
-                self.out.p2(self.obj_com_id);
-                self.out.p2(self.obj_selected_slot);
-                self.out.p2(self.obj_selected_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opobju_377(
+                        &mut self.out,
+                        a,
+                        b + self.map_build_base_x,
+                        c + self.map_build_base_z,
+                        self.obj_com_id,
+                        self.obj_selected_slot,
+                        self.obj_selected_com_id,
+                    );
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJU));
+                    self.out.p2(b + self.map_build_base_x);
+                    self.out.p2(c + self.map_build_base_z);
+                    self.out.p2(a);
+                    self.out.p2(self.obj_com_id);
+                    self.out.p2(self.obj_selected_slot);
+                    self.out.p2(self.obj_selected_com_id);
+                }
             }
         }
 
@@ -4099,15 +4260,27 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                let opcode = match action {
-                    MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
-                    MiniMenuAction::OP_NPC2 => self.client_opcode(ClientProt::OPNPC2),
-                    MiniMenuAction::OP_NPC3 => self.client_opcode(ClientProt::OPNPC3),
-                    MiniMenuAction::OP_NPC4 => self.client_opcode(ClientProt::OPNPC4),
-                    _ => self.client_opcode(ClientProt::OPNPC5),
-                };
-                self.out.p1_enc(opcode);
-                self.out.p2(a);
+                if self.revision.is_377() && action == MiniMenuAction::OP_NPC1 {
+                    super::outbound_377::opnpc1_377(&mut self.out, a);
+                } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC2 {
+                    super::outbound_377::opnpc2_377(&mut self.out, a);
+                } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC3 {
+                    self.opnpc3_packet_377(a);
+                } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC4 {
+                    super::outbound_377::opnpc4_377(&mut self.out, a);
+                } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC5 {
+                    super::outbound_377::opnpc5_377(&mut self.out, a);
+                } else {
+                    let opcode = match action {
+                        MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
+                        MiniMenuAction::OP_NPC2 => self.client_opcode(ClientProt::OPNPC2),
+                        MiniMenuAction::OP_NPC3 => self.client_opcode(ClientProt::OPNPC3),
+                        MiniMenuAction::OP_NPC4 => self.client_opcode(ClientProt::OPNPC4),
+                        _ => self.client_opcode(ClientProt::OPNPC5),
+                    };
+                    self.out.p1_enc(opcode);
+                    self.out.p2(a);
+                }
             }
         }
 
@@ -4148,9 +4321,13 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPNPCT));
-                self.out.p2(a);
-                self.out.p2(self.target_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opnpct_377(&mut self.out, self.target_com_id, a);
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPNPCT));
+                    self.out.p2(a);
+                    self.out.p2(self.target_com_id);
+                }
             }
         }
 
@@ -4172,44 +4349,104 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPNPCU));
-                self.out.p2(a);
-                self.out.p2(self.obj_com_id);
-                self.out.p2(self.obj_selected_slot);
-                self.out.p2(self.obj_selected_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opnpcu_377(
+                        &mut self.out,
+                        a,
+                        self.obj_com_id,
+                        self.obj_selected_slot,
+                        self.obj_selected_com_id,
+                    );
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPNPCU));
+                    self.out.p2(a);
+                    self.out.p2(self.obj_com_id);
+                    self.out.p2(self.obj_selected_slot);
+                    self.out.p2(self.obj_selected_com_id);
+                }
             }
         }
 
         if action == MiniMenuAction::OP_LOC1 {
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC1));
+            if self.revision().is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC1.id);
+                super::outbound_377::oploc1_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC1));
+            }
         }
 
         if action == MiniMenuAction::OP_LOC2 {
-            self.oplogic1 += c;
-            if self.oplogic1 >= 139 {
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC1));
-                self.out.p4(0);
+            if self.revision().is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC2.id);
+                super::outbound_377::oploc2_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.oplogic1 += c;
+                if self.oplogic1 >= 139 {
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC1));
+                    self.out.p4(0);
+                }
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC2));
             }
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC2));
         }
 
         if action == MiniMenuAction::OP_LOC3 {
-            self.oplogic2 += 1;
-            if self.oplogic2 >= 124 {
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC2));
-                self.out.p2(37954);
+            if self.revision.is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC3.id);
+                super::outbound_377::oploc3_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.oplogic2 += 1;
+                if self.oplogic2 >= 124 {
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC2));
+                    self.out.p2(37954);
+                }
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC3));
             }
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC3));
         }
 
         if action == MiniMenuAction::OP_LOC4 {
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC4));
+            if self.revision.is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC4.id);
+                super::outbound_377::oploc4_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC4));
+            }
         }
 
         if action == MiniMenuAction::OP_LOC5 {
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC5));
+            if self.revision.is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC5.id);
+                super::outbound_377::oploc5_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC5));
+            }
         }
 
         if action == MiniMenuAction::OP_LOC6 {
@@ -4226,18 +4463,40 @@ impl Client {
             }
         }
 
-        if action == MiniMenuAction::TGT_LOC
-            && self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCT))
-        {
-            self.out.p2(self.target_com_id);
+        if action == MiniMenuAction::TGT_LOC {
+            if self.revision.is_377() {
+                if self.interact_with_loc(b, c, a, ClientProt377::OPLOCT.id) {
+                    super::outbound_377::oploct_377(
+                        &mut self.out,
+                        b + self.map_build_base_x,
+                        c + self.map_build_base_z,
+                        (a >> 14) & 0x7fff,
+                        self.target_com_id,
+                    );
+                }
+            } else if self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCT)) {
+                self.out.p2(self.target_com_id);
+            }
         }
 
-        if action == MiniMenuAction::USEHELD_ONLOC
-            && self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCU))
-        {
-            self.out.p2(self.obj_com_id);
-            self.out.p2(self.obj_selected_slot);
-            self.out.p2(self.obj_selected_com_id);
+        if action == MiniMenuAction::USEHELD_ONLOC {
+            if self.revision().is_377() {
+                if self.interact_with_loc(b, c, a, ClientProt377::OPLOCU.id) {
+                    super::outbound_377::oplocu_377(
+                        &mut self.out,
+                        (a >> 14) & 0x7fff,
+                        self.obj_selected_com_id,
+                        self.obj_com_id,
+                        c + self.map_build_base_z,
+                        self.obj_selected_slot,
+                        b + self.map_build_base_x,
+                    );
+                }
+            } else if self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCU)) {
+                self.out.p2(self.obj_com_id);
+                self.out.p2(self.obj_selected_slot);
+                self.out.p2(self.obj_selected_com_id);
+            }
         }
 
         if PLAYER_OP_ACTIONS.contains(&action) {
@@ -4260,34 +4519,52 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                if action == MiniMenuAction::OP_PLAYER1 {
-                    self.oplogic4 += 1;
-                    if self.oplogic4 >= 52 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
-                        self.out.p1(131);
+                if self.revision.is_377() {
+                    match action {
+                        MiniMenuAction::OP_PLAYER1 => {
+                            super::outbound_377::opplayer1_377(&mut self.out, a);
+                        }
+                        MiniMenuAction::OP_PLAYER2 => {
+                            super::outbound_377::opplayer2_377(&mut self.out, a);
+                        }
+                        MiniMenuAction::OP_PLAYER3 => {
+                            super::outbound_377::opplayer3_377(&mut self.out, a);
+                        }
+                        MiniMenuAction::OP_PLAYER4 => {
+                            super::outbound_377::opplayer4_377(&mut self.out, a);
+                        }
+                        _ => super::outbound_377::opplayer5_377(&mut self.out, a),
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
-                }
-                if action == MiniMenuAction::OP_PLAYER2 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER2));
-                }
-                if action == MiniMenuAction::OP_PLAYER3 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER3));
-                }
-                if action == MiniMenuAction::OP_PLAYER4 {
-                    self.oplogic5 += a;
-                    if self.oplogic5 >= 66 {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
-                        self.out.p1(154);
+                } else {
+                    if action == MiniMenuAction::OP_PLAYER1 {
+                        self.oplogic4 += 1;
+                        if self.oplogic4 >= 52 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
+                            self.out.p1(131);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
+                    if action == MiniMenuAction::OP_PLAYER2 {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER2));
+                    }
+                    if action == MiniMenuAction::OP_PLAYER3 {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER3));
+                    }
+                    if action == MiniMenuAction::OP_PLAYER4 {
+                        self.oplogic5 += a;
+                        if self.oplogic5 >= 66 {
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
+                            self.out.p1(154);
+                        }
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
+                    }
+                    if action == MiniMenuAction::OP_PLAYER5 {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER5));
+                    }
+                    self.out.p2(a);
                 }
-                if action == MiniMenuAction::OP_PLAYER5 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER5));
-                }
-                self.out.p2(a);
             }
         }
 
@@ -4321,25 +4598,33 @@ impl Client {
                     if let (Some((tx, tz)), Some((px, pz))) = (player_route, local_route) {
                         self.tryMove(px, pz, tx, tz, false, 1, 1, 0, 0, 0, 2);
 
-                        if action == MiniMenuAction::ACCEPT_TRADEREQ {
-                            self.oplogic5 += a;
-                            if self.oplogic5 >= 66 {
-                                self.out
-                                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
-                                self.out.p1(154);
+                        if self.revision.is_377() {
+                            if action == MiniMenuAction::ACCEPT_TRADEREQ {
+                                super::outbound_377::opplayer4_377(&mut self.out, index as i32);
+                            } else {
+                                super::outbound_377::opplayer1_377(&mut self.out, index as i32);
                             }
-                            self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
-                        }
-                        if action == MiniMenuAction::ACCEPT_DUELREQ {
-                            self.oplogic4 += 1;
-                            if self.oplogic4 >= 52 {
-                                self.out
-                                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
-                                self.out.p1(131);
+                        } else {
+                            if action == MiniMenuAction::ACCEPT_TRADEREQ {
+                                self.oplogic5 += a;
+                                if self.oplogic5 >= 66 {
+                                    self.out
+                                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
+                                    self.out.p1(154);
+                                }
+                                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
                             }
-                            self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
+                            if action == MiniMenuAction::ACCEPT_DUELREQ {
+                                self.oplogic4 += 1;
+                                if self.oplogic4 >= 52 {
+                                    self.out
+                                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
+                                    self.out.p1(131);
+                                }
+                                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
+                            }
+                            self.out.p2(index as i32);
                         }
-                        self.out.p2(index as i32);
                         found = true;
                         break;
                     }
@@ -4368,9 +4653,13 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERT));
-                self.out.p2(a);
-                self.out.p2(self.target_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opplayert_377(&mut self.out, a, self.target_com_id);
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERT));
+                    self.out.p2(a);
+                    self.out.p2(self.target_com_id);
+                }
             }
         }
 
@@ -4392,11 +4681,21 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERU));
-                self.out.p2(a);
-                self.out.p2(self.obj_com_id);
-                self.out.p2(self.obj_selected_slot);
-                self.out.p2(self.obj_selected_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opplayeru_377(
+                        &mut self.out,
+                        a,
+                        self.obj_com_id,
+                        self.obj_selected_slot,
+                        self.obj_selected_com_id,
+                    );
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERU));
+                    self.out.p2(a);
+                    self.out.p2(self.obj_com_id);
+                    self.out.p2(self.obj_selected_slot);
+                    self.out.p2(self.obj_selected_com_id);
+                }
             }
         }
 
@@ -4406,32 +4705,44 @@ impl Client {
             || action == MiniMenuAction::OP_HELD4
             || action == MiniMenuAction::OP_HELD5
         {
-            // TS 8956-8997: p2(obj) p2(slot) p2(com), then the selected
-            // outline fields.
-            if action == MiniMenuAction::OP_HELD1 {
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD1));
-            }
-            if action == MiniMenuAction::OP_HELD2 {
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD2));
-            }
-            if action == MiniMenuAction::OP_HELD3 {
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD3));
-            }
-            if action == MiniMenuAction::OP_HELD4 {
-                self.oplogic9 += 1;
-                if self.oplogic9 >= 116 {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC9));
-                    self.out.p3(13018169);
+            // Revision-specific writers retain Java's transformed layouts and
+            // menu-anticheat trigger points, without entering the legacy path.
+            if self.revision.is_377() && action == MiniMenuAction::OP_HELD1 {
+                self.opheld1_packet_377(a, b, c);
+            } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD4 {
+                self.opheld4_packet_377(a, b, c);
+            } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD2 {
+                super::outbound_377::opheld2_377(&mut self.out, a, b, c);
+            } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD3 {
+                super::outbound_377::opheld3_377(&mut self.out, a, b, c);
+            } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD5 {
+                super::outbound_377::opheld5_377(&mut self.out, a, b, c);
+            } else {
+                if action == MiniMenuAction::OP_HELD1 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD1));
                 }
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD4));
+                if action == MiniMenuAction::OP_HELD2 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD2));
+                }
+                if action == MiniMenuAction::OP_HELD3 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD3));
+                }
+                if action == MiniMenuAction::OP_HELD4 {
+                    self.oplogic9 += 1;
+                    if self.oplogic9 >= 116 {
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC9));
+                        self.out.p3(13018169);
+                    }
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD4));
+                }
+                if action == MiniMenuAction::OP_HELD5 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD5));
+                }
+                self.out.p2(a);
+                self.out.p2(b);
+                self.out.p2(c);
             }
-            if action == MiniMenuAction::OP_HELD5 {
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD5));
-            }
-            self.out.p2(a);
-            self.out.p2(b);
-            self.out.p2(c);
             self.mark_selected(b, c);
         }
 
@@ -4507,22 +4818,38 @@ impl Client {
         }
 
         if action == MiniMenuAction::TGT_HELD {
-            self.out.p1_enc(self.client_opcode(ClientProt::OPHELDT));
-            self.out.p2(a);
-            self.out.p2(b);
-            self.out.p2(c);
-            self.out.p2(self.target_com_id);
+            if self.revision.is_377() {
+                super::outbound_377::opheldt_377(&mut self.out, a, b, c, self.target_com_id);
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELDT));
+                self.out.p2(a);
+                self.out.p2(b);
+                self.out.p2(c);
+                self.out.p2(self.target_com_id);
+            }
             self.mark_selected(b, c);
         }
 
         if action == MiniMenuAction::USEHELD_ONHELD {
-            self.out.p1_enc(self.client_opcode(ClientProt::OPHELDU));
-            self.out.p2(a);
-            self.out.p2(b);
-            self.out.p2(c);
-            self.out.p2(self.obj_com_id);
-            self.out.p2(self.obj_selected_slot);
-            self.out.p2(self.obj_selected_com_id);
+            if self.revision().is_377() {
+                super::outbound_377::opheldu_377(
+                    &mut self.out,
+                    a,
+                    self.obj_selected_slot,
+                    self.obj_com_id,
+                    self.obj_selected_com_id,
+                    b,
+                    c,
+                );
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELDU));
+                self.out.p2(a);
+                self.out.p2(b);
+                self.out.p2(c);
+                self.out.p2(self.obj_com_id);
+                self.out.p2(self.obj_selected_slot);
+                self.out.p2(self.obj_selected_com_id);
+            }
             self.mark_selected(b, c);
         }
 
@@ -4532,34 +4859,45 @@ impl Client {
             || action == MiniMenuAction::INV_BUTTON4
             || action == MiniMenuAction::INV_BUTTON5
         {
-            // TS 9096-9141: p2(obj) p2(slot) p2(com), then the selected
-            // outline fields.
-            if action == MiniMenuAction::INV_BUTTON1 {
-                if (a & 0x3) == 0 {
-                    self.oplogic6 += 1;
+            // Java 377's inventory buttons use their own transformed layouts.
+            if action == MiniMenuAction::INV_BUTTON1 && self.revision.is_377() {
+                super::outbound_377::inv_button1_377(&mut self.out, a, b, c);
+            } else if action == MiniMenuAction::INV_BUTTON2 && self.revision.is_377() {
+                super::outbound_377::inv_button2_377(&mut self.out, a, b, c);
+            } else if action == MiniMenuAction::INV_BUTTON3 && self.revision.is_377() {
+                super::outbound_377::inv_button3_377(&mut self.out, a, b, c);
+            } else if action == MiniMenuAction::INV_BUTTON4 && self.revision.is_377() {
+                super::outbound_377::inv_button4_377(&mut self.out, a, b, c);
+            } else if action == MiniMenuAction::INV_BUTTON5 && self.revision.is_377() {
+                super::outbound_377::inv_button5_377(&mut self.out, a, b, c);
+            } else {
+                if action == MiniMenuAction::INV_BUTTON1 {
+                    if (a & 0x3) == 0 {
+                        self.oplogic6 += 1;
+                    }
+                    if self.oplogic6 >= 133 {
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC6));
+                        self.out.p2(6118);
+                    }
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON1));
                 }
-                if self.oplogic6 >= 133 {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC6));
-                    self.out.p2(6118);
+                if action == MiniMenuAction::INV_BUTTON2 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON2));
                 }
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON1));
+                if action == MiniMenuAction::INV_BUTTON3 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON3));
+                }
+                if action == MiniMenuAction::INV_BUTTON4 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON4));
+                }
+                if action == MiniMenuAction::INV_BUTTON5 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON5));
+                }
+                self.out.p2(a);
+                self.out.p2(b);
+                self.out.p2(c);
             }
-            if action == MiniMenuAction::INV_BUTTON2 {
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON2));
-            }
-            if action == MiniMenuAction::INV_BUTTON3 {
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON3));
-            }
-            if action == MiniMenuAction::INV_BUTTON4 {
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON4));
-            }
-            if action == MiniMenuAction::INV_BUTTON5 {
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON5));
-            }
-            self.out.p2(a);
-            self.out.p2(b);
-            self.out.p2(c);
             self.mark_selected(b, c);
         }
 
@@ -4578,14 +4916,22 @@ impl Client {
                 notify = self.client_button(c);
             }
             if notify {
-                self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
-                self.out.p2(c);
+                if self.revision.is_377() {
+                    super::outbound_377::if_button(&mut self.out, c);
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
+                    self.out.p2(c);
+                }
             }
         }
 
         if action == MiniMenuAction::TOGGLE_BUTTON {
-            self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
-            self.out.p2(c);
+            if self.revision.is_377() {
+                super::outbound_377::if_button(&mut self.out, c);
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
+                self.out.p2(c);
+            }
             // An owned script copy: the varp writes below need `&mut self`
             // while the script is read (the view borrow would conflict).
             let script = self
@@ -4604,8 +4950,12 @@ impl Client {
         }
 
         if action == MiniMenuAction::SELECT_BUTTON {
-            self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
-            self.out.p2(c);
+            if self.revision.is_377() {
+                super::outbound_377::if_button(&mut self.out, c);
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
+                self.out.p2(c);
+            }
             let script = self
                 .if_(c as usize)
                 .and_then(|com| com.scripts.as_ref().and_then(|s| s.first()).cloned());
@@ -4631,9 +4981,13 @@ impl Client {
         if action == MiniMenuAction::PAUSE_BUTTON {
             // TS 9186-9191: RESUME_PAUSEBUTTON, not IF_BUTTON.
             if !self.resumed_pause_button {
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::RESUME_PAUSEBUTTON));
-                self.out.p2(c);
+                if self.revision.is_377() {
+                    super::outbound_377::resume_pausebutton_377(&mut self.out, c);
+                } else {
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::RESUME_PAUSEBUTTON));
+                    self.out.p2(c);
+                }
                 self.resumed_pause_button = true;
             }
         }
@@ -4728,6 +5082,7 @@ impl Client {
                 }
                 if friend != -1 && self.friend_node_id[friend as usize] > 0 {
                     self.redraw_chat = true;
+                    self.clear_name_dialog_mode_377();
                     self.dialog_input_open = false;
                     self.social_input_open = true;
                     self.social_input = String::new();
@@ -4771,8 +5126,10 @@ impl Client {
         let shape = info & 0x1f;
         let angle = (info >> 6) & 0x3;
 
-        self.cyclelogic2 += 1;
-        if self.cyclelogic2 > 1086 {
+        if !self.revision().is_377() {
+            self.cyclelogic2 += 1;
+        }
+        if !self.revision().is_377() && self.cyclelogic2 > 1086 {
             self.cyclelogic2 = 0;
             self.out
                 .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC2));
@@ -4821,6 +5178,11 @@ impl Client {
         self.cross_y = self.shell.mouse_click_y;
         self.cross_mode = 2;
         self.cross_cycle = 0;
+        // Java 377's interaction helper only routes and sets the crosshair.
+        // Its action-specific packet is emitted by doAction after this call.
+        if self.revision().is_377() {
+            return true;
+        }
 
         self.out.p1_enc(opcode);
         self.out.p2(x + self.map_build_base_x);
@@ -5169,6 +5531,25 @@ impl Client {
                 }
             }
 
+            if self.revision.is_377() {
+                super::outbound_377::movement_377(
+                    &mut self.out,
+                    r#type,
+                    start_x + self.map_build_base_x,
+                    start_z + self.map_build_base_z,
+                    self.shell.key_held[5] == 1,
+                    (1..buffer_size).map(|i| {
+                        (
+                            self.route_x[length - i] - start_x,
+                            self.route_z[length - i] - start_z,
+                        )
+                    }),
+                );
+                self.minimap_flag_x = self.route_x[0];
+                self.minimap_flag_z = self.route_z[0];
+                return true;
+            }
+
             match r#type {
                 0 => {
                     self.out
@@ -5333,6 +5714,25 @@ impl Client {
     pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
         let ptype1 = self.ptype1;
         let ptype2 = self.ptype2;
+        if self.revision.is_377() {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                self.dispatch_packet_377(ptype, payload)
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    eprintln!("{error}");
+                    self.record_session_exit(self.protocol_error("T2", ptype));
+                    self.logout();
+                }
+                Err(_) => {
+                    eprintln!("377 T2 - {ptype},{ptype1},{ptype2}");
+                    self.record_session_exit(self.protocol_error("T2", ptype));
+                    self.logout();
+                }
+            }
+            return;
+        }
         if self.revision.is_289() {
             self.r289_packet_reset = false;
             let result = catch_unwind(AssertUnwindSafe(|| {
@@ -5638,6 +6038,7 @@ impl Client {
     /// `P_COUNTDIALOG` handler (Client.ts 6762-6773): open the enter-amount
     /// dialog, closing any social prompt. The packet has no payload.
     pub fn apply_p_countdialog(&mut self) {
+        self.clear_name_dialog_mode_377();
         self.social_input_open = false;
         self.dialog_input_open = true;
         self.dialog_input.clear();
@@ -5719,6 +6120,7 @@ impl Client {
             self.chat_modal_id = -1;
             self.redraw_chat = true;
         }
+        self.clear_name_dialog_mode_377();
         if self.dialog_input_open {
             self.dialog_input_open = false;
             self.redraw_chat = true;
@@ -5738,6 +6140,7 @@ impl Client {
             self.chat_modal_id = -1;
             self.redraw_chat = true;
         }
+        self.clear_name_dialog_mode_377();
         if self.dialog_input_open {
             self.dialog_input_open = false;
             self.redraw_chat = true;
@@ -5790,6 +6193,7 @@ impl Client {
             self.chat_modal_id = -1;
             self.redraw_chat = true;
         }
+        self.clear_name_dialog_mode_377();
         if self.dialog_input_open {
             self.dialog_input_open = false;
             self.redraw_chat = true;
@@ -5805,6 +6209,7 @@ impl Client {
     /// the enter-name dialog, and the main modal. The packet has no payload
     /// (TS only reads `ptype`).
     pub fn apply_if_close(&mut self) {
+        self.clear_name_dialog_mode_377();
         self.main_modal_packet_state.close_packets =
             self.main_modal_packet_state.close_packets.wrapping_add(1);
         self.observe_main_modal_close();
@@ -6944,11 +7349,21 @@ impl Client {
                             com.swap_slots(src, dst);
                         }
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTOND));
-                    self.out.p2(self.obj_drag_com_id);
-                    self.out.p2(self.obj_drag_slot);
-                    self.out.p2(self.hovered_slot);
-                    self.out.p1(mode);
+                    if self.revision.is_377() {
+                        super::outbound_377::inv_buttond_377(
+                            &mut self.out,
+                            self.obj_drag_com_id,
+                            self.obj_drag_slot,
+                            self.hovered_slot,
+                            mode,
+                        );
+                    } else {
+                        self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTOND));
+                        self.out.p2(self.obj_drag_com_id);
+                        self.out.p2(self.obj_drag_slot);
+                        self.out.p2(self.hovered_slot);
+                        self.out.p1(mode);
+                    }
                 }
             }
         } else if (self.one_mouse_button == 1
@@ -7014,12 +7429,12 @@ impl Client {
     /// (205) arms `logoutTimer`, CC_ADD/DEL_IGNORE (501/502) open the
     /// add/delete-ignore prompts, the player-design codes 300-327 cycle
     /// kit/colour, switch gender and send `IDK_SAVEDESIGN`, and the
-    /// 289 report-abuse codes (601-613): 613 toggles mute; 601..=612 closeModal
-    /// then emit REPORT_ABUSE/SEND_SNAPSHOT (p8+p1+p1). The published 274
-    /// report controls remain incomplete. Social codes return
-    /// `false` so the `doAction` IF_BUTTON arm skips the send (TS sets the
-    /// prompt and falls through); logout and accept-design return `true`
-    /// and the click is sent.
+    /// 289 report-abuse keeps its 601..=612/mute 613 path. R377 matches Java:
+    /// rules 601..=613 close interfaces and send `SEND_SNAPSHOT` for nonempty
+    /// input (reason 0..=12); code 620 toggles mute. The published 274 report
+    /// controls remain incomplete. Social codes return `false` so the
+    /// `doAction` IF_BUTTON arm skips the send; logout and accept-design return
+    /// `true` and the click is sent.
     pub fn client_button(&mut self, com_id: i32) -> bool {
         let Some(client_code) = self.if_(com_id as usize).map(|com| com.client_code) else {
             return false;
@@ -7027,6 +7442,7 @@ impl Client {
         if self.friend_server_status == 2 {
             if client_code == CC_ADD_FRIEND {
                 self.redraw_chat = true;
+                self.clear_name_dialog_mode_377();
                 self.dialog_input_open = false;
                 self.social_input_open = true;
                 self.social_input = String::new();
@@ -7034,6 +7450,7 @@ impl Client {
                 self.social_input_header = "Enter name of friend to add to list".into();
             } else if client_code == CC_DEL_FRIEND {
                 self.redraw_chat = true;
+                self.clear_name_dialog_mode_377();
                 self.dialog_input_open = false;
                 self.social_input_open = true;
                 self.social_input = String::new();
@@ -7048,6 +7465,7 @@ impl Client {
             return true;
         } else if client_code == CC_ADD_IGNORE {
             self.redraw_chat = true;
+            self.clear_name_dialog_mode_377();
             self.dialog_input_open = false;
             self.social_input_open = true;
             self.social_input = String::new();
@@ -7055,6 +7473,7 @@ impl Client {
             self.social_input_header = "Enter name of player to add to list".into();
         } else if client_code == CC_DEL_IGNORE {
             self.redraw_chat = true;
+            self.clear_name_dialog_mode_377();
             self.dialog_input_open = false;
             self.social_input_open = true;
             self.social_input = String::new();
@@ -7119,25 +7538,33 @@ impl Client {
         } else if client_code == CC_ACCEPT_DESIGN {
             // TS 11053-11065: IDK_SAVEDESIGN (id 125, length 13) carries
             // the gender byte, 7 kit bytes and 5 colour bytes.
-            self.out
-                .p1_enc(self.client_opcode(ClientProt::IDK_SAVEDESIGN));
-            self.out.p1(if self.idk_design_gender { 0 } else { 1 });
-            for i in 0..7 {
-                self.out.p1(self.idk_design_part[i]);
-            }
-            for i in 0..5 {
-                self.out.p1(self.idk_design_colour[i]);
+            if self.revision.is_377() {
+                super::outbound_377::idk_savedesign_377(
+                    &mut self.out,
+                    if self.idk_design_gender { 0 } else { 1 },
+                    &self.idk_design_part,
+                    &self.idk_design_colour,
+                );
+            } else {
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::IDK_SAVEDESIGN));
+                self.out.p1(if self.idk_design_gender { 0 } else { 1 });
+                for i in 0..7 {
+                    self.out.p1(self.idk_design_part[i]);
+                }
+                for i in 0..5 {
+                    self.out.p1(self.idk_design_colour[i]);
+                }
             }
             return true;
-        } else if self.revision.is_289() && client_code == CC_REPORT_MUTE {
-            // Java client_button 613: toggle mute-for-48h without a packet.
+        } else if self.revision.is_289() && client_code == CC_REPORT_MUTE_289 {
+            // Preserve the existing revision-289 report UI mapping.
             self.report_abuse_mute_option = !self.report_abuse_mute_option;
         } else if self.revision.is_289()
-            && (CC_REPORT_REASON_START..=CC_REPORT_REASON_END).contains(&client_code)
+            && (CC_REPORT_REASON_START..=CC_REPORT_REASON_END_289).contains(&client_code)
         {
             // Java client_button 601..=612: closeModal then SEND_SNAPSHOT /
-            // REPORT_ABUSE (289 id 94, length 10): method472 p8 namehash +
-            // method466 reason (code-601) + method466 mute flag.
+            // REPORT_ABUSE (289 id 94, length 10): namehash, reason and mute.
             self.close_modal();
             if !self.report_abuse_input.is_empty() {
                 let userhash = JString::to_userhash(&self.report_abuse_input) as i64;
@@ -7147,6 +7574,21 @@ impl Client {
                 self.out.p1(client_code - CC_REPORT_REASON_START);
                 self.out
                     .p1(if self.report_abuse_mute_option { 1 } else { 0 });
+            }
+        } else if self.revision.is_377() && client_code == CC_REPORT_MUTE_377 {
+            self.report_abuse_mute_option = !self.report_abuse_mute_option;
+        } else if self.revision.is_377()
+            && (CC_REPORT_REASON_START..=CC_REPORT_REASON_END_377).contains(&client_code)
+        {
+            self.close_modal();
+            if !self.report_abuse_input.is_empty() {
+                let userhash = JString::to_userhash(&self.report_abuse_input) as i64;
+                super::outbound_377::send_snapshot_377(
+                    &mut self.out,
+                    userhash,
+                    client_code - CC_REPORT_REASON_START,
+                    self.report_abuse_mute_option,
+                );
             }
         }
         false
@@ -7423,7 +7865,12 @@ impl Client {
     /// the per-modal redraw flags mirror TS
     /// `redrawSide`/`redrawIcons`/`redrawChat`. Not to be confused with the
     /// incoming-server `apply_if_close`.
+    /// Revision 377 delegates to Java's layer-unloading close path.
     fn close_modal(&mut self) {
+        if self.revision.is_377() {
+            self.close_interfaces_377();
+            return;
+        }
         self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
@@ -10678,6 +11125,32 @@ impl Client {
         self.hosted_title_state & HOST_TITLE_EXTERNAL_OWNER != 0
     }
 
+    /// Let an embedding host that owns reconnect run the Java inactivity
+    /// timer (289: after 4500 idle loop cycles the client sends the idle
+    /// request, `IDLE_TIMER`, and the server logs it out). A host-owned
+    /// client suppresses that timer by default, so leaving this unset keeps
+    /// today's behaviour. Without an external reconnect owner the flag has
+    /// no effect: a standalone client always runs the Java timer. Calling
+    /// [`Client::set_external_reconnect_owner`] with `false` clears it.
+    pub fn set_host_idle_timer(&mut self, enabled: bool) {
+        if enabled {
+            self.hosted_title_state |= HOST_TITLE_IDLE_TIMER;
+        } else {
+            self.hosted_title_state &= !HOST_TITLE_IDLE_TIMER;
+        }
+    }
+
+    /// Whether the host-owned session suppresses the Java inactivity timer.
+    fn idle_timer_suppressed(&self) -> bool {
+        self.external_reconnect_owner() && self.hosted_title_state & HOST_TITLE_IDLE_TIMER == 0
+    }
+
+    /// Whether a host-owned client currently runs the Java inactivity timer
+    /// because its host asked for it ([`Client::set_host_idle_timer`]).
+    pub fn host_idle_timer(&self) -> bool {
+        self.external_reconnect_owner() && !self.idle_timer_suppressed()
+    }
+
     /// Replace the Java account form with the host's single-login title for
     /// `label`. Calls made without an external reconnect owner are ignored.
     /// The label reuses the existing title username buffer instead of adding
@@ -11016,26 +11489,24 @@ impl Client {
         }
     }
 
-    /// `handleInputKey` from client-ts (2937), chat branch: poll queued
-    /// keys. An open social prompt (TS 2962-3020) consumes printable
-    /// 32..=122 into `social_input` and 10/13 fires the add/del
-    /// friend/ignore or PM send; an open amount dialog (TS 3022-3047)
-    /// consumes digits into `dialog_input` and 10/13 sends
-    /// `RESUME_P_COUNTDIALOG`; otherwise keys reach the public input
-    /// while no chat modal is open. Printable 32..=122 (up to 126 once the
-    /// input starts with `::`) appends below 80 chars, 8 backspaces,
-    /// 10/13 sends. A `::` command goes out as `CLIENT_CHEAT`
-    /// (TS 3093-3095); anything else packs `MESSAGE_PUBLIC` (TS 3158-3165)
-    /// with the colour/effect prefixes parsed as TS 3097-3155 and the text
-    /// WordPacked. The own message echoes locally as
-    /// `toSentenceCase` + `WordFilter.filter` + `add_chat(2, ...)`
-    /// (TS 3169-3179).
+    /// `handleInputKey` from client-ts (2937), chat branch: poll queued keys.
+    /// Social prompts consume printable 32..=122 and Enter fires the
+    /// add/del friend/ignore or PM action. R377 mode 2 also accepts printable
+    /// 32..=122 up to 12 chars, backspace, and nonempty Enter to send
+    /// `RESUME_P_NAMEDIALOG`; amount prompts accept digits and send
+    /// `RESUME_P_COUNTDIALOG`. Otherwise keys reach public chat.
+    /// Public printable 32..=122 (up to 126 after `::`) appends below 80 chars,
+    /// 8 backspaces and Enter send. R377 parses Java colour/effect prefixes
+    /// and emits transformed `MESSAGE_PUBLIC`/`MESSAGE_PRIVATE`; R274/R289 keep
+    /// their existing parser and shared encoders.
+    /// Local chat echo uses `toSentenceCase`, `WordFilter.filter`, and
+    /// `add_chat`.
     pub fn handle_chat_input(&mut self) {
         if self.revision.is_289() {
             // J:10743-10750: count poll calls, not queued characters.
-            self.outbound_289.cyclelogic4 += 1;
-            if self.outbound_289.cyclelogic4 > 192 {
-                self.outbound_289.cyclelogic4 = 0;
+            self.outbound.legacy().cyclelogic4 += 1;
+            if self.outbound.legacy().cyclelogic4 > 192 {
+                self.outbound.legacy().cyclelogic4 = 0;
                 self.out
                     .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC4));
                 self.out.p1(232);
@@ -11076,15 +11547,23 @@ impl Client {
                 }
                 if self.social_input_type == 3
                     && !self.social_input.is_empty()
-                    && self.social_userhash != 0
+                    && (self.revision.is_377() || self.social_userhash != 0)
                 {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
-                    self.out.p1(0);
-                    let start = self.out.pos;
-                    self.out.p8(self.social_userhash);
-                    WordPack::pack(&mut self.out, &self.social_input);
-                    self.out.psize1((self.out.pos - start) as i32);
+                    if self.revision.is_377() {
+                        super::outbound_377::message_private_377(
+                            &mut self.out,
+                            self.social_userhash,
+                            &self.social_input,
+                        );
+                    } else {
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
+                        self.out.p1(0);
+                        let start = self.out.pos;
+                        self.out.p8(self.social_userhash);
+                        WordPack::pack(&mut self.out, &self.social_input);
+                        self.out.psize1((self.out.pos - start) as i32);
+                    }
 
                     let mut text = JString::to_sentence_case(&self.social_input);
                     text = WordFilter::filter(&text);
@@ -11113,6 +11592,12 @@ impl Client {
             }
             return;
         }
+        // Java 377 chatbackInputOpen == 2 accepts a bounded name and replies
+        // with RESUME_P_NAMEDIALOG; it remains separate from the amount prompt.
+        if self.name_dialog_open_377() {
+            self.consume_name_dialog_key_377(key);
+            return;
+        }
 
         // TS 3022-3047: the enter-amount dialog — digits append up to
         // 10 chars, 8 backspaces, and 10/13 sends the amount back with
@@ -11136,6 +11621,7 @@ impl Client {
                     self.out.p4(value);
                 }
 
+                self.clear_name_dialog_mode_377();
                 self.dialog_input_open = false;
                 self.redraw_chat = true;
             }
@@ -11164,97 +11650,105 @@ impl Client {
                 let input = std::mem::take(&mut self.chat_input);
                 let _ = self.send_cheat(&input[2..]);
             } else {
-                let mut text = self.chat_input.clone();
-                let mut colour = 0;
-                // TS 3097-3145 colour prefixes (sequential ifs, as TS).
-                if text.starts_with("yellow:") {
-                    text = text[7..].to_string();
-                }
-                if text.starts_with("red:") {
-                    colour = 1;
-                    text = text[4..].to_string();
-                }
-                if text.starts_with("green:") {
-                    colour = 2;
-                    text = text[6..].to_string();
-                }
-                if text.starts_with("cyan:") {
-                    colour = 3;
-                    text = text[5..].to_string();
-                }
-                if text.starts_with("purple:") {
-                    colour = 4;
-                    text = text[7..].to_string();
-                }
-                if text.starts_with("white:") {
-                    colour = 5;
-                    text = text[6..].to_string();
-                }
-                if text.starts_with("flash1:") {
-                    colour = 6;
-                    text = text[7..].to_string();
-                }
-                if text.starts_with("flash2:") {
-                    colour = 7;
-                    text = text[7..].to_string();
-                }
-                if text.starts_with("flash3:") {
-                    colour = 8;
-                    text = text[7..].to_string();
-                }
-                if text.starts_with("glow1:") {
-                    colour = 9;
-                    text = text[6..].to_string();
-                }
-                if text.starts_with("glow2:") {
-                    colour = 10;
-                    text = text[6..].to_string();
-                }
-                if text.starts_with("glow3:") {
-                    colour = 11;
-                    text = text[6..].to_string();
-                }
-                // MESSAGE_PUBLIC effect prefixes are revision-gated.
-                // R274/client-ts: sequential ifs — wave:=1, scroll:=2.
-                // R289 Java table (else-if): wave2 before wave so "wave2:"
-                // is not swallowed; wave/wave2/shake/scroll/slide → 1/2/3/4/5.
-                let mut effect = 0;
-                if self.revision.is_289() {
-                    if text.starts_with("wave2:") {
-                        effect = 2;
-                        text = text[6..].to_string();
-                    } else if text.starts_with("wave:") {
-                        effect = 1;
-                        text = text[5..].to_string();
-                    } else if text.starts_with("shake:") {
-                        effect = 3;
-                        text = text[6..].to_string();
-                    } else if text.starts_with("scroll:") {
-                        effect = 4;
-                        text = text[7..].to_string();
-                    } else if text.starts_with("slide:") {
-                        effect = 5;
-                        text = text[6..].to_string();
-                    }
+                let mut text;
+                let (colour, effect, body) = if self.revision.is_377() {
+                    super::outbound_377::public_chat_prefixes_377(&self.chat_input)
                 } else {
-                    if text.starts_with("wave:") {
-                        effect = 1;
-                        text = text[5..].to_string();
-                    }
-                    if text.starts_with("scroll:") {
-                        effect = 2;
+                    text = self.chat_input.clone();
+                    let mut colour = 0;
+                    // TS 3097-3145 colour prefixes (sequential ifs, as TS).
+                    if text.starts_with("yellow:") {
                         text = text[7..].to_string();
                     }
-                }
+                    if text.starts_with("red:") {
+                        colour = 1;
+                        text = text[4..].to_string();
+                    }
+                    if text.starts_with("green:") {
+                        colour = 2;
+                        text = text[6..].to_string();
+                    }
+                    if text.starts_with("cyan:") {
+                        colour = 3;
+                        text = text[5..].to_string();
+                    }
+                    if text.starts_with("purple:") {
+                        colour = 4;
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("white:") {
+                        colour = 5;
+                        text = text[6..].to_string();
+                    }
+                    if text.starts_with("flash1:") {
+                        colour = 6;
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("flash2:") {
+                        colour = 7;
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("flash3:") {
+                        colour = 8;
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("glow1:") {
+                        colour = 9;
+                        text = text[6..].to_string();
+                    }
+                    if text.starts_with("glow2:") {
+                        colour = 10;
+                        text = text[6..].to_string();
+                    }
+                    if text.starts_with("glow3:") {
+                        colour = 11;
+                        text = text[6..].to_string();
+                    }
+                    // R289 Java table and R274/client-ts have different
+                    // effect sets. Keep both legacy parsers unchanged.
+                    let mut effect = 0;
+                    if self.revision.is_289() {
+                        if text.starts_with("wave2:") {
+                            effect = 2;
+                            text = text[6..].to_string();
+                        } else if text.starts_with("wave:") {
+                            effect = 1;
+                            text = text[5..].to_string();
+                        } else if text.starts_with("shake:") {
+                            effect = 3;
+                            text = text[6..].to_string();
+                        } else if text.starts_with("scroll:") {
+                            effect = 4;
+                            text = text[7..].to_string();
+                        } else if text.starts_with("slide:") {
+                            effect = 5;
+                            text = text[6..].to_string();
+                        }
+                    } else {
+                        if text.starts_with("wave:") {
+                            effect = 1;
+                            text = text[5..].to_string();
+                        }
+                        if text.starts_with("scroll:") {
+                            effect = 2;
+                            text = text[7..].to_string();
+                        }
+                    }
+                    (colour, effect, text.as_str())
+                };
 
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
-                self.out.p1(0);
-                let start = self.out.pos;
-                self.out.p1(colour);
-                self.out.p1(effect);
-                WordPack::pack(&mut self.out, &text);
-                self.out.psize1((self.out.pos - start) as i32);
+                if self.revision.is_377() {
+                    super::outbound_377::message_public_377(&mut self.out, colour, effect, body);
+                } else {
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
+                    self.out.p1(0);
+                    let start = self.out.pos;
+                    self.out.p1(colour);
+                    self.out.p1(effect);
+                    WordPack::pack(&mut self.out, body);
+                    self.out.psize1((self.out.pos - start) as i32);
+                }
 
                 // Echo the own message as TS 3169-3179:
                 // toSentenceCase then WordFilter (identity until the
@@ -11262,7 +11756,7 @@ impl Client {
                 // bubble only once it has a name (TS 3168-3174). Name
                 // falls back to the login user, then "player", so the
                 // echo is never dropped pre-spawn.
-                text = JString::to_sentence_case(&text);
+                let mut text = JString::to_sentence_case(body);
                 text = WordFilter::filter(&text);
                 if let Some(p) = self.local_player.as_mut() {
                     if p.name.is_some() {
@@ -11303,6 +11797,7 @@ impl Client {
                     self.out.p1(self.chat_trade_mode);
                 }
             }
+
             self.chat_input.clear();
             self.redraw_chat = true;
         }
@@ -11578,10 +12073,15 @@ impl Client {
 
             if entity_type == 2 && self.world.type_code2(self.minusedlevel, x, z, typecode) >= 0 {
                 // loc: ops 4..0, then Examine; Use/TGT replace them
-                let loc = self.cache.locs.get(type_id as usize);
+                let loc = self.cache.resolve_loc(type_id as usize, &self.var);
                 if let Some(loc) = loc {
                     let loc_name = loc.name.clone();
                     let loc_ops = loc.op.clone();
+                    let examine_code = if self.revision().is_377() {
+                        loc.id << 14
+                    } else {
+                        typecode
+                    };
                     if self.use_mode == 1 {
                         let option =
                             format!("Use {} with @cya@{}", self.obj_selected_name, loc_name);
@@ -11599,7 +12099,7 @@ impl Client {
                             }
                         }
                         let option = format!("Examine @cya@{loc_name}");
-                        self.push_option(option, MiniMenuAction::OP_LOC6, typecode, x, z);
+                        self.push_option(option, MiniMenuAction::OP_LOC6, examine_code, x, z);
                     }
                 }
             } else if entity_type == 1 {
@@ -12032,8 +12532,12 @@ impl Client {
 
         self.scene_state = 2;
         self.map_build();
-        self.out
-            .p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
+        if self.revision.is_377() {
+            super::outbound_377::map_build_complete(&mut self.out);
+        } else {
+            self.out
+                .p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
+        }
         0
     }
 
@@ -12135,9 +12639,10 @@ impl Client {
         }
 
         if build.low_mem {
-            self.world.fill_base_level(self.minusedlevel);
+            self.world
+                .fill_base_level_with_revision(self.minusedlevel, self.revision);
         } else {
-            self.world.fill_base_level(0);
+            self.world.fill_base_level_with_revision(0, self.revision);
         }
 
         if !self.map_build_ground_data.is_empty() {
@@ -12814,6 +13319,8 @@ impl Client {
         // TS 2191-2192: the scene/minimap pass after the inbound reads.
         if self.revision.is_289() {
             self.input_packets_289();
+        } else if self.revision.is_377() {
+            self.input_packets_377();
         }
         // The SIM half runs here unconditionally — `check_scene` →
         // `map_build` (ground, collision, `MAP_BUILD_COMPLETE`,
@@ -12884,6 +13391,9 @@ impl Client {
         self.handle_main_if_clicks();
         self.handle_chat_if_clicks();
         self.chat_mode_loop();
+        if self.revision.is_377() {
+            self.chat_mode_packet_377();
+        }
         self.handle_chat_input();
         // consume the previous frame's `World` ground pick (TS 2310-2323)
         // into a MOVE_GAMECLICK walk, then the click passes
@@ -13008,17 +13518,23 @@ impl Client {
         for i in 0..5 {
             self.cam_shake_cycle[i] += 1;
         }
-        // A host-owned session is unattended by definition: the host, not
-        // the Java inactivity policy, owns its lifetime. Suppress the timer
-        // for both revisions without manufacturing user input or packets.
-        if self.external_reconnect_owner() {
+        // A host-owned session is unattended by default: the host, not the
+        // Java inactivity policy, owns its lifetime, so the timer stays
+        // suppressed for both revisions without manufacturing user input or
+        // packets. A host that asks for it ([`Client::set_host_idle_timer`])
+        // gets the Java 289 timer instead.
+        if self.idle_timer_suppressed() {
             self.shell.idle_cycles = 0;
-        } else if self.revision.is_289() {
+        } else if self.revision.is_289() || self.revision.is_377() {
             self.shell.idle_cycles += 1;
             if self.shell.idle_cycles > 4500 {
                 self.shell.idle_cycles -= 500;
                 self.logout_timer = 250;
-                self.out.p1_enc(self.client_opcode(ClientProt::IDLE_TIMER));
+                if self.revision.is_377() {
+                    super::outbound_377::idle_timer_377(&mut self.out);
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::IDLE_TIMER));
+                }
                 queued_local_idle_request = true;
             }
         }
@@ -13039,7 +13555,20 @@ impl Client {
         // packet; the successful combined flush starts the next one-second
         // wall-clock interval.
         if self.last_outbound.elapsed() >= KEEPALIVE_INTERVAL {
-            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            if self.revision.is_377() {
+                super::outbound_377::no_timeout(&mut self.out);
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            }
+        }
+
+        if self.revision.is_377() {
+            if let Some(opcode) = self.outbound.r377().unmapped.take() {
+                self.out.pos = 0;
+                self.record_session_exit(self.protocol_error("unsupported_outbound_377", opcode));
+                self.logout();
+                return;
+            }
         }
 
         let write_result = if let Some(stream) = self.stream.as_mut() {
@@ -13492,7 +14021,7 @@ impl Client {
             self.wave_count = 0;
             self.waves.lock().unwrap().stop();
         } else {
-            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
+            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false, self.revision);
         }
         true
     }
@@ -13826,6 +14355,14 @@ impl Client {
                             self.last_wave_start = Some(now);
                             self.last_wave_len = sample_len;
                         }
+                    } else if self.revision.is_377() {
+                        // Java Client.java:3841-3850 reports a missing Wave.
+                        let report_wave_id = self.synth_error_reporting_enabled_377();
+                        super::outbound_377::event_synth_error_377(
+                            &mut self.out,
+                            id,
+                            report_wave_id,
+                        );
                     }
                 }
                 // Java's -5 retry exists only when signlink rejects an async
@@ -14523,6 +15060,34 @@ mod wave_arbitration {
         client.sounds_do_queue_at(now);
     }
 
+    #[test]
+    fn unresolved_377_wave_emits_java_synth_error_packet() {
+        for report_wave_id in [true, false] {
+            let mut client = Client::new_with_revision(
+                ClientConfig {
+                    host: "127.0.0.1".into(),
+                    port: 43594,
+                    cache_dir: "/tmp".into(),
+                    members: true,
+                    lowmem: true,
+                },
+                ClientRevision::R377,
+            );
+            if !report_wave_id {
+                assert!(client.set_synth_error_reporting_377(false));
+            }
+            queue_at(&mut client, 0x9234, Instant::now());
+
+            assert_eq!(client.wave_count, 0);
+            let expected = if report_wave_id {
+                [ClientProt377::EVENT_SYNTH_ERROR.id as u8, 0x12, 0x34]
+            } else {
+                [ClientProt377::EVENT_SYNTH_ERROR.id as u8, 0xff, 0xff]
+            };
+            assert_eq!(&client.out.data()[..client.out.pos], &expected);
+        }
+    }
+
     fn remaining(client: &Client) -> usize {
         client.waves.lock().unwrap().len()
     }
@@ -15069,5 +15634,53 @@ mod main_modal_packet_tests {
         handle_r289_packet(&mut client, ServerProt289::NPC_INFO, vec![0]);
 
         assert_eq!(client.gens.player_info, player_info);
+    }
+}
+
+#[cfg(test)]
+mod r377_unsupported_outbound_tests {
+    use super::{Client, ClientConfig, ClientRevision};
+    use crate::io::{ClientProt, ClientProt377, ClientStream};
+    use std::io::{ErrorKind, Read};
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    #[test]
+    fn unmapped_legacy_report_abuse_discards_batch_before_socket_write() {
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: ".r377-test-cache".into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R377,
+        );
+        client.ingame = true;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        client.stream = Some(ClientStream::connect("127.0.0.1", address.port()).unwrap());
+        let (mut server, _) = listener.accept().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+
+        client.out.p1_enc(ClientProt377::NO_TIMEOUT.id);
+        // Legacy REPORT_ABUSE remains unmapped; Java 377 report actions use
+        // the dedicated SEND_SNAPSHOT writer instead.
+        assert_eq!(client.client_opcode(ClientProt::REPORT_ABUSE), -1);
+        client.game_loop();
+
+        assert!(!client.ingame);
+        assert_eq!(client.out.pos, 0);
+        let reason = client.take_session_exit_reason().unwrap().to_string();
+        assert!(reason.contains("unsupported_outbound_377"), "{reason}");
+        let mut byte = [0; 1];
+        match server.read(&mut byte) {
+            Ok(0) => {}
+            Err(error) if error.kind() == ErrorKind::ConnectionReset => {}
+            result => panic!("rejected batch reached socket: {result:?} {byte:?}"),
+        }
     }
 }

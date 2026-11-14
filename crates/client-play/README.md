@@ -33,6 +33,180 @@ Rotated engine keys are read at runtime from `$ENGINE_DIR`.
    default; `BOT_CPU=1` is CpuPix3D. `client-play --window` stays the
    Java-shaped `Present` applet for fidelity.
 
+## Explicit revision 377
+
+Revision 274 remains the default. `--revision 289` retains the existing 289
+profile. `--revision 377` selects separate 377 cache decoders and validated
+Fairy Ring login, terrain movement, and natural Tutorial Island operations:
+dialogue, doors, inventory and quest tabs, woodcutting, firemaking, fishing,
+cooking, mining, smelting, smithing, equipment, melee and ranged combat,
+bank deposits/withdrawals, prayer/friends/ignore tabs, Wind Strike, and the
+instructor's mainland teleport. Mainland operations include Cook's Assistant,
+its quest journal and completion scroll, general-store Buy-1/Sell-1, and
+ground-item drop/pickup. This is not a complete 377 gameplay client.
+
+Use revision 377 only with Fairy Ring's local 377 engine. The orchestrator
+starts and stops that engine. Set `ENGINE_DIR` to that engine so runtime RSA
+key selection cannot use a different local engine. Supply a cache snapshot
+whose eight JAG CRCs match the engine's `/crc` response:
+
+```bash
+ENGINE_DIR=/path/to/fairy-ring-377-engine \
+  ./target/debug/client-play --revision 377 --host 127.0.0.1 \
+  --port 43595 --http-port 81 --cache /path/to/matched-377-cache \
+  --user t2a_example --pass 'test-password' --window --cpu
+```
+
+The ignored `live_login_377` and `live_interactions_377` proofs require an
+explicit, absolute Fairy Ring worktree `ENGINE_DIR` and its
+`data/config/private.pem`, with no RSA overrides or fallback key. They also
+require `CLIENT_377_LIVE_DIR`, `CLIENT_377_RUNTIME_CACHE_DIR`, and a
+`CLIENT_377_LIVE_USER` name that starts with `CLIENT_377_LIVE_PREFIX`
+(nonempty; default `t2a`). Both record the selected
+engine and key path in `live-config.json`; endpoints are fixed to localhost
+ports 81 and 43595. The login proof saves two scene-2 frames around a real
+server logout and relog. The interaction proof uses a rendered terrain click,
+accepts the initial design, captures the Guide's in-scene hint arrow, and
+continues through the skip choice and five welcome pages. It then opens the
+door, talks to the Survival Guide, clicks the requested backpack tab, and
+chops the indicated tree twice. It lights logs with a tinderbox, opens the
+skills tab, receives a net, catches shrimp, and cooks the required burnt and
+successful shrimp. It then enters the Master Chef's house, mixes water and
+flour, and bakes bread on the actual range. All actions use server-populated
+inventory slots, NPC slots, and scene locations through production menu dispatch.
+It records screenshots, per-step `stages.json`, and `rust-interactions.json`
+before a server-acknowledged logout.
+
+With the orchestrator's engine already running:
+
+```bash
+ENGINE_DIR=/path/to/fairy-ring-377-engine \
+CLIENT_377_RUNTIME_CACHE_DIR=/path/to/matched-377-cache \
+CLIENT_377_LIVE_DIR=/path/to/evidence \
+CLIENT_377_LIVE_USER=t2a_example \
+  cargo test -p client --no-default-features --test live_login_377 -- \
+  --ignored --nocapture --test-threads=1
+```
+
+For the initial interaction proof, select `--test live_interactions_377` and
+filter `terrain_click_guide_dialogue_and_progress` before `--ignored`; use a
+fresh `t2a` account. The natural continuation uses the same account after its
+server-acknowledged logout, not a seeded tutorial stage:
+
+```bash
+ENGINE_DIR=/path/to/fairy-ring-377-engine \
+CLIENT_377_RUNTIME_CACHE_DIR=/path/to/matched-377-cache \
+CLIENT_377_LIVE_DIR=/path/to/lesson-evidence \
+CLIENT_377_LIVE_USER=t2a_example \
+CLIENT_377_TUTORIAL_LESSON=quest \
+  cargo test -p client --no-default-features --test live_interactions_377 \
+  tutorial_lesson_377::natural_tutorial_lesson -- \
+  --exact --ignored --nocapture --test-threads=1
+```
+
+Select `quest`, `mining`, `combat`, `bank`, `prayer`, then `magic` in order.
+Each lesson requires the previous lesson's natural account state, saves
+per-step screenshots and `stages.json`, and writes `lesson.json` with real
+inventory/NPC/location inputs, outbound packets, and the server logout.
+Natural rat loot uses `OBJ_REVEAL` (106), including enclosed zone batches (183).
+The 377 path validates complete batches before applying their ground stacks.
+It preserves Java's receiver guard instead of duplicating the owner's stack.
+The magic lesson approaches the chicken-facing window before casting;
+the instructor's dialogue tile can have a blocked line of sight.
+The magic lesson ends at Lumbridge (3222,3222) with the tutorial overlay closed.
+Explicit resume selections (`chef-bread`, `quest-run`, `combat-ranged`,
+`combat-shoot`, `combat-confirm`, `bank-exit`, `magic-success`) require their
+already-received natural account states. They do not set tutorial variables
+or grant supplies. `chef-bread` requires the chef's flour and water bucket.
+`combat-confirm` uses the remaining natural arrows against one additional rat
+to exercise the repaired projectile and ground-stack path after a disconnect.
+Set `CLIENT_377_QUIET_LOCK` to the operator's quiet-lock path when required.
+
+The mainland proof continues the same naturally graduated account.
+`CLIENT_377_MAINLAND_LESSON=full` runs Cook's Assistant, general-store
+Buy-1/Sell-1, and ground-item drop/pickup. The `start`, `shop`, `ingredients`,
+`mill`, and `complete` selections resume only from their required real quest
+and inventory states, retaining ingredients already collected naturally.
+The route opens castle doors and farm gates, crosses the bridge, picks up a
+farm egg, milks a dairy cow with a carried bucket, and picks wheat.
+The mill route opens its real
+double doors, uses the ladders, hopper, and controls, and collects flour with
+a pot. The middle ladder's ordinary Climb option offers the real direction
+dialogue. Flour and hopper variables have temporary server scope. If a
+resumed mill lesson has no carried grain, it picks replacement wheat from
+the real field. The proof records the quest journal before acceptance,
+during collection, and after completion, plus the quest-complete scroll.
+Each selection ends with a server-acknowledged logout. No quest progress,
+inventory, player coordinates, or skill experience is assigned by the proof.
+Each `mainland-stages.json` entry records the rendered camera, map base,
+roof level, actual interfaces, and inventory alongside its screenshot.
+Cook's quest variable is server-only. Its received quest-list colours and
+journal text prove progress; the fixture does not treat client varp 29 as
+server quest state.
+The flour-bin form follows the received location varp. Map and zone loaders
+retain a model-free morphing root as a dynamic scene source. Java's opcode-77
+selection controls the rendered model and real menu options; hidden or
+out-of-range forms do not fall back to another child. Operations retain the
+original scene identity, while Examine uses the selected definition.
+
+With the live/cache/account environment above, run:
+
+```bash
+CLIENT_377_MAINLAND_LESSON=full \
+cargo test -p client --no-default-features --test live_interactions_377 \
+  mainland_lesson_377::natural_lumbridge_cook_quest_and_shop_377 \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+The `% Done` bar reads transmitted varp 406. The server-only tutorial stage
+is not transmitted in varp 281. The first Guide conversation reaches stage 4,
+which still has zero filled segments (`1 + floor(4 * 20 / 670) = 1`).
+The first successful chop reaches stage 40. The next successful chop refreshes
+the overlay to 2, which fills the first segment. The proof checks a real
+server/applied varp transition from 1 to 2 and evaluates all 20 segment scripts.
+The later survival and chef steps reach transmitted progress values 3, 4, 5,
+and 6. Bread reaches stage 170 (`1 + floor(170 * 20 / 670) = 6`), with five
+filled segments. The continuation reaches received progress 8 at the mine,
+11 at combat, 17 at the chapel, and 20 during magic; the mainland transition
+clears it to 0 and removes the overlay. Every saved step includes tutorial
+text, both varp values, segment evaluations, inventories, visible NPCs,
+projectiles, and skill experience. No tutorial state, inventory, or stats
+are seeded.
+
+The 377 renderer uses Java's separate hint sprites. A literal model-and-frame
+regression checks the tutorial banner against Client-Java 377. The current
+pack's banner also overlaps the progress bar in Java; the renderer preserves
+that geometry rather than applying a client-only layout correction.
+Chat-interface replacement restores decoded non-inventory component state.
+Inventory components retain their contents, as in Java's component unload.
+Late text updates also invalidate their visible cached chat/tutorial layer.
+The quest-completion jingle uses the validated Java 377 `MIDI_JINGLE` packet.
+Low-memory or muted clients consume it without requesting or changing music.
+Enabled music requests the jingle and preserves the pending background song.
+Mainland map effects use Java 377's `MAP_ANIM` (59), including enclosed
+zone batches (183). The whole batch and effect resources are validated
+before any location, ground stack, or animation changes. Its height byte
+is subtracted directly from terrain height, without projectile scaling.
+
+Ordinary 377 mouse, camera, focus, idle, and Java anticheat packets use their
+own encoders and trigger points. Shared writers are admitted only when their
+bodies are compatible. A still-unsupported gameplay writer logs its legacy
+opcode, discards the complete pending batch, and closes the session before
+flushing; it does not panic or leak a 274 packet onto the 377 connection.
+
+Java 377 has five menu-anticheat triggers. `OPNPC3` sums NPC slots and sends
+157 plus a zero 32-bit integer at 143. `OPOBJ2` counts actions and sends 95
+plus a zero 32-bit integer at 120. `OPOBJ3` counts actions whose object ID
+is divisible by four and sends 222 plus `11257922` at 84.
+`OPHELD4` counts actions and sends 165 plus byte 206 at 62.
+`OPHELD1` sums object IDs and sends 126 plus byte 125 at 115.
+Each preamble precedes its operation and resets its counter. Cold login
+resets the menu counters. Other menu actions do not add these Java 377
+preambles. Unsupported operation bodies remain fail-closed.
+
+The ignored proof uses password `t2apass` for its `t2a` account and explicitly
+enables drawing; ordinary headless clients keep the CPU-save draw gate off.
+
 ## Expected output (live proof, operator step — needs the Server running)
 
 - **Wrong key** (engine pem rotated but not visible as

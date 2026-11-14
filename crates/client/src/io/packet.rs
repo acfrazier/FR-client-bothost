@@ -493,6 +493,12 @@ impl Packet {
     }
 
     pub fn p1_enc(&mut self, opcode: i32) {
+        // A revision mapper may reject a legacy writer. The client latches
+        // that rejection and discards its whole pending batch before flushing.
+        // Do not advance ISAAC or ask an observer to decode an invalid opcode.
+        if opcode < 0 {
+            return;
+        }
         if self.has_observer() {
             self.finish_observation(true);
         }
@@ -660,8 +666,162 @@ mod observer_memory_tests {
         let packet_size = std::mem::size_of::<Packet>();
         let client_size = std::mem::size_of::<crate::client::Client>();
         println!("S3 client memory: packet={packet_size} client={client_size}");
-        #[cfg(target_os = "macos")]
-        assert_eq!(client_size, 28872);
+        // The whole per-slot Client, 28,872 B measured on both Linux (the CI
+        // lane) and macOS. The inventory's rule allows +8% rounded to an
+        // 8-byte boundary: 28,872 * 1.08 = 31,181.8 -> 31,184 B. This also
+        // covers other 64-bit targets; a smaller layout passes the ceiling.
+        #[cfg(target_pointer_width = "64")]
+        assert!(
+            client_size <= 31_184,
+            "Client grew to {client_size} B (measured 28,872 B; limit 31,184 B)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod outbound_memory_tests {
+    use crate::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+    use crate::io::{map_client_prot, ClientProt, ClientProt377, ClientRevision};
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    const WARM_WRITES: usize = 128;
+    const R274_WARM_ALLOCATION_BASELINE: usize = WARM_WRITES;
+    const R289_WARM_ALLOCATION_BASELINE: usize = WARM_WRITES;
+    const R377_WARM_ALLOCATION_BASELINE: usize = WARM_WRITES;
+
+    struct Counting;
+
+    thread_local! {
+        static COUNT: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    // SAFETY: All allocator calls are forwarded unchanged to `System`; only a
+    // thread-local event counter is updated while a measurement is active.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            COUNT.with(|count| {
+                if let Some(n) = count.get() {
+                    count.set(Some(n + 1));
+                }
+            });
+            // SAFETY: The caller supplies a valid layout that is forwarded intact.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            COUNT.with(|count| {
+                if let Some(n) = count.get() {
+                    count.set(Some(n + 1));
+                }
+            });
+            // SAFETY: The caller supplies a valid layout that is forwarded intact.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            COUNT.with(|count| {
+                if let Some(n) = count.get() {
+                    count.set(Some(n + 1));
+                }
+            });
+            // SAFETY: The pointer and original layout are forwarded unchanged.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: The pointer and original layout are forwarded unchanged.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: Counting = Counting;
+
+    fn allocations(f: impl FnOnce()) -> usize {
+        COUNT.with(|count| count.set(Some(0)));
+        f();
+        COUNT.with(|count| count.replace(None).expect("allocation counter is active"))
+    }
+
+    fn assert_revision_outbound_allocation_gate(revision: ClientRevision) -> usize {
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: false,
+            },
+            revision,
+        );
+        client.ingame = true;
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        client.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
+        client.menu_action[0] = MiniMenuAction::OP_NPC1;
+        client.menu_param_a[0] = 7;
+        client.menu_param_b[0] = 10;
+        client.menu_param_c[0] = 12;
+
+        let expected_opcode = if revision == ClientRevision::R377 {
+            ClientProt377::OPNPC1.id as u8
+        } else {
+            map_client_prot(revision, ClientProt::OPNPC1).id as u8
+        };
+        let expected_index = if revision == ClientRevision::R377 {
+            [7, 0]
+        } else {
+            [0, 7]
+        };
+        for _ in 0..2 {
+            client.out.pos = 0;
+            client.doAction(0);
+            assert!(client.out.pos >= 3, "the warmed action emits its packet");
+            assert_eq!(
+                &client.out.data()[client.out.pos - 3..client.out.pos],
+                &[expected_opcode, expected_index[0], expected_index[1]]
+            );
+        }
+
+        let mut writes = 0;
+        let allocations = allocations(|| {
+            for _ in 0..WARM_WRITES {
+                client.out.pos = 0;
+                client.doAction(0);
+                writes += usize::from(client.out.pos >= 3);
+            }
+        });
+        assert_eq!(writes, WARM_WRITES, "every warmed action writes a packet");
+
+        allocations
+    }
+
+    #[test]
+    fn outbound_warm_writes_stay_within_one_allocation_of_each_revision_baseline() {
+        for (revision, allocations, baseline) in [
+            (
+                ClientRevision::R274,
+                assert_revision_outbound_allocation_gate(ClientRevision::R274),
+                R274_WARM_ALLOCATION_BASELINE,
+            ),
+            (
+                ClientRevision::R289,
+                assert_revision_outbound_allocation_gate(ClientRevision::R289),
+                R289_WARM_ALLOCATION_BASELINE,
+            ),
+            (
+                ClientRevision::R377,
+                assert_revision_outbound_allocation_gate(ClientRevision::R377),
+                R377_WARM_ALLOCATION_BASELINE,
+            ),
+        ] {
+            eprintln!("{revision:?} outbound 128-write allocations: {allocations}");
+            assert!(
+                allocations <= baseline + 1,
+                "{revision:?} outbound 128-write path exceeded its measured baseline plus one allocation of headroom: {allocations} > {}",
+                baseline + 1
+            );
+        }
     }
 }
 
