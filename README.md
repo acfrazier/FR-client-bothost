@@ -106,7 +106,9 @@ The address uses host-provided DNS text or the dotted IP without network IO.
 Moderator mute text follows the privilege level and mute option.
 
 The chat Report abuse button clears the previous name and mute choice, opens
-the report interface and routes typed keys to the report name.
+the report interface and routes typed keys to the report name. On 289/377,
+both the button and menu option refuse an open main interface with a chat
+warning and no outbound packet; 274 closes it and opens the report form.
 Warmed report-name draws reuse the component's text buffer on every revision.
 
 LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,

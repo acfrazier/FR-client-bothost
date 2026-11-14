@@ -3,6 +3,7 @@
 //! and emits `CHAT_SETMODE` (154) with the three modes; the Report abuse
 //! button resets the report form and arms typed name input (Java 274
 //! Client.java:2789-2797; Java 289 Client.java:4217-4224).
+use client::client::mini_menu_action::MiniMenuAction;
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::if_type::IfType;
 
@@ -106,6 +107,74 @@ fn report_button_then_typing_fills_the_report_name() {
         assert_eq!(c.report_abuse_input, "bob", "{revision:?}");
         assert!(c.chat_input.is_empty(), "{revision:?}");
     }
+}
+
+fn report_with_open_interfaces(from_menu: bool) {
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        for main_open in [false, true] {
+            let mut c = client_with_revision(revision);
+            c.set_iface(
+                2,
+                IfType {
+                    id: 2,
+                    layer_id: 2,
+                    client_code: 600,
+                    ..Default::default()
+                },
+            );
+            c.main_modal_id = if main_open { 7 } else { -1 };
+            c.side_modal_id = 8;
+            c.chat_modal_id = 9;
+            c.report_abuse_com_id = 10;
+            c.report_abuse_input = "stale".into();
+            c.report_abuse_mute_option = true;
+            if from_menu {
+                c.menu_action[0] = MiniMenuAction::ABUSE_REPORT;
+                c.menu_option[0] = "Report abuse @whi@  Bob  ".into();
+                c.doAction(0);
+            } else {
+                click_chat(&mut c, 450, 480);
+            }
+            if main_open && revision != ClientRevision::R274 {
+                assert_eq!(
+                    (c.main_modal_id, c.side_modal_id, c.chat_modal_id, c.out.pos),
+                    (7, 8, 9, 0),
+                    "{revision:?}, menu={from_menu}: keep interfaces and send nothing"
+                );
+                assert_eq!(c.report_abuse_com_id, 10);
+                assert_eq!(c.report_abuse_input, "stale");
+                assert!(c.report_abuse_mute_option);
+                assert_eq!(c.chat_type[0], 0);
+                assert_eq!(c.chat_username[0], "");
+                assert_eq!(
+                    c.chat_text[0],
+                    "Please close the interface you have open before using 'report abuse'"
+                );
+            } else {
+                assert_eq!(c.main_modal_id, 2, "{revision:?}, menu={from_menu}");
+                assert_eq!((c.side_modal_id, c.chat_modal_id), (-1, -1));
+                assert_eq!(c.report_abuse_com_id, 2);
+                assert_eq!(c.report_abuse_input, if from_menu { "Bob" } else { "" });
+                assert!(!c.report_abuse_mute_option);
+                assert!(c.chat_text[0].is_empty());
+                assert!(c.out.pos > 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn report_button_with_open_interfaces_follows_each_java_revision() {
+    report_with_open_interfaces(false);
+}
+
+#[test]
+fn report_menu_with_open_interfaces_follows_each_java_revision() {
+    report_with_open_interfaces(true);
 }
 
 #[test]

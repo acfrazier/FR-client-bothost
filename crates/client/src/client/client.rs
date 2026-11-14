@@ -5022,16 +5022,24 @@ impl Client {
         if action == MiniMenuAction::ABUSE_REPORT {
             let option = self.menu_option[option_id as usize].clone();
             if let Some(tag) = option.find("@whi@") {
-                self.close_modal();
-                self.report_abuse_input = option[tag + 5..].trim().to_string();
-                self.report_abuse_mute_option = false;
-                let report = self
-                    .ifaces_merged()
-                    .find(|com| com.client_code == CC_REPORT_INPUT)
-                    .map(|com| com.layer_id);
-                if let Some(layer_id) = report {
-                    self.report_abuse_com_id = layer_id;
-                    self.main_modal_id = layer_id;
+                if !self.revision.is_274() && self.main_modal_id != -1 {
+                    self.add_chat(
+                        0,
+                        "Please close the interface you have open before using 'report abuse'",
+                        "",
+                    );
+                } else {
+                    self.close_modal();
+                    self.report_abuse_input = option[tag + 5..].trim().to_string();
+                    self.report_abuse_mute_option = false;
+                    let report = self
+                        .ifaces_merged()
+                        .find(|com| com.client_code == CC_REPORT_INPUT)
+                        .map(|com| com.layer_id);
+                    if let Some(layer_id) = report {
+                        self.report_abuse_com_id = layer_id;
+                        self.main_modal_id = layer_id;
+                    }
                 }
             }
         }
@@ -11626,6 +11634,14 @@ impl Client {
             || self.shell.mouse_click_y < 467
             || self.shell.mouse_click_y > 499
         {
+            return;
+        }
+        if !self.revision.is_274() && self.main_modal_id != -1 {
+            self.add_chat(
+                0,
+                "Please close the interface you have open before using 'report abuse'",
+                "",
+            );
             return;
         }
         self.close_modal();
