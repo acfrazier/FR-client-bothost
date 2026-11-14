@@ -4516,7 +4516,9 @@ impl Renderer {
         };
 
         let mut updated = false;
-        let recursive_type = if client.revision().is_377() {
+        let is_377 = client.revision().is_377();
+        let frame_padding = i32::from(!is_377);
+        let recursive_type = if is_377 {
             ComponentType::TYPE_LAYER
         } else {
             ComponentType::TYPE_UNUSED
@@ -4539,6 +4541,7 @@ impl Renderer {
             let model_anim2 = child.model_anim2;
             let mut anim_cycle = child.anim_cycle + delta;
             let mut anim_frame = child.anim_frame;
+            let model_rotation = child.model_rotation;
             let active = if is_model && (model_anim != -1 || model_anim2 != -1) {
                 Renderer::get_if_active(client, child_id)
             } else {
@@ -4557,7 +4560,7 @@ impl Renderer {
                     // the in-place mutation of the TS `child`.
                     let mut advanced = false;
                     while anim_cycle > seq.get_delay(anim_frame) {
-                        anim_cycle -= seq.get_delay(anim_frame) + 1;
+                        anim_cycle -= seq.get_delay(anim_frame) + frame_padding;
                         anim_frame += 1;
                         if anim_frame >= seq.num_frames {
                             anim_frame -= seq.loops;
@@ -4573,6 +4576,19 @@ impl Renderer {
                     }
                     updated |= advanced;
                 }
+            }
+            if is_377 && is_model && model_rotation != 0 {
+                if let Some(com) = client.overlay_mut(child_id as usize) {
+                    com.model_xan = com
+                        .model_xan
+                        .wrapping_add(delta.wrapping_mul(model_rotation >> 16))
+                        & 0x7ff;
+                    com.model_yan = com
+                        .model_yan
+                        .wrapping_add(delta.wrapping_mul(i32::from(model_rotation as i16)))
+                        & 0x7ff;
+                }
+                updated = true;
             }
         }
 

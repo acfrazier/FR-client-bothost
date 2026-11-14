@@ -93,6 +93,9 @@ Interface animation resets recurse only through type-1 children in all
 revisions. Type-0 nested layers retain their descendant animation state.
 Animation advances recurse into type-1 children on 274/289, but into type-0
 layers on 377, following each revision's Java client.
+Revision 377 subtracts each model frame's delay without the extra tick used
+by 274/289. IF_SETROTATION (377 opcode 18) sets signed x/y angular speeds;
+model updates apply those speeds per elapsed tick and wrap angles to 0–2047.
 
 The 289 open-interface handlers request redraws only for the areas that
 Java redraws. An already-closed side or chat layer adds no redraw request.

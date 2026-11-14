@@ -77,6 +77,7 @@ impl Client {
                 | 6
                 | 10
                 | 13
+                | 18
                 | 21
                 | 26
                 | 29
@@ -614,6 +615,9 @@ impl Client {
                         com.model_xan = xan;
                         com.model_yan = yan;
                         com.model_zoom = zoom;
+                    }
+                    I::SetRotation { component, packed } => {
+                        self.iface_mut(component as usize).unwrap().model_rotation = packed;
                     }
                     I::SetAnim {
                         component,

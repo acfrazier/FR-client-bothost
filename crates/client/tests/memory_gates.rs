@@ -386,3 +386,78 @@ fn warmed_report_name_draws_allocate_nothing() {
         assert_eq!(c.if_(600).unwrap().text, "abcdefghijkl|");
     }
 }
+
+#[test]
+fn warmed_interface_animation_and_rotation_allocate_nothing() {
+    use client::config::if_type::ComponentType;
+    use client::config::SeqType;
+    use client::render::Renderer;
+
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        let cache = Cache {
+            seqs: vec![SeqType {
+                num_frames: 2,
+                frames: Some(vec![0, 0]),
+                iframes: Some(vec![-1, -1]),
+                delay: Some(vec![1, 2]),
+                loops: 2,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut c = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: std::env::temp_dir().display().to_string(),
+                members: true,
+                lowmem: false,
+            },
+            Arc::new(cache),
+            Arc::new(Vec::new()),
+            Vec::new(),
+            revision,
+        );
+        c.set_iface(
+            1,
+            IfType {
+                children: Some(vec![2]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            2,
+            IfType {
+                r#type: ComponentType::TYPE_MODEL,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            2,
+            IfTypeMut {
+                model_anim: 0,
+                model_rotation: (3 << 16) | 0xfffc,
+                ..Default::default()
+            },
+        );
+        Renderer::animate_interface(&mut c, 1, 1);
+        let count = allocations(|| {
+            for _ in 0..1000 {
+                Renderer::animate_interface(&mut c, 1, 2);
+            }
+        });
+        assert_eq!(count, 0, "{revision:?} interface updates must not allocate");
+        let model = c.if_(2).unwrap();
+        let expected = if revision.is_377() {
+            (1907, 188)
+        } else {
+            (0, 0)
+        };
+        assert_eq!((model.model_xan, model.model_yan), expected);
+    }
+    eprintln!("IfTypeMut size: {} bytes", std::mem::size_of::<IfTypeMut>());
+}

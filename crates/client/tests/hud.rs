@@ -1912,10 +1912,85 @@ fn animate_interface_recurses_into_each_revisions_java_child_type() {
             let model = c.if_(3).unwrap();
             assert_eq!(
                 (model.anim_frame, model.anim_cycle),
-                (i32::from(recurses), 0)
+                (i32::from(recurses), i32::from(recurses && revision.is_377()))
             );
             assert_eq!(c.if_(4).unwrap().anim_frame, 0, "stop at the -1 child");
         }
+    }
+}
+
+#[test]
+fn r377_rotation_packet_advances_model_angles_and_zero_stops_it() {
+    use client::io::ClientRevision;
+
+    for (x_speed, y_speed, delta, expected) in [
+        (3i16, -4i16, 2, (4, 2041)),
+        (-32768, 32767, 3, (2046, 2046)),
+        (-1, 1, 2, (2044, 3)),
+    ] {
+        let mut c = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: std::env::temp_dir().display().to_string(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R377,
+        );
+        c.set_iface(
+            1,
+            IfType {
+                children: Some(vec![2, 3, -1, 4]),
+                ..Default::default()
+            },
+        );
+        for (id, kind) in [
+            (2, ComponentType::TYPE_MODEL),
+            (3, ComponentType::TYPE_UNUSED),
+            (4, ComponentType::TYPE_MODEL),
+        ] {
+            c.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    r#type: kind,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                id,
+                IfTypeMut {
+                    model_anim: -1,
+                    model_xan: 2046,
+                    model_yan: 1,
+                    ..Default::default()
+                },
+            );
+            // IF_SETROTATION: BE x speed, BE biased component, LE y speed.
+            let mut bytes = x_speed.to_be_bytes().to_vec();
+            bytes.extend_from_slice(&[0, (id as u8).wrapping_add(128)]);
+            bytes.extend_from_slice(&y_speed.to_le_bytes());
+            c.ingame = true;
+            c.ptype = 18;
+            c.psize = 6;
+            c.handle_packet(18, &mut Packet::new(bytes));
+            assert!(c.ingame, "valid IF_SETROTATION must be applied");
+            assert_eq!(c.ptype, -1);
+        }
+        assert!(Renderer::animate_interface(&mut c, 1, delta));
+        let model = c.if_(2).unwrap();
+        assert_eq!((model.model_xan, model.model_yan), expected);
+        for id in [3, 4] {
+            let untouched = c.if_(id).unwrap();
+            assert_eq!((untouched.model_xan, untouched.model_yan), (2046, 1));
+        }
+        c.ptype = 18;
+        c.psize = 6;
+        c.handle_packet(18, &mut Packet::new(vec![0, 0, 0, 130, 0, 0]));
+        assert!(!Renderer::animate_interface(&mut c, 1, delta));
+        let stopped = c.if_(2).unwrap();
+        assert_eq!((stopped.model_xan, stopped.model_yan), expected);
     }
 }
 
