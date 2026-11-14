@@ -1912,7 +1912,10 @@ fn animate_interface_recurses_into_each_revisions_java_child_type() {
             let model = c.if_(3).unwrap();
             assert_eq!(
                 (model.anim_frame, model.anim_cycle),
-                (i32::from(recurses), i32::from(recurses && revision.is_377()))
+                (
+                    i32::from(recurses),
+                    i32::from(recurses && revision.is_377())
+                )
             );
             assert_eq!(c.if_(4).unwrap().anim_frame, 0, "stop at the -1 child");
         }

@@ -1172,7 +1172,7 @@ fn in_band_actor_failure_has_reset_not_success_publication() {
 }
 
 #[test]
-fn default_274_last_login_is_noop_and_adjacent_pid_keeps_legacy_meaning() {
+fn default_274_last_login_applies_java_and_adjacent_pid_keeps_legacy_meaning() {
     let mut c = client_274();
     c.side_modal_id = 7;
     c.report_abuse_input = "keep".into();
@@ -1198,11 +1198,17 @@ fn default_274_last_login_is_noop_and_adjacent_pid_keeps_legacy_meaning() {
     assert_eq!(feed_frames(&mut c, &frame, 6), 2);
     assert!(c.ingame);
     assert_eq!(c.revision(), ClientRevision::R274);
-    assert_eq!(c.last_login_ip, 0);
-    assert_eq!(c.side_modal_id, 7);
-    assert_eq!(c.report_abuse_input, "keep");
-    assert!(c.report_abuse_mute_option);
-    assert_eq!(c.out.pos, 0);
+    assert_eq!(c.last_login_ip, 0x01020304);
+    assert_eq!(c.days_since_login, 9);
+    assert_eq!(c.days_since_recovery_change, 200);
+    assert_eq!(c.last_login_message_count, 10);
+    assert_eq!(c.members_warning, 1);
+    assert_eq!(c.side_modal_id, -1);
+    assert!(c.report_abuse_input.is_empty());
+    assert!(!c.report_abuse_mute_option);
+    assert_eq!(&c.out.data()[..c.out.pos], &[51]);
     assert_eq!((c.self_slot, c.members_account), (291, 1));
-    assert_eq!(generations(&c), before);
+    let mut expected = before;
+    expected[7] += 1;
+    assert_eq!(generations(&c), expected);
 }

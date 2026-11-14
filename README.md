@@ -114,8 +114,9 @@ both the button and menu option refuse an open main interface with a chat
 warning and no outbound packet; 274 closes it and opens the report form.
 Warmed report-name draws reuse the component's text buffer on every revision.
 
-LAST_LOGIN_INFO opens the welcome layer without requesting a frame redraw,
-as Java does.
+LAST_LOGIN_INFO on 274/289 stores the login fields and opens welcome layer
+650 or 655 only for a nonzero address with no main modal open. It closes
+side/chat modals and resets report input without requesting a frame redraw.
 
 Cold login clears the Continue-button latch; a reconnect retains it.
 

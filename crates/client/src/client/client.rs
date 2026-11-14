@@ -6802,7 +6802,7 @@ impl Client {
         publication
     }
 
-    /// Java client.java:3159-3183, applied only after exact-frame decode.
+    /// Java 274 Client.java:7902-7925 / 289:7058-7081 share this welcome flow.
     /// DNS is optional lifecycle-owned display state, not packet-time IO.
     fn apply_last_login_info(&mut self, info: LastLoginInfo) -> R289Publication {
         self.last_login_ip = info.ip;
@@ -9136,6 +9136,14 @@ impl Client {
             }
 
             ServerProt::LAST_LOGIN_INFO => {
+                let info = LastLoginInfo {
+                    ip: payload.g4(),
+                    days: payload.g2(),
+                    recovery_days: payload.g1(),
+                    messages: payload.g2(),
+                    members_warning: payload.g1(),
+                };
+                self.apply_last_login_info(info).publish(&mut self.gens);
                 self.ptype = -1;
             }
 
