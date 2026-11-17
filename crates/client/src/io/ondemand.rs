@@ -2365,21 +2365,30 @@ mod tests {
     }
 
     #[test]
-    fn keepalive_377_failed_write_sets_java_wait_cycles() {
-        use super::{ClientRevision, Instant};
-        let (mut worker, peer) = keepalive_worker(ClientRevision::R377);
-        worker
-            .stream
-            .as_mut()
-            .unwrap()
-            .set_deadline(Some(Instant::now()))
-            .unwrap();
-        worker.no_timeout_cycle = 500;
-        worker.tick();
-        assert_eq!(worker.packet_cycle, 5000);
-        assert_eq!(worker.no_timeout_cycle, 0);
-        assert!(worker.stream.is_some());
-        assert_no_keepalive(&peer);
+    fn keepalive_377_and_274_failed_writes_preserve_revision_behavior() {
+        use super::{ClientRevision, Duration};
+        use std::io::Write;
+        for revision in [ClientRevision::R377, ClientRevision::R274] {
+            let (mut worker, mut peer) = keepalive_worker(revision);
+            let stream = worker.stream.as_mut().unwrap();
+            stream.set_deadline(None).unwrap();
+            // Exercise the read before the heartbeat without failing that read.
+            peer.write_all(&[0; 6]).unwrap();
+            stream.wait_available(6, Duration::from_secs(2));
+            assert_eq!(stream.available().unwrap(), 6);
+            stream.fail_next_tcp_write_for_test();
+            worker.no_timeout_cycle = 500;
+            worker.tick();
+            assert_eq!(worker.no_timeout_cycle, 0, "{revision:?}");
+            if revision == ClientRevision::R377 {
+                assert_eq!(worker.packet_cycle, 5000);
+                assert!(worker.stream.is_some());
+                assert_no_keepalive(&peer);
+            } else {
+                assert_ne!(worker.packet_cycle, 5000);
+                assert!(worker.stream.is_none());
+            }
+        }
     }
 
     /// Java `Client.maininit` (5251-5277) maps `getModelUse` bits to a

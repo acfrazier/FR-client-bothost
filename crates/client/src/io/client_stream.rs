@@ -1746,6 +1746,16 @@ pub fn connect_ws_plain(host: &str, port: u16) -> io::Result<ClientStream> {
 }
 
 #[cfg(test)]
+impl ClientStream {
+    pub(super) fn fail_next_tcp_write_for_test(&mut self) {
+        let Inner::Tcp(t) = &self.inner else {
+            panic!("TCP writer failure requires a TCP stream");
+        };
+        t.shared.lock().unwrap().ioerror = true;
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::client::client::{SessionExitReason, SERVER_TIMEOUT};
