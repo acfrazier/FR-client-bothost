@@ -3900,6 +3900,10 @@ impl Client {
                 "Your account is already logged in.".into(),
                 "Try again in 60 secs...".into(),
             ),
+            6 if self.revision.is_377() => (
+                "RuneScape has been updated!".into(),
+                "Please reload this page.".into(),
+            ),
             6 => (
                 "RuneScape has been updated!".into(),
                 "Wrong RSA key; check this world's login key.".into(),
@@ -3935,9 +3939,32 @@ impl Client {
                 "You are standing in a members-only area.".into(),
                 "To play on this world move to a free area first".into(),
             ),
+            18 if self.revision.is_377() => (
+                "Account locked as we suspect it has been stolen.".into(),
+                "Press 'recover a locked account' on front page.".into(),
+            ),
             20 => (
                 "Invalid loginserver requested".into(),
                 "Please try using a different world.".into(),
+            ),
+            22 if self.revision.is_377() => {
+                ("Malformed login packet.".into(), "Please try again.".into())
+            }
+            23 if self.revision.is_377() => (
+                "No reply from loginserver.".into(),
+                "Please try again.".into(),
+            ),
+            24 if self.revision.is_377() => (
+                "Error loading your profile.".into(),
+                "Please contact customer support.".into(),
+            ),
+            25 if self.revision.is_377() => (
+                "Unexpected loginserver response.".into(),
+                "Please try using a different world.".into(),
+            ),
+            26 if self.revision.is_377() => (
+                "This computers address has been blocked".into(),
+                "as it was used to break our rules".into(),
             ),
             -1 => (
                 "No response from server".into(),

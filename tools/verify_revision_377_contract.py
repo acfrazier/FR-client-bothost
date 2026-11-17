@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from generate_revision_377_contract import products, protocol_contract
@@ -26,7 +27,8 @@ def require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
-def verify(java: Path, engine: Path | None, cache: Path | None) -> str:
+def verify(java: Path, engine: Path | None, cache: Path | None,
+           engine_ref: str | None = None) -> str:
     contract = json.loads(CONTRACT.read_text())
     require(contract["revision"] == 377, "wrong contract revision")
     for name, digest in contract["source_pin"]["sha256"].items():
@@ -85,11 +87,46 @@ def verify(java: Path, engine: Path | None, cache: Path | None) -> str:
 
     checks = ["Java-derived lengths and complete opcode coverage", "Rust tables", "5 framing fixtures"]
     if engine is not None:
-        path = engine / "src/network/game/client/ClientGameProt.ts"
-        table = {int(opcode): int(size) for opcode, size in
-                 re.findall(r"new ClientGameProt\((\d+), (-?\d+)\)", path.read_text())}
+        def source(path: str) -> str:
+            if engine_ref is None:
+                return (engine / path).read_text()
+            return subprocess.check_output(
+                ["git", "-C", str(engine), "show", f"{engine_ref}:{path}"], text=True)
+
+        table = {int(opcode): int(size) for opcode, size in re.findall(
+            r"new ClientGameProt\((\d+), (-?\d+)\)",
+            source("src/network/game/client/ClientGameProt.ts"))}
         require(table == {row["id"]: row["length"] for row in rows}, "engine outbound table differs from Java-derived rows")
-        checks.append(f"independent engine table ({len(table)} rows)")
+        server = {}
+        for path in ("src/network/game/server/ServerGameProt.ts",
+                     "src/network/game/server/ServerGameZoneProt.ts"):
+            for opcode, size in re.findall(r"new \w+\((\d+), (-?\d+)\)", source(path)):
+                require(int(opcode) not in server, "duplicate engine inbound slot")
+                server[int(opcode)] = int(size)
+        require(all(java_sizes[opcode] == size for opcode, size in server.items()),
+                "engine inbound length differs from Java")
+        # These method-local comparisons are independent of Rust's decoder inventory.
+        def method(signature: str) -> str:
+            start = client.index(signature)
+            opening = client.index("{", start)
+            depth, end = 1, opening + 1
+            while depth:
+                depth += (client[end] == "{") - (client[end] == "}")
+                end += 1
+            return client[opening:end]
+
+        handled = {int(op) for op in re.findall(
+            r"this\.ptype == (\d+)", method("public boolean readPacket("))}
+        handled.update(int(op) for op in re.findall(
+            r"(?:opcode|arg\d+) == (\d+)", method("public void readZonePacket(")))
+        require(handled == set(server), "Java handlers differ from engine inbound slots")
+        frame_only = {op for op, size in enumerate(java_sizes[:256])
+                      if size != 0 and op not in handled}
+        require(frame_only == {187} and java_sizes[187] == 6,
+                "Java frame-only slot census changed")
+        require(len(handled | frame_only) == 76 and len(table) == 80,
+                "assigned packet census changed")
+        checks.append(f"independent engine tables (76 S2C including Java-only187, {len(table)} C2S)")
     if cache is not None:
         for path, content in products(java, cache).items():
             require(path.read_text() == content, f"stale generated file: {path.relative_to(ROOT)}")
@@ -102,9 +139,10 @@ def main() -> None:
     parser.add_argument("--java-root", type=Path, required=True)
     parser.add_argument("--engine-root", type=Path)
     parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--engine-ref", help="read immutable engine blobs with git show")
     args = parser.parse_args()
     try:
-        print(verify(args.java_root, args.engine_root, args.cache_dir))
+        print(verify(args.java_root, args.engine_root, args.cache_dir, args.engine_ref))
     except (ValueError, KeyError, IndexError, OSError) as error:
         raise SystemExit(f"FAIL: {error}") from error
 
