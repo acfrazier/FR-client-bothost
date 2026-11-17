@@ -76,6 +76,7 @@ fn sideicons_load_from_media() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP sideicons_load_from_media: local media pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -243,6 +244,7 @@ fn draw_interface_text_writes_pixels() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!("SKIP draw_interface_text_writes_pixels: local title pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -293,6 +295,7 @@ fn iftype_keeps_graphic_name() {
     // the logout tab's red button is a TYPE_GRAPHIC sibling of its text
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
+        eprintln!("SKIP iftype_keeps_graphic_name: local interface pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -316,6 +319,7 @@ fn draw_graphic_writes_pixels() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP draw_graphic_writes_pixels: local media pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -367,6 +371,7 @@ fn draw_side_text_component_writes_pixels() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
+        eprintln!("SKIP draw_side_text_component_writes_pixels: local interface pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -625,6 +630,7 @@ fn draw_chat_renders_type0_line_and_input() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!("SKIP draw_chat_renders_type0_line_and_input: local title pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -696,6 +702,7 @@ fn prepare_game_depacks_mod_icons() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP prepare_game_depacks_mod_icons: local media pack is missing");
         return;
     }
     let _c = chat_client(&cache, &mut r);
@@ -714,6 +721,7 @@ fn draw_chat_plots_cr1_crown() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP draw_chat_plots_cr1_crown: local media pack is missing");
         return;
     }
     let crown_colour = {
@@ -747,6 +755,7 @@ fn draw_chat_plots_cr2_crown_for_private() {
     // chatbox: the silver crown plots after the "From" label.
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP draw_chat_plots_cr2_crown_for_private: local media pack is missing");
         return;
     }
     let silver_colour = {
@@ -778,6 +787,7 @@ fn draw_private_messages_plots_cr1_crown() {
     // split private chat draws into area_game at y = 329 - line*13.
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP draw_private_messages_plots_cr1_crown: local media pack is missing");
         return;
     }
     let mut c = chat_client(&cache, &mut r);
@@ -817,6 +827,9 @@ fn draw_chat_social_overlay_draws_header_and_input() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!(
+            "SKIP draw_chat_social_overlay_draws_header_and_input: local title pack is missing"
+        );
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -845,6 +858,9 @@ fn draw_chat_dialog_overlay_draws_header_and_input() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!(
+            "SKIP draw_chat_dialog_overlay_draws_header_and_input: local title pack is missing"
+        );
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -873,6 +889,9 @@ fn draw_reboot_timer_overlay_draws_system_update() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!(
+            "SKIP draw_reboot_timer_overlay_draws_system_update: local title pack is missing"
+        );
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -990,6 +1009,7 @@ fn draw_interface_substitutes_percent1() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!("SKIP draw_interface_substitutes_percent1: local title pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -1407,6 +1427,9 @@ fn side_click_real_logout_text_sends_if_button() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
+        eprintln!(
+            "SKIP side_click_real_logout_text_sends_if_button: local interface pack is missing"
+        );
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -1476,6 +1499,7 @@ fn iftype_unpack_keeps_inv_background_names() {
     let _r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
+        eprintln!("SKIP iftype_unpack_keeps_inv_background_names: local interface pack is missing");
         return;
     }
     let jag = JagFile::new(std::fs::read(format!("{cache}/interface")).unwrap());
@@ -1575,6 +1599,7 @@ fn draw_interface_inv_text_writes_obj_name() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!("SKIP draw_interface_inv_text_writes_obj_name: local title pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -1676,6 +1701,7 @@ fn draw_chat_modal_clears_stale_chat_lines() {
     // line pixels (regression: the modal branch used to early-return).
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP draw_chat_modal_clears_stale_chat_lines: local media pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -2111,6 +2137,7 @@ fn draw_icons_blinks_flashing_tab() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP draw_icons_blinks_flashing_tab: local media pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -2398,6 +2425,7 @@ fn resumed_pause_button_text_is_please_wait() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!("SKIP resumed_pause_button_text_is_please_wait: local title pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -2447,6 +2475,7 @@ fn active_text_uses_text2() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
+        eprintln!("SKIP active_text_uses_text2: local title pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {

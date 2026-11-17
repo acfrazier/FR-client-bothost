@@ -10,6 +10,7 @@ fn cache_dir() -> Option<String> {
     if std::path::Path::new(&cache).join("media").is_file() {
         Some(cache)
     } else {
+        eprintln!("SKIP in-game render tests: local media pack is missing");
         None
     }
 }
@@ -29,6 +30,7 @@ fn game_draw_headless_does_not_panic() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP game_draw_headless_does_not_panic: local media pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -467,6 +469,7 @@ fn production_init_wires_textures_and_pool() {
         return;
     };
     if !std::path::Path::new(&cache).join("textures").is_file() {
+        eprintln!("SKIP production_init_wires_textures_and_pool: local textures pack is missing");
         return;
     }
     let mut c = client(cache);

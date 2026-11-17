@@ -501,6 +501,7 @@ fn unpack_models_from_cache_makes_a_random_event_model_loadable() {
     let _r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/versionlist")).is_file() {
+        eprintln!("SKIP unpack_models_from_cache_makes_a_random_event_model_loadable: local engine versionlist is missing");
         return;
     }
     let versionlist = JagFile::new(std::fs::read(format!("{cache}/versionlist")).unwrap());
@@ -769,6 +770,9 @@ fn bar_urgent_models_are_in_use_bit_only() {
     let cache = client::cache_dir().display().to_string();
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
+        eprintln!(
+            "SKIP bar_urgent_models_are_in_use_bit_only: local engine versionlist is missing"
+        );
         return;
     }
     let versionlist = JagFile::new(std::fs::read(&path).unwrap());
@@ -809,6 +813,7 @@ fn prefetch_cache_hit_posts_extra_model_for_unpack() {
     let cache = client::cache_dir().display().to_string();
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
+        eprintln!("SKIP prefetch_cache_hit_posts_extra_model_for_unpack: local engine versionlist is missing");
         return;
     }
     let versionlist = JagFile::new(std::fs::read(&path).unwrap());

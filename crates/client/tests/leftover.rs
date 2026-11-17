@@ -513,6 +513,7 @@ fn prepare_game_loads_cross_sprites() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP prepare_game_loads_cross_sprites: local media pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -545,6 +546,7 @@ fn cross_plot_mode1_into_area_game() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP cross_plot_mode1_into_area_game: local media pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -580,6 +582,7 @@ fn cross_plot_mode2_uses_second_half() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP cross_plot_mode2_uses_second_half: local media pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {

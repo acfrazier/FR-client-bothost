@@ -69,10 +69,11 @@ fn tmp_dir(name: &str) -> PathBuf {
 
 fn cache_dir() -> Option<String> {
     let cache = client::cache_dir();
-    cache
-        .join("versionlist")
-        .is_file()
-        .then(|| cache.display().to_string())
+    if !cache.join("versionlist").is_file() {
+        eprintln!("SKIP real_cache_round_trip: local engine versionlist is missing");
+        return None;
+    }
+    Some(cache.display().to_string())
 }
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {

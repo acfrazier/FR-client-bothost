@@ -81,6 +81,7 @@ fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/title")).is_file() {
+        eprintln!("SKIP draw_progress_headed_paints_stage_text_once_title_jag_exists: local title JAG is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {
@@ -110,6 +111,7 @@ fn draw_progress_headed_paints_torch_columns() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/title")).is_file() {
+        eprintln!("SKIP draw_progress_headed_paints_torch_columns: local title JAG is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {

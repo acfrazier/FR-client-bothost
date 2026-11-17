@@ -104,6 +104,7 @@ fn prepare_game_depacks_headicons() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP prepare_game_depacks_headicons: local media pack is missing");
         return;
     }
     let _c = overlay_client(&cache, &mut r);
@@ -127,6 +128,7 @@ fn entity_overlays_plots_prayer_headicon() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP entity_overlays_plots_prayer_headicon: local media pack is missing");
         return;
     }
     let mut c = overlay_client(&cache, &mut r);
@@ -167,6 +169,7 @@ fn entity_overlays_collects_chat_bubble() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP entity_overlays_collects_chat_bubble: local media pack is missing");
         return;
     }
     let mut c = overlay_client(&cache, &mut r);
@@ -196,6 +199,7 @@ fn entity_overlays_npc_hint_changes_for_blink_and_movement() {
     let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
+        eprintln!("SKIP entity_overlays_npc_hint_changes_for_blink_and_movement: local media pack is missing");
         return;
     }
     let mut c = overlay_client(&cache, &mut r);

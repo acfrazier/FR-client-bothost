@@ -92,6 +92,7 @@ fn logout_stops_midi_and_resets_song_state() {
 fn client_new_unpacks_sounds_jag() {
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("sounds").is_file() {
+        eprintln!("SKIP client_new_unpacks_sounds_jag: local engine sounds pack is missing");
         return;
     }
     let c = client::client::Client::new(client::client::ClientConfig {
@@ -152,15 +153,18 @@ fn synth_sound_queue_pushes_pcm_not_drops() {
 
 #[test]
 fn jagfx_init_and_generate_from_engine_sounds() {
-    let path = client::engine_dir().display().to_string();
-    let bytes = std::fs::read(format!("{path}/data/pack/client/sounds"));
-    let Ok(bytes) = bytes else {
+    let pack = client::engine_dir().join("data/pack/client/sounds");
+    if !pack.is_file() {
+        eprintln!(
+            "SKIP jagfx_init_and_generate_from_engine_sounds: local engine sounds pack is missing"
+        );
         return;
-    };
+    }
+    let bytes = std::fs::read(pack).expect("present engine sounds pack must be readable");
     let jag = client::io::JagFile::new(bytes);
-    let Some(sounds_dat) = jag.read("sounds.dat") else {
-        return;
-    };
+    let sounds_dat = jag
+        .read("sounds.dat")
+        .expect("present engine sounds pack must contain sounds.dat");
 
     let mut fx = client::sound::JagFX::default();
     let mut p = client::io::Packet::new(sounds_dat);
@@ -365,12 +369,18 @@ mod rusty {
     fn prepared_play_rejects_garbage_and_keeps_the_running_song() {
         let engine = client::engine_dir();
         let font = engine.join("public/client/SCC1_Florestan.sf2");
-        let Ok(song) = std::fs::read(client::content_dir().join("songs/scape main.mid")) else {
+        let song_path = client::content_dir().join("songs/scape main.mid");
+        if !song_path.is_file() {
+            eprintln!("SKIP prepared_play_rejects_garbage_and_keeps_the_running_song: local MIDI song is missing");
             return;
-        };
-        let Some(mut m) = RustyMidi::with_sound_font(&font.display().to_string()) else {
+        }
+        let song = std::fs::read(&song_path).expect("present local MIDI song must be readable");
+        if !font.is_file() {
+            eprintln!("SKIP prepared_play_rejects_garbage_and_keeps_the_running_song: engine soundfont is missing");
             return;
-        };
+        }
+        let mut m = RustyMidi::with_sound_font(&font.display().to_string())
+            .expect("present engine soundfont must load");
         let prepare = m.preparer().expect("RustyMidi prepares off the lock");
         assert!(m.play_prepared(prepare(&song), 0, true));
         assert!(m.is_playing());
@@ -391,24 +401,27 @@ mod rusty {
 
     /// Clip guard for the scape_main symptom: render the real title song
     /// through the engine soundfont at full volume (fade gain 1.0) and
-    /// assert no sample reaches the i16 rail (`max(|i16|) < 32767`). Skips
-    /// silently when the engine assets are absent, like
-    /// `jagfx_init_and_generate_from_engine_sounds`. rustysynth's
-    /// reverb/chorus are disabled in the backend (274 has no effects
-    /// buses), so this pins the whole chain: a regression that pushes the
-    /// mix toward the rail (e.g. re-enabling effects) is caught.
+    /// assert no sample reaches the i16 rail (`max(|i16|) < 32767`). It
+    /// prints a skip reason when engine assets are absent, like
+    /// `jagfx_init_and_generate_from_engine_sounds`. rustysynth's reverb/chorus
+    /// are disabled in the backend (274 has no effects buses), so this pins
+    /// the whole chain: regressions that push the mix toward the rail are caught.
     #[test]
     fn scape_main_render_stays_below_i16_rail() {
         let engine = client::engine_dir();
         let font = engine.join("public/client/SCC1_Florestan.sf2");
         let song = client::content_dir().join("songs/scape main.mid");
-        let mut m = match RustyMidi::with_sound_font(&font.display().to_string()) {
-            Some(m) => m,
-            None => return, // no engine soundfont → nothing to render
-        };
-        let Ok(song) = std::fs::read(&song) else {
+        if !font.is_file() {
+            eprintln!("SKIP scape_main_render_stays_below_i16_rail: engine soundfont is missing");
             return;
-        };
+        }
+        let mut m = RustyMidi::with_sound_font(&font.display().to_string())
+            .expect("present engine soundfont must load");
+        if !song.is_file() {
+            eprintln!("SKIP scape_main_render_stays_below_i16_rail: local MIDI song is missing");
+            return;
+        }
+        let song = std::fs::read(&song).expect("present local MIDI song must be readable");
         m.play(&song, 0, true);
         let mut left = vec![0f32; 22050 * 10];
         let mut right = vec![0f32; 22050 * 10];
