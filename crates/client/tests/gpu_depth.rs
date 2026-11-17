@@ -8,6 +8,10 @@
 //! the coincident-face case the live scene actually has.
 //!
 //! `cargo test -p client --test gpu_depth -- --nocapture`
+//!
+//! The camera-sweep capture that only prints counts is an explicit,
+//! ignored diagnostic:
+//! `cargo test -p client --test gpu_depth -- --ignored --nocapture sharelight_wall_run_cpu_vs_gpu_diagnostic`
 
 use std::path::Path;
 
@@ -813,11 +817,138 @@ fn gpu_render_cache(
     pixels
 }
 
+/// The RGB distance (sum of channel deltas) above which two pixels differ.
+const STRONG_RGB_DELTA: i32 = 40;
+
+fn rgb_delta(a: i32, b: i32) -> i32 {
+    (((a >> 16) & 0xff) - ((b >> 16) & 0xff)).abs()
+        + (((a >> 8) & 0xff) - ((b >> 8) & 0xff)).abs()
+        + ((a & 0xff) - (b & 0xff)).abs()
+}
+
+/// How far a correct GPU edge can sit from the CPU edge. The CPU projects
+/// each vertex to whole screen pixels (`origin + (x << 9) / z`, truncated,
+/// in `Model` draw) and then walks each triangle edge in 16.16 fixed point
+/// truncated to whole pixels (`x >> 16` in `Pix3D`). The GPU gets the same
+/// camera-space vertices as floats and samples pixel centres. Each of those
+/// two truncations moves a CPU edge by less than one pixel, so a correct
+/// GPU edge lies within two pixels of the CPU edge.
+const EDGE_SHIFT_PX: i32 = 2;
+
+/// Pixels (x, y) where the GPU frame differs strongly from the CPU frame
+/// although no CPU pixel within [`EDGE_SHIFT_PX`] differs strongly from the
+/// CPU pixel there: a wrong colour inside a face, a missing face, or a face
+/// drawn in the wrong order — never an edge shift.
+fn strong_diffs_off_cpu_edges(cpu: &[i32], gpu: &[i32]) -> Vec<(i32, i32)> {
+    let (w, h) = (SCENE_W as i32, SCENE_H as i32);
+    let near_cpu_edge = |x: i32, y: i32| {
+        let centre = cpu[(y * w + x) as usize];
+        (-EDGE_SHIFT_PX..=EDGE_SHIFT_PX).any(|dy| {
+            (-EDGE_SHIFT_PX..=EDGE_SHIFT_PX).any(|dx| {
+                let (nx, ny) = (x + dx, y + dy);
+                (0..w).contains(&nx)
+                    && (0..h).contains(&ny)
+                    && rgb_delta(cpu[(ny * w + nx) as usize], centre) > STRONG_RGB_DELTA
+            })
+        })
+    };
+    (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let i = (y * w + x) as usize;
+            rgb_delta(gpu[i], cpu[i]) > STRONG_RGB_DELTA && !near_cpu_edge(x, y)
+        })
+        .collect()
+}
+
 /// Production path: loc 1602 (sharelight) + loc 2213 resolved from the
 /// config jag, share-light pending like `finishBuild`, then CPU vs GPU at
-/// the same camera.
+/// the same head-on camera. The GPU draws the CPU painter's captured order,
+/// so the frames may differ only where an edge moved (see
+/// [`EDGE_SHIFT_PX`]).
 #[test]
-fn sharelight_wall_run_cpu_vs_gpu() {
+fn sharelight_wall_run_gpu_matches_cpu_away_from_edges() {
+    Pix3D::init_colour_table(0.6);
+    let Some(pack) = cache_dir() else {
+        eprintln!("config jag missing; skip");
+        return;
+    };
+    if load_snapshot_models(&pack).is_none() {
+        eprintln!("274 snapshot models.bin missing; skip");
+        return;
+    }
+    let Ok(bytes) = std::fs::read(format!("{pack}/config")) else {
+        eprintln!("config jag unreadable; skip");
+        return;
+    };
+    let cache = Cache::unpack(&JagFile::new(bytes));
+    let Ok(mut backend) = GpuBackend::try_new() else {
+        eprintln!("no adapter; skip");
+        return;
+    };
+
+    for (tag, z_lo, z_hi, booth) in [
+        ("one_wall", 2, 2, true),
+        ("five_wall", 2, 6, true),
+        ("five_wall_nobooth", 2, 6, false),
+    ] {
+        let scene = || {
+            let mut world = flat_world(8);
+            place_wall_run(&mut world, z_lo..=z_hi, booth);
+            let mut rw = RenderWorld::new();
+            rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+            Scene { world, rw }
+        };
+        let mut pix = textured_pix(&pack);
+        let gpu = gpu_render_cache(
+            &mut backend,
+            &mut scene(),
+            &cache,
+            &mut pix,
+            192,
+            1950,
+            320,
+            1536,
+            128,
+            tag,
+        );
+        // Fresh world for the CPU oracle (GPU emit stamps sprite.cycle).
+        let cpu = cpu_render(
+            &mut scene(),
+            &cache,
+            &mut pix,
+            192,
+            1950,
+            320,
+            1536,
+            128,
+            tag,
+        );
+        let cpu_drawn = cpu.iter().filter(|&&p| p != 0).count();
+        assert!(
+            cpu_drawn * 2 > cpu.len(),
+            "{tag}: the CPU oracle must draw the ground and the wall run (drawn {cpu_drawn}/{})",
+            cpu.len()
+        );
+        let off_edge = strong_diffs_off_cpu_edges(&cpu, &gpu);
+        assert!(
+            off_edge.is_empty(),
+            "{tag}: {} GPU pixels differ from the CPU raster more than {EDGE_SHIFT_PX} px from any CPU edge; first (x, y): {:?}",
+            off_edge.len(),
+            &off_edge[..off_edge.len().min(8)]
+        );
+    }
+}
+
+/// Diagnostic capture for the same layouts and a camera sweep: prints the
+/// lit wall models and CPU/GPU difference counts and writes PPMs. It asserts
+/// nothing about the counts; the asserting test is
+/// `sharelight_wall_run_gpu_matches_cpu_away_from_edges`.
+///
+/// `cargo test -p client --test gpu_depth -- --ignored --nocapture sharelight_wall_run_cpu_vs_gpu_diagnostic`
+#[test]
+#[ignore = "diagnostic capture; prints counts only. Run with --ignored --nocapture"]
+fn sharelight_wall_run_cpu_vs_gpu_diagnostic() {
     Pix3D::init_colour_table(0.6);
     let Some(pack) = cache_dir() else {
         eprintln!("config jag missing; skip");
