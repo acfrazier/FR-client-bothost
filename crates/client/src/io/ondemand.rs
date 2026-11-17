@@ -2262,3 +2262,7 @@ mod tests {
         assert!(od.tx.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "ondemand_wire_tests.rs"]
+mod wire_tests;

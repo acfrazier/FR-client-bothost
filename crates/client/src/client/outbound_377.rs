@@ -1227,6 +1227,40 @@ pub(crate) fn close_modal_377(packet: &mut Packet) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn login_wrappers_match_original_java_packet_bytes() {
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/revision_377/wire.json"))
+                .unwrap();
+        let mut block = Packet::alloc(1);
+        write_login_block(
+            &mut block,
+            [1, 2, 0x1234_5678, -1],
+            0x7654_3210,
+            "alice",
+            "test",
+        );
+        block.rsaenc(
+            &((num_bigint::BigUint::from(1u32) << 512usize) - num_bigint::BigUint::from(1u32)),
+            &num_bigint::BigUint::from(1u32),
+        );
+        for reconnect in [false, true] {
+            let mut wrapper = Packet::alloc(1);
+            write_login_wrapper(
+                &mut wrapper,
+                reconnect,
+                reconnect,
+                &std::array::from_fn(|i| 0x1020_3040 + i as i32),
+                &block,
+            );
+            let bytes: String = wrapper.data()[..wrapper.pos]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(bytes, expected["wrappers"][usize::from(reconnect)]);
+        }
+    }
+
     use super::super::{ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
     use crate::config::if_type::{ComponentType, IfType, IfTypeMut};
     use crate::dash3d::LocShape;
