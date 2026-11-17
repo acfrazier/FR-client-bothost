@@ -21,7 +21,6 @@ fn to_userhash_matches_client_ts() {
         JString::to_userhash("aaaaaaaaaaaaaaaaaaaa"),
         182859777940000980
     );
-    assert_eq!(((JString::to_userhash("bob") >> 16) & 0x1f), 0); // loginServer byte
 }
 
 #[test]

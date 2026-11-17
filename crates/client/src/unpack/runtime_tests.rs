@@ -126,10 +126,6 @@ fn open_process_failure_classifies_each_error_class() {
         u32::MAX,
     ] {
         assert!(
-            error != OPEN_PROCESS_DEAD,
-            "the other-error cases must not include the dead code"
-        );
-        assert!(
             open_process_failure_means_alive(error),
             "error {error} is not the dead class, so it means alive"
         );

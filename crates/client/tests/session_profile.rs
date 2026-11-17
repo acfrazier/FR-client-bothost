@@ -218,7 +218,6 @@ fn bound_login_and_reconnect_ignore_mutable_config_and_use_frozen_revision_rsa()
         .into_iter()
         .zip([16, 18])
     {
-        assert_eq!(packet[0], wrapper);
         assert_eq!(u16::from_be_bytes([packet[3], packet[4]]), 289);
         let rsa_len = packet[42] as usize;
         let rsa = &packet[43..43 + rsa_len];

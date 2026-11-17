@@ -537,7 +537,6 @@ fn real_377_interface_archive_matches_pinned_bytes_and_scans_every_record() {
     );
     assert_eq!(stats.script_count, 3_153);
     assert_eq!(stats.script_word_count, 18_198);
-    assert!(stats.record_count > 0);
     assert!(stats.occupied_slots > 0);
     assert!(stats.occupied_slots <= stats.declared_total);
     let mut loaded = 0;

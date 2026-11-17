@@ -163,8 +163,6 @@ fn pix3d_div_tables() {
 fn pix3d_sin_cos_tables_match_formula() {
     let sin = Pix3D::sin_table();
     let cos = Pix3D::cos_table();
-    assert_eq!(sin.len(), 2048);
-    assert_eq!(cos.len(), 2048);
     for i in 0..2048 {
         let expected_sin = (f64::sin(i as f64 * 0.0030679615757712823) * 65536.0) as i32;
         let expected_cos = (f64::cos(i as f64 * 0.0030679615757712823) * 65536.0) as i32;

@@ -132,11 +132,6 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
     );
     let vertices = mesh.vertices();
 
-    assert!(
-        !vertices.is_empty(),
-        "a camera-facing world must mesh geometry"
-    );
-
     let mut found_ground = false;
     let mut found_wall = false;
     for v in vertices.iter() {

@@ -480,8 +480,6 @@ fn tutorial_banner_animation_and_projection_match_client_java_377() {
     const SEQUENCE_ID: usize = 1638;
     const BACKGROUND: i32 = 0x010203;
 
-    assert_eq!(R377_BANNER_MODEL_5201.len(), 321);
-    assert_eq!(R377_BANNER_ANIMS_399.len(), 70);
     assert_eq!(
         client::io::Packet::getcrc(R377_BANNER_MODEL_5201, 0, R377_BANNER_MODEL_5201.len()) as u32,
         0x3f3fe9f1

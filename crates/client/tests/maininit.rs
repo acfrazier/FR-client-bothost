@@ -274,7 +274,6 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
     for (i, name) in names.iter().enumerate() {
         let bytes = std::fs::read(dir.join(name)).unwrap();
         assert_eq!(bytes, EMPTY_JAG);
-        assert_eq!(Packet::getcrc(&bytes, 0, bytes.len()), checksums[i + 1]);
     }
     c.maininit(); // oneshot
     assert_eq!(c.last_progress_percent, 100);

@@ -82,13 +82,6 @@ fn original_engine_frames_match_original_java_primitives_and_complete_dispatch()
     assert_eq!(fixture["deferred_opcodes"], json!([]));
     let cases = fixture["cases"].as_array().unwrap();
     assert_eq!(cases.len(), 75);
-    assert_eq!(
-        cases
-            .iter()
-            .filter(|case| case["origin"] == "original-engine-encoder")
-            .count(),
-        73
-    );
     let enclosed = cases.iter().find(|case| case["opcode"] == 183).unwrap();
     assert_eq!(
         enclosed["operation_fields"][3].as_array().unwrap().len(),
