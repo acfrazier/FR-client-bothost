@@ -3947,10 +3947,9 @@ impl Client {
                 "Invalid loginserver requested".into(),
                 "Please try using a different world.".into(),
             ),
-            22 if self.revision.is_377() => (
-                "Malformed login packet.".into(),
-                "Please try again.".into(),
-            ),
+            22 if self.revision.is_377() => {
+                ("Malformed login packet.".into(), "Please try again.".into())
+            }
             23 if self.revision.is_377() => (
                 "No reply from loginserver.".into(),
                 "Please try again.".into(),
