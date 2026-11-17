@@ -24,14 +24,21 @@ public final class Revision377WireOracle {
             System.out.print("]");
         }
         System.out.print("],\"rsa\":[");
-        String[] values = {"00", "01", "7f", "0080", "00ff", "0100", "0101"};
-        for (int i = 0; i < values.length; i++) {
+        String[][] rsaCases = {
+            {"00", "257", "1"}, {"01", "257", "1"}, {"7f", "257", "1"},
+            {"0080", "257", "1"}, {"00ff", "257", "1"},
+            {"0100", "257", "1"}, {"0101", "257", "1"},
+            // Synthetic modulus 43 * 47 and exponent 5 exercise non-identity modPow.
+            {"0041", "2021", "5"}
+        };
+        for (int i = 0; i < rsaCases.length; i++) {
+            String[] test = rsaCases[i];
             Packet p = Packet.alloc(1);
-            byte[] raw = HexFormat.of().parseHex(values[i]);
+            byte[] raw = HexFormat.of().parseHex(test[0]);
             p.pdata(raw, raw.length, 0);
-            p.rsaenc(BigInteger.valueOf(257), BigInteger.ONE);
+            p.rsaenc(new BigInteger(test[1]), new BigInteger(test[2]));
             if (i > 0) System.out.print(",");
-            System.out.print("{\"plaintext\":\"" + values[i] + "\",\"modulus\":257,\"exponent\":1,\"frame\":\"" + hex(p) + "\"}");
+            System.out.print("{\"plaintext\":\"" + test[0] + "\",\"modulus\":" + test[1] + ",\"exponent\":" + test[2] + ",\"frame\":\"" + hex(p) + "\"}");
         }
         Packet block = Packet.alloc(1);
         block.p1(10);

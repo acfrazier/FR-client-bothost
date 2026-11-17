@@ -165,7 +165,10 @@ fn original_java_isaac_and_rsa_sign_padding_match() {
         let mut packet = Packet::alloc(1);
         let raw = hex(case["plaintext"].as_str().unwrap());
         packet.pdata(&raw, 0, raw.len());
-        packet.rsaenc(&BigUint::from(257u32), &BigUint::from(1u32));
+        packet.rsaenc(
+            &BigUint::from(case["modulus"].as_u64().unwrap()),
+            &BigUint::from(case["exponent"].as_u64().unwrap()),
+        );
         assert_eq!(
             &packet.data()[..packet.pos],
             hex(case["frame"].as_str().unwrap())
@@ -183,7 +186,11 @@ fn original_java_isaac_and_rsa_sign_padding_match() {
 #[test]
 fn every_fixed_byte_and_short_fragment_boundary_advances_isaac_once() {
     // Java Protocol lengths:125 fixed1,63 g1,226 g2. Runtime effects are also checked.
-    let frames = [vec![125, 73], vec![63, 3, b'h', b'i', 10], vec![226, 0, 0]];
+    let frames = [
+        vec![125, 73],
+        vec![63, 3, b'h', b'i', 10],
+        vec![226, 0, 8, 0, 0, 0, 0, 0, 0, 0, 1],
+    ];
     for frame in frames {
         for split in 1..frame.len() {
             let (stream, mut server) = socket_pair();
@@ -214,6 +221,10 @@ fn every_fixed_byte_and_short_fragment_boundary_advances_isaac_once() {
             }
             if frame[0] == 63 {
                 assert_eq!(c.chat_text[0], "hi");
+            }
+            if frame[0] == 226 {
+                assert_eq!(c.ignore_count, 1);
+                assert_eq!(c.ignore_userhash[0], 1);
             }
         }
     }

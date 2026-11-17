@@ -53,7 +53,7 @@ def main():
     (args.work_dir / "source-hashes.json").write_text(json.dumps(hashes, indent=2) + "\n")
     if actual != expected:
         raise SystemExit("FAIL: wire fixture differs from original Java")
-    print("PASS: original Java 2050 ISAAC words, 7 RSA cases, 2 wrappers, 7 response messages")
+    print(f"PASS: original Java 2050 ISAAC words, {len(actual['rsa'])} RSA cases, 2 wrappers, 7 response messages")
 
 
 if __name__ == "__main__":

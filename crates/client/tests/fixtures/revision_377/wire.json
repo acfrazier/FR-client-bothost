@@ -2103,6 +2103,12 @@
       "modulus": 257,
       "exponent": 1,
       "frame": "0100"
+    },
+    {
+      "plaintext": "0041",
+      "modulus": 2021,
+      "exponent": 5,
+      "frame": "0200a8"
     }
   ],
   "plaintext": "0a000000010000000212345678ffffffff76543210616c6963650a746573740a",
