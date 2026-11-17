@@ -1822,14 +1822,21 @@ impl Worker {
                     .as_mut()
                     .is_some_and(|s| s.write(&self.buf, 4).is_ok());
                 if !ok {
-                    self.recover_and_resend();
+                    if self.revision == Some(ClientRevision::R377) {
+                        self.packet_cycle = 5000;
+                    } else {
+                        self.recover_and_resend();
+                    }
                 }
             }
         }
     }
 
     fn wants_java_keepalive(&self) -> bool {
-        matches!(self.revision, Some(ClientRevision::R274))
+        matches!(
+            self.revision,
+            Some(ClientRevision::R274 | ClientRevision::R377)
+        )
     }
 
     fn cached_payload(&self, archive: i32, file: i32) -> Option<Vec<u8>> {
@@ -2184,6 +2191,205 @@ fn read_raw_table<F: Fn(&mut Packet) -> i32>(
 #[cfg(test)]
 mod tests {
     use super::OnDemand;
+
+    fn keepalive_worker(revision: super::ClientRevision) -> (super::Worker, std::net::TcpStream) {
+        use super::*;
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut stream = ClientStream::connect("127.0.0.1", port).unwrap();
+        // Synchronous writes make each tick's wire output observable without sleeps.
+        stream
+            .set_deadline(Some(Instant::now() + Duration::from_secs(10)))
+            .unwrap();
+        let (peer, _) = listener.accept().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let (_, commands) = mpsc::channel();
+        let worker = Worker {
+            commands,
+            versions: vec![vec![]; 4],
+            crcs: vec![vec![]; 4],
+            priorities: vec![vec![]; 4],
+            top_priority: 0,
+            queue: VecDeque::new(),
+            missing: VecDeque::new(),
+            pending: Vec::new(),
+            prefetches: VecDeque::new(),
+            message: String::new(),
+            fail_count: 0,
+            urgent_count: 0,
+            request_count: 0,
+            loaded_prefetch_files: 0,
+            total_prefetch_files: 0,
+            buf: [0; 500],
+            part_offset: 0,
+            part_available: 0,
+            packet_cycle: 0,
+            no_timeout_cycle: 0,
+            active: false,
+            socket_open_time: Instant::now(),
+            current: None,
+            stream: Some(stream),
+            host: "127.0.0.1".into(),
+            port,
+            transport: Some(Transport::Tcp),
+            revision: Some(revision),
+            cache_dir: None,
+            persist_dir: None,
+            map_archive: None,
+            wake_on_response: false,
+            java_cycle: Duration::from_millis(20),
+            counted_at: Instant::now(),
+            cold_connect: None,
+            recovering: false,
+            reconnect_backoff: Duration::ZERO,
+            saw_network_progress: false,
+            subs: Arc::new(Mutex::new(HashMap::new())),
+            running: Arc::new(AtomicBool::new(true)),
+            ingame: Arc::new(AtomicBool::new(true)),
+        };
+        (worker, peer)
+    }
+
+    fn assert_no_keepalive(peer: &std::net::TcpStream) {
+        let error = peer.peek(&mut [0; 1]).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    }
+
+    fn keepalive_packet(mut peer: &std::net::TcpStream) -> [u8; 4] {
+        use std::io::Read;
+        peer.set_nonblocking(false).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut packet = [0; 4];
+        peer.read_exact(&mut packet).unwrap();
+        peer.set_nonblocking(true).unwrap();
+        packet
+    }
+
+    #[test]
+    fn keepalive_377_and_274_send_on_501st_eligible_iteration() {
+        use super::ClientRevision;
+        for revision in [ClientRevision::R377, ClientRevision::R274] {
+            let (mut worker, peer) = keepalive_worker(revision);
+            for _ in 0..2 {
+                for _ in 0..500 {
+                    worker.tick();
+                }
+                assert_no_keepalive(&peer);
+                assert_eq!(worker.no_timeout_cycle, 500);
+                worker.tick();
+                assert_eq!(keepalive_packet(&peer), [0, 0, 0, 10], "{revision:?}");
+                assert_eq!(worker.no_timeout_cycle, 0);
+                assert_no_keepalive(&peer);
+            }
+        }
+    }
+
+    #[test]
+    fn keepalive_377_ordinary_send_resets_counter() {
+        use super::ClientRevision;
+        let (mut worker, peer) = keepalive_worker(ClientRevision::R377);
+        for _ in 0..500 {
+            worker.tick();
+        }
+        assert_no_keepalive(&peer);
+        worker.send(3, 0x1234, true);
+        assert_eq!(keepalive_packet(&peer), [3, 0x12, 0x34, 2]);
+        assert_eq!(worker.no_timeout_cycle, 0);
+        for _ in 0..500 {
+            worker.tick();
+        }
+        assert_no_keepalive(&peer);
+        worker.tick();
+        assert_eq!(keepalive_packet(&peer), [0, 0, 0, 10]);
+        assert_no_keepalive(&peer);
+    }
+
+    #[test]
+    fn keepalive_377_ineligible_iterations_preserve_counter() {
+        use super::{ClientRevision, Ordering};
+        let (mut worker, peer) = keepalive_worker(ClientRevision::R377);
+        for _ in 0..500 {
+            worker.tick();
+        }
+        worker.ingame.store(false, Ordering::Relaxed);
+        for _ in 0..501 {
+            worker.tick();
+        }
+        assert_no_keepalive(&peer);
+        assert_eq!(worker.no_timeout_cycle, 500);
+        worker.ingame.store(true, Ordering::Relaxed);
+        worker.tick();
+        assert_eq!(keepalive_packet(&peer), [0, 0, 0, 10]);
+    }
+
+    #[test]
+    fn keepalive_377_requires_an_existing_stream() {
+        use super::ClientRevision;
+        let (mut worker, _peer) = keepalive_worker(ClientRevision::R377);
+        worker.stream = None;
+        for _ in 0..501 {
+            worker.tick();
+        }
+        assert!(worker.stream.is_none());
+        assert_eq!(worker.no_timeout_cycle, 0);
+    }
+
+    #[test]
+    fn keepalive_377_disk_cache_requires_prefetch_priority() {
+        use super::{ClientRevision, OnDemandRequest};
+        let (mut worker, peer) = keepalive_worker(ClientRevision::R377);
+        worker.cache_dir = Some(String::new());
+        for _ in 0..501 {
+            worker.tick();
+        }
+        assert_no_keepalive(&peer);
+        assert_eq!(worker.no_timeout_cycle, 0);
+        worker.top_priority = 1;
+        worker.pending.push(OnDemandRequest::new(0, 0));
+        worker.no_timeout_cycle = 500;
+        worker.tick();
+        assert_eq!(keepalive_packet(&peer), [0, 0, 0, 10]);
+        assert_no_keepalive(&peer);
+    }
+
+    #[test]
+    fn keepalive_289_stays_suppressed() {
+        use super::ClientRevision;
+        let (mut worker, peer) = keepalive_worker(ClientRevision::R289);
+        for _ in 0..1002 {
+            worker.tick();
+        }
+        assert_no_keepalive(&peer);
+        assert_eq!(worker.no_timeout_cycle, 0);
+    }
+
+    #[test]
+    fn keepalive_377_and_274_failed_writes_preserve_revision_behavior() {
+        use super::{ClientRevision, Duration};
+        use std::io::Write;
+        for revision in [ClientRevision::R377, ClientRevision::R274] {
+            let (mut worker, mut peer) = keepalive_worker(revision);
+            let stream = worker.stream.as_mut().unwrap();
+            stream.set_deadline(None).unwrap();
+            // Exercise the read before the heartbeat without failing that read.
+            peer.write_all(&[0; 6]).unwrap();
+            stream.wait_available(6, Duration::from_secs(2));
+            assert_eq!(stream.available().unwrap(), 6);
+            stream.fail_next_tcp_write_for_test();
+            worker.no_timeout_cycle = 500;
+            worker.tick();
+            assert_eq!(worker.no_timeout_cycle, 0, "{revision:?}");
+            if revision == ClientRevision::R377 {
+                assert_eq!(worker.packet_cycle, 5000);
+                assert!(worker.stream.is_some());
+                assert_no_keepalive(&peer);
+            } else {
+                assert_ne!(worker.packet_cycle, 5000);
+                assert!(worker.stream.is_none());
+            }
+        }
+    }
 
     /// Java `Client.maininit` (5251-5277) maps `getModelUse` bits to a
     /// prefetch priority: the first matching bit in the 8/0x20/0x10/0x40/
