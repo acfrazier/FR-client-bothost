@@ -214,10 +214,7 @@ fn bound_login_and_reconnect_ignore_mutable_config_and_use_frozen_revision_rsa()
     client.login("bound-user", "pw", true).unwrap();
     server.join().unwrap();
 
-    for (packet, wrapper) in [rx.recv().unwrap(), rx.recv().unwrap()]
-        .into_iter()
-        .zip([16, 18])
-    {
+    for packet in [rx.recv().unwrap(), rx.recv().unwrap()] {
         assert_eq!(u16::from_be_bytes([packet[3], packet[4]]), 289);
         let rsa_len = packet[42] as usize;
         let rsa = &packet[43..43 + rsa_len];

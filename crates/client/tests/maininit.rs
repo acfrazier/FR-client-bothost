@@ -271,7 +271,7 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
     assert_eq!(c.last_progress_percent, 100);
     assert_eq!(c.last_progress_message, "Preparing game engine");
     // dummy jags were all CRC hits: files unchanged, no HTTP after /crc
-    for (i, name) in names.iter().enumerate() {
+    for name in names.iter() {
         let bytes = std::fs::read(dir.join(name)).unwrap();
         assert_eq!(bytes, EMPTY_JAG);
     }
