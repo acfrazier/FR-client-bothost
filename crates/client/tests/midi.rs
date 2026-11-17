@@ -352,9 +352,22 @@ mod rusty {
         let mut m = RustyMidi::new("/nonexistent");
         // truncated midi: parse fails inside play and stays silent
         m.play(&[0x4d, 0x54, 0x68, 0x64], -400, true);
+        assert!(!m.is_playing(), "a truncated song must not start");
         m.set_volume(-1200); // documented no-op; gain lives on the Fade
+
+        // One second, like the mixer's zero-initialised scratch buffers.
+        let (mut left, mut right) = (vec![0f32; 22050], vec![0f32; 22050]);
+        m.render(&mut left, &mut right);
+        assert!(
+            left.iter().chain(&right).all(|s| *s == 0.0),
+            "nothing playing must render silence"
+        );
         m.stop();
-        m.render(&mut [0f32; 64], &mut [0f32; 64]);
+        m.render(&mut left, &mut right);
+        assert!(
+            left.iter().chain(&right).all(|s| *s == 0.0),
+            "a stopped backend must render silence"
+        );
     }
 
     /// The off-lock path (`preparer` + `play_prepared`, what `save_midi`
