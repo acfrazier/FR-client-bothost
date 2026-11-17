@@ -8,19 +8,20 @@ use client::config::{Cache, ObjType};
 use client::io::JagFile;
 
 fn engine_config_jag() -> Option<JagFile> {
-    let path = client::engine_dir().display().to_string();
-    let bytes = std::fs::read(format!("{path}/data/pack/client/config")).ok()?;
+    let path = client::engine_dir().join("data/pack/client/config");
+    if !path.is_file() {
+        eprintln!("SKIP config-pack tests: local engine config JAG is missing");
+        return None;
+    }
+    let bytes = std::fs::read(path).expect("present engine config JAG must be readable");
     Some(JagFile::new(bytes))
 }
 
 #[test]
 fn unpack_obj_from_engine_config_jag() {
-    let path = client::engine_dir().display().to_string();
-    let bytes = match std::fs::read(format!("{path}/data/pack/client/config")) {
-        Ok(b) => b,
-        Err(_) => return,
+    let Some(jag) = engine_config_jag() else {
+        return;
     };
-    let jag = JagFile::new(bytes);
     let objs = ObjType::unpack(&jag);
     assert!(objs.len() > 1);
     assert!(objs.iter().any(|o| o.name.eq_ignore_ascii_case("bones")));
@@ -92,6 +93,9 @@ fn client_new_unpacks_config_from_cache_dir() {
     let path = client::engine_dir().display().to_string();
     let cache_dir = format!("{path}/data/pack/client");
     if !std::path::Path::new(&format!("{cache_dir}/config")).is_file() {
+        eprintln!(
+            "SKIP client_new_unpacks_config_from_cache_dir: local engine config JAG is missing"
+        );
         return;
     }
     let c = Client::new(ClientConfig {
@@ -129,8 +133,12 @@ fn missing_config_jag_sets_error_loading() {
 }
 
 fn engine_interface_jag() -> Option<JagFile> {
-    let path = client::engine_dir().display().to_string();
-    let bytes = std::fs::read(format!("{path}/data/pack/client/interface")).ok()?;
+    let path = client::engine_dir().join("data/pack/client/interface");
+    if !path.is_file() {
+        eprintln!("SKIP interface-pack tests: local engine interface JAG is missing");
+        return None;
+    }
+    let bytes = std::fs::read(path).expect("present engine interface JAG must be readable");
     Some(JagFile::new(bytes))
 }
 
@@ -184,9 +192,11 @@ fn get_sprite_resolves_engine_pack_obj() {
         return;
     };
     let mut cache = Cache::unpack(&jag);
-    if cache.objs.len() < 4 {
-        return;
-    }
+    assert!(
+        cache.objs.len() >= 4,
+        "present engine config JAG must contain at least four objects for sprite resolution, got {}",
+        cache.objs.len()
+    );
     use client::dash3d::Model;
     use client::graphics::{Pix3D, Pix3DDraw};
 

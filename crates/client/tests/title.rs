@@ -10,6 +10,7 @@ fn cache_dir() -> Option<String> {
     if std::path::Path::new(&cache).join("title").is_file() {
         Some(cache)
     } else {
+        eprintln!("SKIP title asset tests: local title pack is missing");
         None
     }
 }

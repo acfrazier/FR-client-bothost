@@ -978,6 +978,7 @@ fn finish_build_textured_overlay_uses_tex_average() {
 fn load_tex_averages_fills_from_textures_jag() {
     let dir = client::cache_dir().display().to_string();
     if !std::path::Path::new(&dir).join("textures").is_file() {
+        eprintln!("SKIP load_tex_averages_fills_from_textures_jag: local textures pack is missing");
         return;
     }
     let mut c = Client::new(ClientConfig {

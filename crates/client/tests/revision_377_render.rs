@@ -324,6 +324,9 @@ fn entity_hints_select_revision_377_sprites_and_keep_legacy_indices() {
 #[test]
 fn hint_media_loading_requires_explicit_revision_377() {
     let Ok(cache) = std::env::var("CLIENT_377_CACHE_DIR") else {
+        eprintln!(
+            "SKIP hint_media_loading_requires_explicit_revision_377: CLIENT_377_CACHE_DIR is unset"
+        );
         return;
     };
     let legacy = Media::process(&cache, ClientRevision::R289);

@@ -37,10 +37,12 @@ fn plain_bad_word(badenc: &[u8]) -> Option<String> {
 
 #[test]
 fn unpack_wordenc_and_whitelist_cook() {
-    let path = client::cache_dir().join("wordenc").display().to_string();
-    let Ok(bytes) = fs::read(path) else {
+    let path = client::cache_dir().join("wordenc");
+    if !path.is_file() {
+        eprintln!("SKIP unpack_wordenc_and_whitelist_cook: local wordenc JAG is missing");
         return;
-    };
+    }
+    let bytes = fs::read(path).expect("present local wordenc JAG must be readable");
     let jag = JagFile::new(bytes);
     WordFilter::unpack(&jag);
     assert_eq!(WordFilter::filter("cook"), "cook");

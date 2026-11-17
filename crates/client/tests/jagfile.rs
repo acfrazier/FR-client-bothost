@@ -16,11 +16,12 @@ fn gen_hash_matches_java() {
 
 #[test]
 fn reads_unpacked_jag_from_engine_pack() {
-    let path = client::engine_dir().display().to_string();
-    let bytes = std::fs::read(format!("{path}/data/pack/client/config"));
-    let Ok(bytes) = bytes else {
+    let pack = client::engine_dir().join("data/pack/client/config");
+    if !pack.is_file() {
+        eprintln!("SKIP reads_unpacked_jag_from_engine_pack: local engine config JAG is missing");
         return;
-    };
+    }
+    let bytes = std::fs::read(pack).expect("present engine config JAG must be readable");
     let jag = JagFile::new(bytes);
     assert!(jag.file_count > 0);
     // The config archive must expose the exact `obj.dat`/`obj.idx` pair the

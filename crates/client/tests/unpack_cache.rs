@@ -14,12 +14,16 @@ use client::render::RenderWorld;
 use client::unpack::{unpack_cache, version_hash};
 
 fn cache_dir() -> Option<String> {
-    let _home = std::env::var("HOME").ok()?;
-    let cache = client::cache_dir().display().to_string();
-    Path::new(&cache)
-        .join("versionlist")
-        .is_file()
-        .then_some(cache)
+    if std::env::var_os("HOME").is_none() {
+        eprintln!("SKIP cache-backed unpack tests: HOME is unset");
+        return None;
+    }
+    let cache = client::cache_dir();
+    if !cache.join("versionlist").is_file() {
+        eprintln!("SKIP cache-backed unpack tests: local engine versionlist is missing");
+        return None;
+    }
+    Some(cache.display().to_string())
 }
 
 #[test]
