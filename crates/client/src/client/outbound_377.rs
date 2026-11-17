@@ -1253,11 +1253,17 @@ mod tests {
                 &std::array::from_fn(|i| 0x1020_3040 + i as i32),
                 &block,
             );
-            let bytes: String = wrapper.data()[..wrapper.pos]
+            let expected_hex = expected["wrappers"][usize::from(reconnect)]
+                .as_str()
+                .unwrap();
+            assert_eq!(expected_hex.len(), wrapper.pos * 2);
+            for (&actual, pair) in wrapper.data()[..wrapper.pos]
                 .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
-            assert_eq!(bytes, expected["wrappers"][usize::from(reconnect)]);
+                .zip(expected_hex.as_bytes().as_chunks::<2>().0)
+            {
+                let expected = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap();
+                assert_eq!(actual, expected);
+            }
         }
     }
 

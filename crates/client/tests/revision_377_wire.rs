@@ -6,7 +6,7 @@ use client::{ClientSessionConfig, ClientSessionProfile, Transport};
 use num_bigint::BigUint;
 use serde_json::Value;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -27,7 +27,7 @@ fn hex(text: &str) -> Vec<u8> {
 fn client(revision: ClientRevision, port: u16) -> Client {
     Client::new_with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
+            host: Ipv4Addr::LOCALHOST.to_string(),
             port,
             cache_dir: env!("CARGO_MANIFEST_DIR").into(),
             members: true,
@@ -38,9 +38,9 @@ fn client(revision: ClientRevision, port: u16) -> Client {
 }
 
 fn socket_pair() -> (ClientStream, TcpStream) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let address = listener.local_addr().unwrap();
-    let client = ClientStream::connect("127.0.0.1", address.port()).unwrap();
+    let client = ClientStream::connect(&address.ip().to_string(), address.port()).unwrap();
     let (server, _) = listener.accept().unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -58,7 +58,7 @@ fn buffered(c: &mut Client, count: i32) {
 }
 
 fn refusal(code: u8, revision: ClientRevision) -> client::client::LoginError {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
@@ -221,13 +221,14 @@ fn every_fixed_byte_and_short_fragment_boundary_advances_isaac_once() {
 
 fn profiled_client(port: u16) -> Client {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let host = Ipv4Addr::LOCALHOST.to_string();
     let profile = Arc::new(
         ClientSessionProfile::new(ClientSessionConfig {
             revision: ClientRevision::R377,
             transport: Transport::Tcp,
-            game_host: "127.0.0.1".into(),
+            game_host: host.clone(),
             game_port: port,
-            asset_host: "127.0.0.1".into(),
+            asset_host: host,
             asset_port: port,
             cache_dir: root.clone(),
             unpack_dir: root,
@@ -253,7 +254,7 @@ fn profiled_client(port: u16) -> Client {
 
 #[test]
 fn real_login_checks_all_crcs_seed_directions_and_partial_frame_reconnect() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     let (tx, rx) = mpsc::channel();
     let (release, resume) = mpsc::channel();
@@ -345,7 +346,7 @@ fn real_login_checks_all_crcs_seed_directions_and_partial_frame_reconnect() {
 #[test]
 fn eof_before_hello_and_after_seed_stays_a_transport_failure() {
     for after_seed in [false, true] {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();

@@ -1,11 +1,12 @@
 use super::*;
 use std::io::Write;
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 
 fn fixture() -> (Worker, mpsc::Receiver<WorkerMessage>, TcpStream) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
-    let stream = ClientStream::connect("127.0.0.1", port).unwrap();
+    let host = Ipv4Addr::LOCALHOST.to_string();
+    let stream = ClientStream::connect(&host, port).unwrap();
     let (server, _) = listener.accept().unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -38,7 +39,7 @@ fn fixture() -> (Worker, mpsc::Receiver<WorkerMessage>, TcpStream) {
         socket_open_time: Instant::now() - SOCKET_OPEN_GATE,
         current: None,
         stream: Some(stream),
-        host: "127.0.0.1".into(),
+        host,
         port,
         transport: Some(Transport::Tcp),
         revision: Some(ClientRevision::R377),
@@ -82,7 +83,7 @@ fn java_update_hello_and_each_request_priority_match_wire() {
     // Exercise the real raw15 handshake, not an already-attached socket.
     worker.stream = None;
     drop(server);
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     worker.port = listener.local_addr().unwrap().port();
     let server = thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
