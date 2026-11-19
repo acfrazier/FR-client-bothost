@@ -24,8 +24,37 @@ fn load_model_snapshot(cache: &str) {
     }
     client::dash3d::AnimFrame::init(40000);
     Model::init(70000, Box::new(NoopProvider));
-    let home = std::env::var("HOME").unwrap();
-    client::unpack::load_snapshot(cache, &format!("{home}/.274bot/unpack")).expect("274 snapshot");
+    client::unpack::load_snapshot(cache, &unpack_root()).expect("274 snapshot");
+}
+
+fn unpack_root() -> String {
+    format!("{}/.274bot/unpack", std::env::var("HOME").unwrap())
+}
+
+fn model_snapshot_ready(cache: &str, context: &str) -> bool {
+    let unpack = unpack_root();
+    match client::unpack::snapshot_state(cache, &unpack) {
+        Ok(client::unpack::SnapshotState::Ready(_)) => true,
+        Ok(state) => {
+            let snapshot = client::unpack::selected_version(cache)
+                .map(|version| {
+                    std::path::Path::new(&unpack)
+                        .join(version)
+                        .display()
+                        .to_string()
+                })
+                .unwrap_or_else(|_| unpack.clone());
+            eprintln!(
+                "no usable client snapshot at {snapshot} ({}); skip {context}",
+                state.describe()
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("cannot inspect client snapshot under {unpack}: {error}; skip {context}");
+            false
+        }
+    }
 }
 
 #[test]
@@ -134,6 +163,9 @@ fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/interface")).is_file() {
         eprintln!("no client cache; skip cube GPU repro");
+        return;
+    }
+    if !model_snapshot_ready(&cache, "mysterious-cube GPU repro") {
         return;
     }
 
@@ -322,6 +354,9 @@ fn gpu_ship_journey_paints_the_title_over_the_scene() {
         eprintln!("no client cache; skip ship_journey GPU title");
         return;
     }
+    if !model_snapshot_ready(&cache, "ship_journey GPU title") {
+        return;
+    }
     load_model_snapshot(&cache);
     client::render::Renderer::set_prefer_gpu(true);
     let mut r = client::render::Renderer::new(false);
@@ -374,6 +409,9 @@ fn gpu_ship_journey_stays_over_a_frozen_scene() {
         || !std::path::Path::new(&format!("{cache}/title")).is_file()
     {
         eprintln!("no client cache; skip ship_journey freeze");
+        return;
+    }
+    if !model_snapshot_ready(&cache, "ship_journey frozen-scene GPU repro") {
         return;
     }
     load_model_snapshot(&cache);
