@@ -221,13 +221,13 @@ fn add_world_options_walk_when_idle() {
     assert_eq!(c.menu_param_c[1], 80);
 }
 
-/// A picked loc (entity 2) shows its ops and Examine once `world.type_code2`
-/// resolves the tile. `add_scenery` plants a sprite with the same typecode
-/// so the real `World::type_code2` answers >= 0 (no loc fixture needed).
+/// A picked single-form R289 loc lists its ops and Examine after
+/// `world.type_code2` resolves the tile. The Examine action must print its
+/// local chat text from the same loc id that the menu stores.
 #[test]
-fn add_world_options_loc_examine_from_pick() {
+fn r289_examine_uses_single_form_loc() {
     let _r = Renderer::new(false);
-    let mut c = client();
+    let mut c = client_for(ClientRevision::R289);
     c.menu_num_entries = 1;
     // typecode: entity 2, typeId 1, x=10, z=12
     let type_id = 1i32;
@@ -269,6 +269,9 @@ fn add_world_options_loc_examine_from_pick() {
         .position(|&a| a == MiniMenuAction::OP_LOC6)
         .unwrap();
     assert_eq!(c.menu_param_a[examine], type_id << 14);
+    c.doAction(examine as i32);
+    assert_eq!(c.chat_type[0], 0);
+    assert_eq!(c.chat_text[0], "It's a Tree.");
 }
 
 #[test]
@@ -308,6 +311,9 @@ fn r289_examine_uses_the_selected_multiloc_form() {
         .expect("Examine option");
     assert_eq!(c.menu_option[examine], "Examine @cya@Open form");
     assert_eq!(c.menu_param_a[examine], 2 << 14);
+    c.doAction(examine as i32);
+    assert_eq!(c.chat_type[0], 0);
+    assert_eq!(c.chat_text[0], "It's a Open form.");
 }
 
 /// A picked npc (entity 1) lists its non-attack ops, then Attack with a
