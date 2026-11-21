@@ -3,6 +3,9 @@
 //! pending logout request (`logoutTimer > 0`) logs out instead; the in-game
 //! silence watchdog (wall-clock: `last_response` older than the 15 s
 //! `SERVER_TIMEOUT` bound, not 750 pass-counted frames) drives it.
+
+#[path = "common/isolation.rs"]
+mod isolation;
 use client::client::client::SessionExitReason;
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
 use client::config::Cache;
@@ -13,11 +16,11 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-fn client() -> Client {
-    Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })
@@ -138,15 +141,16 @@ fn lost_con_with_pending_logout_logs_out_without_reconnecting() {
 fn transport_loss_with_a_written_idle_request_is_not_an_idle_logout() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let mut c = Client::new_with_revision(
+    let mut c = isolation::IsolatedClient::with_config(
         ClientConfig {
-            host: addr.ip().to_string(),
-            port: addr.port(),
-            cache_dir: "/tmp".into(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
         ClientRevision::R289,
+        Some(addr),
     );
     c.ingame = true;
     c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
@@ -263,7 +267,7 @@ fn short_game_frame_does_not_constrain_later_login_seed() {
             let config = || ClientConfig {
                 host: addr.ip().to_string(),
                 port: addr.port(),
-                cache_dir: "/tmp".into(),
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             };
@@ -357,16 +361,17 @@ fn peer_closed_game_socket_triggers_lost_con_on_next_frame() {
     server.join().unwrap();
 }
 
-fn hosted_r289(addr: SocketAddr) -> Client {
-    let mut c = Client::new_with_revision(
+fn hosted_r289(addr: SocketAddr) -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_config(
         ClientConfig {
-            host: addr.ip().to_string(),
-            port: addr.port(),
-            cache_dir: "/tmp".into(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
         ClientRevision::R289,
+        Some(addr),
     );
     c.set_external_reconnect_owner(true);
     c

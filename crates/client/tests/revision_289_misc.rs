@@ -1,14 +1,17 @@
 //! Independent public-source G fixtures: RuneWiki/openrs2-nonfree
 //! 0c00ef249546fada67b1f6eb8bbe01ea7c250c95, client.java (J).
+
+#[path = "common/isolation.rs"]
+mod isolation;
 use client::client::{Client, ClientConfig, ClientGens, ClientRevision};
 use client::io::Packet;
 
-fn client() -> Client {
-    let mut c = Client::new_with_revision(
+fn client() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
-            cache_dir: "/tmp".into(),
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
@@ -16,6 +19,16 @@ fn client() -> Client {
     );
     c.ingame = true;
     c
+}
+
+fn client_274() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: String::new(),
+        members: true,
+        lowmem: false,
+    })
 }
 
 fn dispatch(c: &mut Client, id: i32, bytes: &[u8]) -> Packet {
@@ -213,16 +226,7 @@ fn r274_multiway_icon_uses_the_legacy_headicon() {
     use client::graphics::{Pix32, Pix8};
     use client::render::{Media, Renderer};
 
-    let mut c = Client::new_with_revision(
-        ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: false,
-        },
-        ClientRevision::R274,
-    );
+    let mut c = client_274();
     c.ingame = true;
     c.local_player = Some(ClientPlayer::at(10, 10));
     c.local_player.as_mut().unwrap().x = 1344;
@@ -292,7 +296,7 @@ fn music_requests_and_jingle_countdown_use_existing_owner() {
 #[test]
 fn r274_misc_dispatch_keeps_legacy_ids_and_padding_behavior() {
     use client::io::ServerProt;
-    let mut c = Client::new(client().config);
+    let mut c = client_274();
     c.ingame = true;
     assert_eq!(c.revision(), ClientRevision::R274);
     dispatch(&mut c, ServerProt::CAM_MOVETO, &[4, 5, 0, 20, 1, 100]);

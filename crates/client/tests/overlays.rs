@@ -2,6 +2,9 @@
 // bubbles, health bars and hitmarks drawn into `area_game`. The projection
 // tests need no cache; the sprite/draw tests need the real `media`/`title`
 // packs and skip when they are absent (see hud.rs).
+
+#[path = "common/isolation.rs"]
+mod isolation;
 use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, ClientPlayer};
@@ -11,11 +14,11 @@ use client::graphics::{Colour, Pix32};
 use client::render::{project_area_game, Renderer};
 use std::collections::HashMap;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

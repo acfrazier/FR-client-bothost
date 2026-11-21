@@ -4,6 +4,9 @@ mod gpu_serial;
 #[path = "common/scene_fixture.rs"]
 mod scene_fixture;
 
+#[path = "common/isolation.rs"]
+mod isolation;
+
 // Task 4 (render backend seam): a frame routes through the renderer's
 // backend as `begin` → `scene` → `chrome` → `finish`, in order, on both
 // frame paths (`game_draw` in-game, `title_screen_draw` on the login
@@ -70,11 +73,11 @@ fn count_overlay_entry(point: client::render::backend::gpu::test_hooks::SceneTes
     }
 }
 
-fn client() -> Client {
-    Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

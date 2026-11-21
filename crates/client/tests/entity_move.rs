@@ -1,8 +1,11 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 // Task 2: movePlayers / routeMove. The movement pass interpolates entity
 // x/z along the queued route (Java `Client.java` 7559 / 10547 / 10639)
 // before `followCamera` (9580), so the 3D viewport and the minimap follow
 // the walk instead of only the debug tile line.
-use client::client::{Client, ClientConfig};
+use client::client::ClientConfig;
 use client::config::SeqType;
 use client::dash3d::{ClientEntity, ClientNpc, ClientPlayer};
 use client::render::Renderer;
@@ -43,11 +46,11 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
+        host: String::new(),
+        port: 0,
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

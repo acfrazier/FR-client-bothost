@@ -1,12 +1,15 @@
-use client::client::{Client, ClientConfig};
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use client::client::ClientConfig;
 use client::dash3d::ClientNpc;
 use client::render::npc_overlay_box;
 
-fn projected_client() -> Client {
-    let mut client = Client::new(ClientConfig {
+fn projected_client() -> isolation::IsolatedClient {
+    let mut client = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });

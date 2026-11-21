@@ -15,6 +15,8 @@ pub mod map_cache;
 pub mod render;
 pub mod session;
 pub mod sound;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod transport;
 pub mod unpack;
 pub mod util;

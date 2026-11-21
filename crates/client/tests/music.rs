@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -27,11 +30,11 @@ fn set_target_vol_jumps_when_not_fading() {
     assert!((f.gain() - 0.6310).abs() < 1e-3);
 }
 
-fn client() -> client::client::Client {
-    let mut c = client::client::Client::new(client::client::ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_default_config(client::client::ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });

@@ -1,4 +1,7 @@
-use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use client::client::{ClientConfig, ClientNpc, ClientPlayer};
 use client::io::Packet;
 use client::render::Renderer;
 use client::util::JString;
@@ -6,6 +9,20 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 use std::time::{Duration, Instant};
+
+fn login_client(addr: std::net::SocketAddr, lowmem: bool) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_config(
+        ClientConfig {
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
+            members: true,
+            lowmem,
+        },
+        client::client::ClientRevision::R274,
+        Some(addr),
+    )
+}
 
 #[test]
 fn to_userhash_matches_client_ts() {
@@ -64,13 +81,7 @@ fn cold_login_opcode_16_success() {
         s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
     assert_eq!(c.gens.session, 1);
@@ -109,13 +120,7 @@ fn cold_login_clears_entity_tables() {
         s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     // dirty state a previous session left behind (Java logout keeps the
     // tables in place; response 2 is where they are cleared)
     c.npc_count = 3;
@@ -183,13 +188,7 @@ fn cold_login_clears_reboot_timer() {
         s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     // an opcode-89 notice armed the countdown before this login
     c.reboot_timer = 1;
     c.login("bob", "pw", false).unwrap();
@@ -218,13 +217,7 @@ fn reconnect_uses_opcode_18() {
         assert_eq!(buf[0], 18);
         s.write_all(&[2, 0, 0]).unwrap();
     });
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     c.login("bob", "pw", true).unwrap();
     server.join().unwrap();
 }
@@ -267,13 +260,7 @@ fn reconnect_response_15_keeps_game_and_local_player() {
         s2.write_all(&[15]).unwrap();
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
     assert_eq!(c.gens.session, 1);
@@ -336,13 +323,7 @@ fn reconnect_grant_clears_reboot_timer() {
         s2.write_all(&[15]).unwrap();
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
     // a reboot notice arrived during the first session
@@ -389,13 +370,7 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
         (mouse, click)
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     // A logged-in session that left the logout tab selected, the minimap
     // flagged, chat history, and the scene mid-load.
     c.ingame = true;
@@ -506,13 +481,7 @@ fn login_code_6_is_error() {
         }
         let _ = s.write_all(&[6]);
     });
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     let e = c.login("bob", "pw", false).unwrap_err();
     assert_eq!(e.code, 6);
     assert!(!c.ingame);
@@ -543,13 +512,7 @@ fn already_logged_in_leaves_title_ready_to_retry() {
         s.write_all(&[5]).unwrap();
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     let e = c.login("bob", "pw", false).unwrap_err();
     assert_eq!(e.code, 5);
     assert_eq!(e.mes1, "Your account is already logged in.");
@@ -587,13 +550,7 @@ fn failed_login_can_be_retried_on_the_same_client() {
         }
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = login_client(addr, false);
     assert!(c.login("bob", "pw", false).is_err());
     assert!(!c.ingame);
     c.login("bob", "pw", false).unwrap();
@@ -615,13 +572,7 @@ fn externally_owned_response_one_returns_after_one_socket_attempt() {
         }
         stream.write_all(&[1]).unwrap();
     });
-    let mut client = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut client = login_client(addr, false);
     client.set_external_reconnect_owner(true);
     let error = client.login("bob", "pw", false).unwrap_err();
     assert_eq!(error.code, 1);
@@ -647,13 +598,7 @@ fn standalone_response_one_retries_after_two_seconds() {
             }
         }
     });
-    let mut client = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut client = login_client(addr, false);
     client.login("bob", "pw", false).unwrap();
     assert!(client.ingame);
     server.join().unwrap();
@@ -673,13 +618,7 @@ fn externally_owned_response_21_carries_server_delay() {
         }
         stream.write_all(&[21, 3]).unwrap();
     });
-    let mut client = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut client = login_client(addr, false);
     client.set_external_reconnect_owner(true);
 
     let error = client.login("bob", "pw", false).unwrap_err();
@@ -712,13 +651,7 @@ fn standalone_response_21_counts_down_then_retries() {
             }
         }
     });
-    let mut client = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut client = login_client(addr, false);
     let started = Instant::now();
 
     client.login("bob", "pw", false).unwrap();
@@ -749,13 +682,7 @@ fn lowmem_login_writes_info_byte_one() {
         s.write_all(&[2, 0, 0]).unwrap();
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: true,
-    });
+    let mut c = login_client(addr, true);
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
     server.join().unwrap();

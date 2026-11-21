@@ -4,14 +4,17 @@
 // Rust login clones a default into both, so the mask writes must target
 // `local_player` directly or `ready` never flips on the drawn player and
 // `addPlayer(true)` skips the invisible body.
-use client::client::{Client, ClientConfig, ClientPlayer};
+
+#[path = "common/isolation.rs"]
+mod isolation;
+use client::client::{ClientConfig, ClientPlayer};
 use client::io::{Packet, ServerProt};
 
-fn client() -> Client {
-    let mut c = Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });

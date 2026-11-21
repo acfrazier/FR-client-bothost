@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 // Task 7 (wgpu backend): the GPU scene mesh is the CPU fill's own pass
 // captured — ground quads + placed model faces, transformed to camera
 // space and shaded from the colour table — because it is the exact input
@@ -6,7 +9,7 @@
 // colour table to one brightness, and `Renderer::new` (which re-inits the
 // table at 0.8) must not run in the same process — so the backend-selection
 // tests live in `gpu_backend.rs` instead.
-use client::client::{Client, ClientConfig};
+use client::client::ClientConfig;
 use client::config::Cache;
 use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
@@ -775,10 +778,10 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
 fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
     Pix3D::init_colour_table(0.6);
 
-    let mut c = Client::new(ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -922,10 +925,10 @@ fn loc_model_at_resolves_grounded_scenery_loc() {
 /// clears (the host publishes `None` by default so the tree builds).
 #[test]
 fn set_nav_debug_paint_roundtrips_on_client() {
-    let mut c = Client::new(ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });

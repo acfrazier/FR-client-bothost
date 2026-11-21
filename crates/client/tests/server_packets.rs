@@ -2,15 +2,18 @@
 //! `Client.ts` `ptype` switch handlers. Packets are built by hand and passed
 //! straight to `handle_packet`, skipping the socket and Isaac.
 
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::client::SessionExitReason;
-use client::client::{Client, ClientConfig, ClientPlayer};
+use client::client::{ClientConfig, ClientPlayer};
 use client::io::{Packet, ServerProt};
 
-fn client() -> Client {
-    let mut c = Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -208,7 +211,7 @@ fn player_info_teleports_local_player() {
     p.pos = 0;
     c.handle_packet(ServerProt::PLAYER_INFO, &mut p);
     assert!(c.ingame); // frame consumed exactly; no T2 logout
-    let local = c.local_player.unwrap();
+    let local = c.local_player.as_ref().unwrap();
     assert_eq!(local.route_x[0], 5);
     assert_eq!(local.route_z[0], 6);
 }

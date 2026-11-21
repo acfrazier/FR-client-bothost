@@ -4,6 +4,9 @@
 //! (independently derived oracles). Cases outside stage-1 (actors, login RSA,
 //! region/widgets) are not asserted here.
 
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
 use client::config::{IfType, IfTypeMut};
 use client::io::{ClientStream, Packet, ServerProt, ServerProt289, SERVER_PROT_SIZES};
@@ -17,21 +20,21 @@ fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     }
 }
 
-fn client_274() -> Client {
-    let mut c = Client::new(cfg());
+fn client_274() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_default_config(cfg());
     c.ingame = true;
     c.ptype = -1;
     c
 }
 
-fn client_289() -> Client {
-    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+fn client_289() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(cfg(), ClientRevision::R289);
     c.ingame = true;
     c.ptype = -1;
     c
@@ -265,7 +268,7 @@ fn transport_readiness_counts_unread_bytes_before_fragment_poll() {
 
 #[test]
 fn default_client_stays_on_274_public_tables() {
-    let c = Client::new(cfg());
+    let c = isolation::IsolatedClient::with_default_config(cfg());
     assert_eq!(c.revision(), ClientRevision::R274);
     assert_eq!(ServerProt::UPDATE_INV_FULL, 106);
     assert_eq!(ServerProt::UPDATE_INV_PARTIAL, 172);
@@ -806,11 +809,11 @@ fn adopt_from_failed_across_revisions_does_not_assign_source_revision() {
 #[test]
 fn revision_bound_at_construction_read_only_getter() {
     // Callsite API: revision is construction-bound + getter; no public field set.
-    let c = Client::new(cfg());
+    let c = isolation::IsolatedClient::with_default_config(cfg());
     assert_eq!(c.revision(), ClientRevision::R274);
     assert!(c.revision().is_274());
 
-    let c289 = Client::new_with_revision(cfg(), ClientRevision::R289);
+    let c289 = isolation::IsolatedClient::with_revision(cfg(), ClientRevision::R289);
     assert_eq!(c289.revision(), ClientRevision::R289);
     assert!(c289.revision().is_289());
     assert_eq!(c289.revision().as_i32(), 289);

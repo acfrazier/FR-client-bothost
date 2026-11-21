@@ -30,3 +30,5 @@ pub mod skill;
 pub use skill::Skill;
 pub mod title_flames;
 pub use title_flames::TitleFlames;
+#[cfg(test)]
+pub(crate) mod test_support;

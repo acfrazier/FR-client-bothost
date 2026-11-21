@@ -2,16 +2,19 @@
 //!
 //! `handle_packet` is the inner `ptype` switch, callable from tests without a
 //! socket; `ClientBuild::load_ground` decodes a map square into `groundh`.
-use client::client::{Client, ClientBuild, ClientConfig, ClientPlayer};
+
+#[path = "common/isolation.rs"]
+mod isolation;
+use client::client::{ClientBuild, ClientConfig, ClientPlayer};
 use client::graphics::PixMap;
 use client::io::{ClientProt, Packet, ServerProt};
 use client::render::Renderer;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })
@@ -101,7 +104,18 @@ fn load_ground_opcode_zero_uses_perlin_terrain() {
     }
     let mut build = ClientBuild::new();
     // origin = zone-50 build base, square offset 0,0 (centre square)
-    build.load_ground(&mut c.groundh, &mut c.mapl, map.data(), 352, 352, 0, 0);
+    {
+        let client = &mut *c;
+        build.load_ground(
+            &mut client.groundh,
+            &mut client.mapl,
+            map.data(),
+            352,
+            352,
+            0,
+            0,
+        );
+    }
     for (stx, stz, height) in [(10, 20, -264), (30, 40, -280), (0, 0, -352), (63, 63, -264)] {
         assert_eq!(c.groundh[0][stx][stz], height, "level 0 tile {stx},{stz}");
         assert_eq!(c.groundh[1][stx][stz], height - 240);
@@ -130,7 +144,18 @@ fn load_ground_opcode_one_sets_explicit_height() {
         }
     }
     let mut build = ClientBuild::new();
-    build.load_ground(&mut c.groundh, &mut c.mapl, map.data(), 352, 352, 0, 0);
+    {
+        let client = &mut *c;
+        build.load_ground(
+            &mut client.groundh,
+            &mut client.mapl,
+            map.data(),
+            352,
+            352,
+            0,
+            0,
+        );
+    }
     assert_eq!(c.groundh[0][10][20], -7 * 8);
     assert_eq!(c.groundh[1][10][20], c.groundh[0][10][20] - 7 * 8);
     assert_eq!(c.groundh[2][10][20], c.groundh[1][10][20] - 7 * 8);
@@ -148,7 +173,10 @@ fn load_ground_writes_client_mapl_flags() {
     // offsets; a 64×64×4 stream of opcode 0 still leaves mapl[0][x][z]==0
     // for in-area tiles.
     let mut src = vec![0u8; 4 * 64 * 64];
-    ClientBuild::new().load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
+    {
+        let client = &mut *c;
+        ClientBuild::new().load_ground(&mut client.groundh, &mut client.mapl, &src, 0, 0, 0, 0);
+    }
     assert_eq!(c.mapl[0][0][0], 0);
 
     // opcode 50 on tile (0,0) level 0 → mapl flag 1. The flag tile consumes
@@ -156,7 +184,10 @@ fn load_ground_writes_client_mapl_flags() {
     // the stream with a trailing 0 to keep the last tile in bounds.
     src.push(0);
     src[0] = 50;
-    ClientBuild::new().load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
+    {
+        let client = &mut *c;
+        ClientBuild::new().load_ground(&mut client.groundh, &mut client.mapl, &src, 0, 0, 0, 0);
+    }
     assert_eq!(c.mapl[0][0][0], 1);
 }
 

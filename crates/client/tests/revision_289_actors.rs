@@ -1,5 +1,8 @@
 //! Cleanup D fixtures are independently bit-packed from pinned 289 Java
 //! client methods 212/185/172/153/128 and 226/124/222. No captured payloads.
+
+#[path = "common/isolation.rs"]
+mod isolation;
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision};
 use client::config::{Cache, NpcType, SeqType};
 use client::io::ServerProt;
@@ -7,12 +10,12 @@ use client::io::{Packet, ServerProt289};
 use client::util::JString;
 use std::sync::Arc;
 
-fn client() -> Client {
-    let mut c = Client::new_with_revision(
+fn client() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
-            cache_dir: "/tmp".into(),
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
@@ -25,6 +28,16 @@ fn client() -> Client {
     c.local_player.as_mut().unwrap().ready = true;
     c.players[2047] = Some(Box::new(ClientPlayer::at(3, 4)));
     c
+}
+
+fn client_274() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: String::new(),
+        members: true,
+        lowmem: false,
+    })
 }
 
 fn bits(fields: &[(usize, u32)]) -> Vec<u8> {
@@ -363,7 +376,7 @@ fn truncated_animation_transaction_does_not_publish_a_local_update() {
 
 #[test]
 fn legacy_player_animation_reception_also_counts_same_id_instructions() {
-    let mut c = Client::new(client().config);
+    let mut c = client_274();
     c.ingame = true;
     c.local_player = Some(ClientPlayer::at(10, 10));
     c.players[2047] = Some(Box::new(ClientPlayer::default()));
@@ -505,8 +518,7 @@ fn truncated_later_appearance_does_not_apply_earlier_actor_or_chat() {
 
 #[test]
 fn default_274_hit_timers_and_say_behavior_are_preserved() {
-    let config = client().config;
-    let mut c = Client::new(config);
+    let mut c = client_274();
     assert_eq!(c.revision(), ClientRevision::R274);
     c.ingame = true;
     c.loop_cycle = 50;

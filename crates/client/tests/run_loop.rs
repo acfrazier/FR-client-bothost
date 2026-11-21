@@ -1,11 +1,14 @@
-use client::client::{Client, ClientConfig};
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use client::client::ClientConfig;
 use client::render::Renderer;
 
-fn new_client() -> Client {
-    Client::new(ClientConfig {
+fn new_client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

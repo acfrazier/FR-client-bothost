@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::present::PresentTarget;
 use client::render::backend::FrameOutput;
 use client::render::Renderer;
@@ -34,11 +37,11 @@ impl PresentTarget for CountingTarget {
     }
 }
 
-fn client_tmp() -> Client {
-    Client::new(ClientConfig {
+fn client_tmp() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

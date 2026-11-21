@@ -680,7 +680,7 @@ mod observer_memory_tests {
 
 #[cfg(test)]
 mod outbound_memory_tests {
-    use crate::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+    use crate::client::{ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
     use crate::io::{map_client_prot, ClientProt, ClientProt377, ClientRevision};
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
@@ -745,11 +745,11 @@ mod outbound_memory_tests {
     }
 
     fn assert_revision_outbound_allocation_gate(revision: ClientRevision) -> usize {
-        let mut client = Client::new_with_revision(
+        let (mut client, _environment) = crate::client::test_support::isolated_client(
             ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: "/tmp".into(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             },

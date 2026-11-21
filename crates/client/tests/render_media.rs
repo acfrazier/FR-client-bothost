@@ -5,6 +5,9 @@
 // first frame depacked the real copy from the cache. This binary runs in
 // its own process (each `tests/` file is a separate binary), so the
 // process-wide `Media` OnceLock cannot race the other draw tests.
+
+#[path = "common/isolation.rs"]
+mod isolation;
 use client::render::Renderer;
 use std::sync::Arc;
 
@@ -25,7 +28,7 @@ fn renderers_that_drew_share_the_depacked_media_arc() {
     let mut c = client::client::Client::new(client::client::ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });

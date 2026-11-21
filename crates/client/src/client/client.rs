@@ -14985,13 +14985,16 @@ mod zone_post_build {
 
     #[test]
     fn loc_change_post_build_keeps_permanent_and_drops_timed() {
-        let mut c = Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: false,
-        });
+        let (mut c, _environment) = crate::client::test_support::isolated_client(
+            ClientConfig {
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R274,
+        );
         c.loc_changes.push(LocChange {
             end_time: -1,
             x: 2,
@@ -15049,19 +15052,22 @@ mod try_move_path {
         assert_eq!(path.last(), Some(&(dest, 0)));
     }
 
-    fn empty_client() -> Client {
-        Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: false,
-        })
+    fn empty_client() -> (Client, crate::test_support::IsolatedEnvironment) {
+        crate::client::test_support::isolated_client(
+            ClientConfig {
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R274,
+        )
     }
 
     #[test]
     fn run_enabled_reads_varp_173() {
-        let mut c = empty_client();
+        let (mut c, _environment) = empty_client();
         assert!(!c.run_enabled());
         if c.var.len() <= Client::RUN_VARP {
             c.var.resize(Client::RUN_VARP + 1, 0);
@@ -15076,7 +15082,7 @@ mod try_move_path {
         // means run is on (host `run_echo`). hide is per-client mut, so it
         // seeds the overlay (`set_iface` puts a default overlay beside the
         // decode slot).
-        let mut c = empty_client();
+        let (mut c, _environment) = empty_client();
         c.set_iface(152, IfType::default());
         c.set_iface(153, IfType::default());
         c.iface_mut(152).unwrap().hide = false;
@@ -15089,7 +15095,7 @@ mod try_move_path {
 
     #[test]
     fn unset_map_flag_retires_try_move_path() {
-        let mut c = empty_client();
+        let (mut c, _environment) = empty_client();
         c.try_move_path = vec![(1, 2), (3, 4)];
         c.minimap_flag_x = 5;
         c.minimap_flag_z = 6;
@@ -15105,7 +15111,7 @@ mod try_move_path {
 
     #[test]
     fn logout_retires_try_move_path() {
-        let mut c = empty_client();
+        let (mut c, _environment) = empty_client();
         c.try_move_path = vec![(8, 9)];
         c.logout();
         assert!(
@@ -15116,7 +15122,7 @@ mod try_move_path {
 
     #[test]
     fn rebuild_shifts_try_move_path_with_scene_origin() {
-        let mut c = empty_client();
+        let (mut c, _environment) = empty_client();
         c.map_build_centre_zone_x = 50;
         c.map_build_centre_zone_z = 50;
         c.map_build_base_x = (50 - 6) * 8;
@@ -15169,25 +15175,25 @@ mod recent_frames {
 mod dead_server_watchdog {
     use super::*;
 
-    /// A config pointed at a port nothing is listening on, so a watchdog
-    /// `lostCon` → re-login gets an immediate `ECONNREFUSED` (no hang, no
-    /// real server involved).
-    fn client_at_dead_port() -> Client {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: true,
-        })
+    /// The test-owned loopback origin accepts and immediately closes game and
+    /// `/crc` requests, so watchdog re-login returns promptly without a real
+    /// server.
+    fn client_at_dead_port() -> (Client, crate::test_support::IsolatedEnvironment) {
+        crate::client::test_support::isolated_client(
+            ClientConfig {
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            ClientRevision::R274,
+        )
     }
 
     #[test]
     fn stale_last_response_fires_lost_con_in_one_game_loop_pass() {
-        let mut c = client_at_dead_port();
+        let (mut c, _environment) = client_at_dead_port();
         c.ingame = true;
         c.last_response = Some(Instant::now() - Duration::from_secs(16));
         // One pass (the cadence of a parked host slot) must fire the
@@ -15202,7 +15208,7 @@ mod dead_server_watchdog {
 
     #[test]
     fn fresh_last_response_does_not_trip_the_watchdog() {
-        let mut c = client_at_dead_port();
+        let (mut c, _environment) = client_at_dead_port();
         c.ingame = true;
         c.last_response = Some(Instant::now());
         c.game_loop();
@@ -15211,7 +15217,7 @@ mod dead_server_watchdog {
 
     #[test]
     fn watchdog_stays_quiet_until_the_bound_elapses() {
-        let mut c = client_at_dead_port();
+        let (mut c, _environment) = client_at_dead_port();
         c.ingame = true;
         c.last_response = Some(Instant::now() - Duration::from_secs(14));
         c.game_loop();
@@ -15224,7 +15230,7 @@ mod dead_server_watchdog {
         use std::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let mut c = client_at_dead_port();
+        let (mut c, _environment) = client_at_dead_port();
         let stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
         c.stream = Some(stream);
         c.ptype = -1;
@@ -15267,21 +15273,24 @@ mod wave_arbitration {
         0x00, 0x00, 0x00, 0xff, 0xff,
     ];
 
-    fn client() -> Client {
-        let mut client = Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: false,
-        });
+    fn client() -> (Client, crate::test_support::IsolatedEnvironment) {
+        let (mut client, environment) = crate::client::test_support::isolated_client(
+            ClientConfig {
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R274,
+        );
         client.jagfx.init(&mut Packet::new(JAGFX_FIXTURE.to_vec()));
         let mut longer = client.jagfx.synth[882].clone().expect("fixture sound");
         for tone in longer.tones.iter_mut().flatten() {
             tone.length = tone.length.saturating_mul(2);
         }
         Arc::make_mut(&mut client.jagfx.synth)[883] = Some(longer);
-        client
+        (client, environment)
     }
 
     fn generated_samples(client: &mut Client, id: i32) -> usize {
@@ -15309,11 +15318,11 @@ mod wave_arbitration {
     #[test]
     fn unresolved_377_wave_emits_java_synth_error_packet() {
         for report_wave_id in [true, false] {
-            let mut client = Client::new_with_revision(
+            let (mut client, _environment) = crate::client::test_support::isolated_client(
                 ClientConfig {
-                    host: "127.0.0.1".into(),
-                    port: 43594,
-                    cache_dir: "/tmp".into(),
+                    host: String::new(),
+                    port: 0,
+                    cache_dir: String::new(),
                     members: true,
                     lowmem: true,
                 },
@@ -15340,7 +15349,7 @@ mod wave_arbitration {
 
     #[test]
     fn shorter_wave_replaces_when_its_wall_clock_end_is_later() {
-        let mut client = client();
+        let (mut client, _environment) = client();
         let short = generated_samples(&mut client, 882);
         let long = generated_samples(&mut client, 883);
         let start = Instant::now();
@@ -15357,7 +15366,7 @@ mod wave_arbitration {
 
     #[test]
     fn headless_wave_expires_without_an_output_callback() {
-        let mut client = client();
+        let (mut client, _environment) = client();
         let short = generated_samples(&mut client, 882);
         let long = generated_samples(&mut client, 883);
         let start = Instant::now();
@@ -15374,7 +15383,7 @@ mod wave_arbitration {
 
     #[test]
     fn replay_restarts_pcm_without_extending_the_arbitration_end() {
-        let mut client = client();
+        let (mut client, _environment) = client();
         let short = generated_samples(&mut client, 882);
         let long = generated_samples(&mut client, 883);
         let start = Instant::now();
@@ -15747,7 +15756,7 @@ mod main_modal_packet_tests {
             ClientConfig {
                 host: "127.0.0.1".into(),
                 port: 43594,
-                cache_dir: "/tmp".into(),
+                cache_dir: String::new(),
                 members: true,
                 lowmem: true,
             },

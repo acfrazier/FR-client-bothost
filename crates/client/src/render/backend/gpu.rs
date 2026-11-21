@@ -2707,13 +2707,16 @@ mod tests {
         };
         let mut renderer = Renderer::new(false);
         renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
-        let mut core = crate::client::client::Client::new(crate::client::config::ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: false,
-        });
+        let (mut core, _environment) = crate::client::test_support::isolated_client(
+            crate::client::config::ClientConfig {
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: false,
+            },
+            crate::io::ClientRevision::R274,
+        );
         core.scene_state = 2;
         let overlay_index = (4 * FRAME_W + 4) as usize;
         renderer.area_game.as_mut().unwrap().pixels[0] = 0x00112233;

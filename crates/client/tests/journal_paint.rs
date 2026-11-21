@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use std::sync::Arc;
 
 use client::client::{Client, ClientConfig};
@@ -20,11 +23,11 @@ const BOTTOM_TAB_COLOUR: i32 = 0x00aa_5500;
 const TOP_TAB_RESTORED_COLOUR: i32 = 0x0055_00aa;
 const BOTTOM_TAB_RESTORED_COLOUR: i32 = 0x00aa_0055;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })
@@ -220,11 +223,11 @@ fn journal_read_open_paint_close_has_identical_r289_packets_when_hidden() {
     use client::io::{ClientProt289, ClientRevision};
 
     fn read(hidden: bool) -> (Vec<u8>, (i32, i32)) {
-        let mut client = Client::new_with_revision(
+        let mut client = isolation::IsolatedClient::with_revision(
             ClientConfig {
                 host: "127.0.0.1".into(),
                 port: 43594,
-                cache_dir: "/tmp".into(),
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             },

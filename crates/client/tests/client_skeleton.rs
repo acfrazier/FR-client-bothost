@@ -1,8 +1,11 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use std::io::Read;
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
-use client::client::{Client, ClientConfig, LoginError, LoginStage};
+use client::client::{ClientConfig, LoginError, LoginStage};
 use client::render::Renderer;
 
 #[test]
@@ -11,7 +14,7 @@ fn config_has_no_rsa_fields() {
     let cfg = ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     };
@@ -29,14 +32,18 @@ fn login_error_carries_code_and_messages() {
     );
 }
 
-fn client_for(port: u16) -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+fn client_for(port: u16) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_config(
+        ClientConfig {
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        Some(std::net::SocketAddr::from(([127, 0, 0, 1], port))),
+    )
 }
 
 /// A refused connection keeps where it failed and the OS error, instead of
@@ -134,10 +141,10 @@ fn login_past_its_deadline_does_not_connect() {
 #[test]
 fn new_client_starts_logged_out() {
     let _r = Renderer::new(false);
-    let c = Client::new(ClientConfig {
+    let c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -148,15 +155,14 @@ fn new_client_starts_logged_out() {
 #[test]
 fn run_drives_mainloop_and_hook_until_stopped() {
     let mut r = Renderer::new(false);
-    let mut c = Client::new(ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
-    // This test drives the run-loop mechanics, not the loading screen:
-    // skip `maininit` so it stays hermetic (no web fetch into /tmp).
+    // This test drives the run-loop mechanics, not the loading screen: skip `maininit` so it stays hermetic.
     c.already_started = true;
     let mut calls = 0;
     c.run(&mut r, |c| {

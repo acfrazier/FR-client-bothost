@@ -4,14 +4,17 @@
 // (undrawn) Cancel + Walk here minimenu for 3D-viewport clicks and auto-fires
 // the top entry; `minimap_loop` converts a minimap click into
 // MOVE_MINIMAPCLICK (Client.ts 2742).
-use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
+
+#[path = "common/isolation.rs"]
+mod isolation;
+use client::client::{ClientConfig, ClientPlayer, MiniMenuAction};
 use client::io::{ClientProt, Isaac};
 
-fn client() -> Client {
-    Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::key_codes::{self, JavaKeyCode};
 use client::client::GameShell;
 
@@ -213,11 +216,11 @@ fn key_codes_tab_and_debug_punctuation() {
 /// This is the Mac path: NamedKey::Tab → lookup("Tab") → ch 9 → poll_key.
 #[test]
 fn title_tab_moves_between_username_and_password() {
-    use client::client::{Client, ClientConfig};
-    let mut c = Client::new(ClientConfig {
+    use client::client::ClientConfig;
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -235,11 +238,11 @@ fn title_tab_moves_between_username_and_password() {
 /// is allowed once the line already starts with `::` (TS 3051).
 #[test]
 fn chat_accepts_colon_then_tilde_in_cheat() {
-    use client::client::{Client, ClientConfig};
-    let mut c = Client::new(ClientConfig {
+    use client::client::ClientConfig;
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -256,11 +259,11 @@ fn chat_accepts_colon_then_tilde_in_cheat() {
 
 #[test]
 fn consume_chat_key_types_dialog_without_draining_the_ring() {
-    use client::client::{Client, ClientConfig};
-    let mut c = Client::new(ClientConfig {
+    use client::client::ClientConfig;
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -281,11 +284,11 @@ fn consume_chat_key_types_dialog_without_draining_the_ring() {
     assert!(c.chat_input.is_empty());
 }
 
-fn title_client() -> client::client::Client {
-    client::client::Client::new(client::client::ClientConfig {
+fn title_client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(client::client::ClientConfig {
         host: "127.0.0.1".into(),
         port: 1,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

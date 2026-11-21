@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use std::sync::Arc;
 
 use client::client::{Client, ClientBuild, ClientConfig};
@@ -210,11 +213,11 @@ fn get_wall_mut_none_on_empty_tile() {
     assert!(w.get_wall_mut(0, 1, 1).is_none());
 }
 
-fn client() -> Client {
-    Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

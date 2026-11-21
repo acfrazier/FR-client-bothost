@@ -3,20 +3,23 @@
 //! and emits `CHAT_SETMODE` (154) with the three modes; the Report abuse
 //! button resets the report form and arms typed name input (Java 274
 //! Client.java:2789-2797; Java 289 Client.java:4217-4224).
+
+#[path = "common/isolation.rs"]
+mod isolation;
 use client::client::mini_menu_action::MiniMenuAction;
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::if_type::IfType;
 
-fn client() -> Client {
+fn client() -> isolation::IsolatedClient {
     client_with_revision(ClientRevision::R274)
 }
 
-fn client_with_revision(revision: ClientRevision) -> Client {
-    Client::new_with_revision(
+fn client_with_revision(revision: ClientRevision) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_revision(
         ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
-            cache_dir: "/tmp".into(),
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },

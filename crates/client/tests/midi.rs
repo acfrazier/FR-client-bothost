@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::sound::{Midi, NullMidi};
 
 #[test]
@@ -8,11 +11,11 @@ fn null_midi_swallows_play() {
     m.stop();
 }
 
-fn client() -> client::client::Client {
-    client::client::Client::new(client::client::ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(client::client::ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })
@@ -205,7 +208,7 @@ const JAGFX_FIXTURE: &[u8] = &[
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
 ];
 
-fn wave_queue_client() -> client::client::Client {
+fn wave_queue_client() -> isolation::IsolatedClient {
     let mut c = client();
     c.jagfx
         .init(&mut client::io::Packet::new(JAGFX_FIXTURE.to_vec()));

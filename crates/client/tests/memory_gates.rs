@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::io::{ClientRevision, Packet, ServerProt, ServerProt289};
@@ -115,11 +118,11 @@ fn inbound_opcodes(revision: ClientRevision) -> InboundOpcodes {
     }
 }
 
-fn client(revision: ClientRevision) -> Client {
+fn client(revision: ClientRevision) -> isolation::IsolatedClient {
     let config = ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     };
@@ -127,15 +130,16 @@ fn client(revision: ClientRevision) -> Client {
         let mut cache = Cache::default();
         cache.objs.push(Default::default());
         cache.varps.resize_with(4, Default::default);
-        Client::from_shared_with_revision(
+        isolation::IsolatedClient::with_shared(
             config,
             Arc::new(cache),
             Arc::new(Vec::new()),
             Vec::new(),
             revision,
+            None,
         )
     } else {
-        Client::new_with_revision(config, revision)
+        isolation::IsolatedClient::with_revision(config, revision)
     };
     c.ingame = true;
     c.ptype = -1;
@@ -409,11 +413,11 @@ fn warmed_interface_animation_and_rotation_allocate_nothing() {
             }],
             ..Default::default()
         };
-        let mut c = Client::from_shared_with_revision(
+        let mut c = isolation::IsolatedClient::with_shared(
             ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: std::env::temp_dir().display().to_string(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             },
@@ -421,6 +425,7 @@ fn warmed_interface_animation_and_rotation_allocate_nothing() {
             Arc::new(Vec::new()),
             Vec::new(),
             revision,
+            None,
         );
         c.set_iface(
             1,

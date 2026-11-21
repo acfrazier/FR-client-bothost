@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 // Task 7 (wgpu backend) selection: `client-play --window` prefers the wgpu
 // backend where an adapter exists, and still produces a frame either way.
 // The force-failure fallback is pinned in `render_backend.rs` (a separate
@@ -40,11 +43,11 @@ fn gpu_backend_selected_when_adapter_available() {
     Renderer::set_prefer_gpu(false);
 }
 
-fn client() -> client::client::Client {
-    client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(client::client::ClientConfig {
+        host: String::new(),
+        port: 0,
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })

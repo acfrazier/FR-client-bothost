@@ -1,17 +1,20 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 // doAction/tryMove encode: menu arrays → MOVE_GAMECLICK / OPNPC2 through
 // Packet::p1_enc with the client's outbound Isaac.
 use std::sync::Arc;
 
-use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+use client::client::{ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
 use client::config::if_type::{ButtonType, IfType, IfTypeMut};
 use client::config::ObjType;
 use client::io::{ClientProt, Isaac};
 
-fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
+        host: String::new(),
+        port: 0,
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })
@@ -156,13 +159,17 @@ fn try_move_flushes_move_gameclick_to_socket() {
         tx.send(out[..n].to_vec()).unwrap();
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = isolation::IsolatedClient::with_config(
+        ClientConfig {
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        Some(addr),
+    );
     c.login("bob", "pw", false).unwrap();
     assert!(c.local_player.is_some());
     assert!(c.tryMove(5, 5, 10, 10, true, 0, 0, 0, 0, 0, 0));

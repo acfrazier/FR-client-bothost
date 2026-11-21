@@ -1,6 +1,9 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 // CollisionMap / World scene-graph port (Task 15): block flags, loc/wall
 // placement, and entity route behaviour, pinned against `dash3d/CollisionMap.ts`.
-use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
+use client::client::{ClientConfig, ClientNpc, ClientPlayer};
 use client::dash3d::{CollisionFlag, CollisionMap, DirectionFlag, LocAngle, LocShape};
 
 #[test]
@@ -90,10 +93,10 @@ fn test_loc_approaches_from_open_side() {
 
 #[test]
 fn walk_route_avoids_blocked_tile() {
-    let mut c = Client::new(ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -107,10 +110,10 @@ fn walk_route_avoids_blocked_tile() {
 
 #[test]
 fn scenery_blocked_tile_not_arrived_at() {
-    let mut c = Client::new(ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -142,10 +145,10 @@ fn client_player_at_and_route_arrays() {
     assert_eq!(p.route_z[0], 4);
     // teleport without jumping queues the tile onto the route
     p.teleport(
-        &Client::new(ClientConfig {
+        &isolation::IsolatedClient::with_default_config(ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
-            cache_dir: "/tmp".into(),
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         })

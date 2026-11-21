@@ -2287,13 +2287,16 @@ mod tests {
                 thread::sleep(Duration::from_millis(20));
             }
         });
-        let mut client = Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 1,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: true,
-        });
+        let (mut client, _environment) = crate::client::test_support::isolated_client(
+            ClientConfig {
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            crate::io::ClientRevision::R274,
+        );
         client.stream = Some(connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap());
         client.baton = true;
         let started = std::time::Instant::now();

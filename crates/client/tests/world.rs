@@ -4,7 +4,10 @@
 // even with an unpopulated `visBacking`, so the whole scene raster path
 // (fill → renderQuickGround → gouraud) runs without a pack. A mouse click
 // on the projected ground must come back as `ground_x`/`ground_z`.
-use client::client::{Client, ClientConfig};
+
+#[path = "common/isolation.rs"]
+mod isolation;
+use client::client::ClientConfig;
 use client::config::{Cache, LocType};
 use client::core::World;
 use client::dash3d::ground::Ground;
@@ -2370,10 +2373,10 @@ fn core_world_has_typecodes_without_renderer() {
     // The `Client.world` field is the same sim world: a scene placed
     // through the Client resolves typecodes without constructing a
     // renderer or a render world.
-    let mut c = Client::new(ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });

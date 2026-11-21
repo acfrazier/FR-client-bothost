@@ -5,6 +5,9 @@ use client::dash3d::{ClientEntity, ClientPlayer, MapFlag, TerrainOverlayShape};
 use client::graphics::{Colour, PixMap};
 use client::render::Renderer;
 
+#[path = "common/isolation.rs"]
+mod isolation;
+
 fn cache_dir() -> Option<String> {
     let cache = client::cache_dir().display().to_string();
     if std::path::Path::new(&cache).join("media").is_file() {
@@ -22,6 +25,16 @@ fn client(cache: String) -> Client {
         cache_dir: cache,
         members: true,
         lowmem: false,
+    })
+}
+
+fn empty_cache_client(lowmem: bool) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: String::new(),
+        members: true,
+        lowmem,
     })
 }
 
@@ -268,7 +281,7 @@ fn flat_world() -> World {
 #[test]
 fn game_draw_renders_scene_without_manual_pix3d_init() {
     let mut r = Renderer::new(false);
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.set_draw(true);
     c.ingame = true;
     c.scene_state = 2;
@@ -295,7 +308,7 @@ fn game_draw_renders_scene_without_manual_pix3d_init() {
 #[test]
 fn follow_camera_moves_eye_above_local_player() {
     let mut r = Renderer::new(false);
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.ingame = true;
     c.scene_state = 2;
     let mut player = ClientPlayer {
@@ -329,7 +342,7 @@ fn follow_camera_moves_eye_above_local_player() {
 /// `scene_state == 1`, or the first built frame 500-snaps after a run.
 #[test]
 fn follow_camera_chases_while_the_scene_is_loading() {
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.ingame = true;
     c.scene_state = 1;
     let mut player = ClientPlayer {
@@ -355,7 +368,7 @@ fn follow_camera_chases_while_the_scene_is_loading() {
 #[test]
 fn get_av_h_link_below_reads_level_above() {
     let mut r = Renderer::new(false);
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.ingame = true;
     c.scene_state = 2;
     let mut player = ClientPlayer {
@@ -397,7 +410,7 @@ fn get_av_h_link_below_reads_level_above() {
 /// hitch on hills and stacked floors.
 #[test]
 fn follow_camera_pitch_clamp_lifts_link_below_neighbors() {
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.ingame = true;
     c.scene_state = 2;
     let mut player = ClientPlayer {
@@ -432,16 +445,10 @@ fn follow_camera_pitch_clamp_lifts_link_below_neighbors() {
 #[test]
 fn pix3d_low_mem_follows_config() {
     let r = Renderer::new(false);
-    let _c = client("/tmp".into());
+    let _c = empty_cache_client(false);
     assert!(!r.pix3d.low_mem, "default config lowmem=false");
     let mut low_r = Renderer::new(true);
-    let mut low = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: true,
-    });
+    let mut low = empty_cache_client(true);
     assert!(
         low_r.pix3d.low_mem,
         "lowmem config must reach Pix3DDraw.low_mem"
@@ -501,13 +508,7 @@ fn production_init_wires_textures_and_pool() {
 #[test]
 fn minimap_build_buffer_writes_pixels() {
     let mut r = Renderer::new(false);
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = empty_cache_client(false);
     c.world.fill_base_level(0);
     // `Client::new` starts unheaded (`overlay_mesh == draw == false`).
     // This fixture is a headed `set_ground`.
@@ -551,13 +552,7 @@ fn minimap_build_buffer_writes_pixels() {
 #[test]
 fn first_headed_paint_builds_minimap_from_unheaded_stamps() {
     let mut r = Renderer::new(false);
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = empty_cache_client(false);
     c.world.overlay_mesh = false;
     c.world.fill_base_level(0);
     c.world.set_ground(
@@ -617,7 +612,7 @@ fn roof_player() -> ClientPlayer {
 #[test]
 fn roof_check_returns_3_outdoors() {
     let r = Renderer::new(false);
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.local_player = Some(roof_player());
     c.cam_pitch = 200; // < 310: the ray walks
     c.cam_x = 128; // camera tile (1,1)
@@ -635,7 +630,7 @@ fn roof_check_returns_3_outdoors() {
 #[test]
 fn roof_check_returns_minusedlevel_when_player_tile_has_remove_roof() {
     let r = Renderer::new(false);
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.local_player = Some(roof_player());
     c.cam_pitch = 200;
     c.cam_x = 128; // camera tile (1,1)
@@ -651,7 +646,7 @@ fn roof_check_returns_minusedlevel_when_player_tile_has_remove_roof() {
 #[test]
 fn roof_check_ray_hits_remove_roof_between_cam_and_player() {
     let r = Renderer::new(false);
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     let mut player = roof_player();
     player.entity.x = 768; // tile 6
     c.local_player = Some(player);
@@ -668,7 +663,7 @@ fn roof_check_ray_hits_remove_roof_between_cam_and_player() {
 #[test]
 fn roof_check2_under_roof_and_low_cam_is_minusedlevel() {
     let r = Renderer::new(false);
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.cam_x = 384; // camera tile (3,3)
     c.cam_z = 384;
     c.cam_y = 0;
@@ -682,7 +677,7 @@ fn roof_check2_under_roof_and_low_cam_is_minusedlevel() {
 #[test]
 fn roof_check2_high_cam_is_3() {
     let r = Renderer::new(false);
-    let mut c = client("/tmp".into());
+    let mut c = empty_cache_client(false);
     c.cam_x = 384; // camera tile (3,3)
     c.cam_z = 384;
     c.cam_y = -900; // 900 above the ground height 0

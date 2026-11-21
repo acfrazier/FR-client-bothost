@@ -8,12 +8,15 @@
 //! sibling test that already played a song would hide the cold load.
 #![cfg(feature = "audio")]
 
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use client::client::{Client, ClientConfig};
+use client::client::ClientConfig;
 use client::sound::RustyMidi;
 
 /// The longest a callback may wait for the `midi` lock while the first song
@@ -32,10 +35,10 @@ fn first_song_does_not_stall_the_output_callback() {
         return;
     };
 
-    let mut c = Client::new(ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });

@@ -7,14 +7,17 @@
 //! concurrent constructions cannot collide. The RSA block is encrypted
 //! before the wire, so the wrapper check pins the block builder
 //! (`write_login_block`) that `login` feeds to `rsaenc`, not the ciphertext.
-use client::client::{Client, ClientConfig};
+
+#[path = "common/isolation.rs"]
+mod isolation;
+use client::client::ClientConfig;
 use std::thread;
 
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     }
@@ -25,8 +28,8 @@ fn cfg() -> ClientConfig {
 /// the `AtomicU64` mix advances on every attempt).
 #[test]
 fn two_clients_get_distinct_login_uids() {
-    let a = Client::new(cfg());
-    let b = Client::new(cfg());
+    let a = isolation::IsolatedClient::with_default_config(cfg());
+    let b = isolation::IsolatedClient::with_default_config(cfg());
     assert_ne!(a.login_uid, 0);
     assert_ne!(a.login_uid, 1337);
     assert_ne!(a.login_uid, b.login_uid);
@@ -38,7 +41,7 @@ fn two_clients_get_distinct_login_uids() {
 #[test]
 fn concurrent_clients_get_distinct_login_uids() {
     let handles: Vec<_> = (0..16)
-        .map(|_| thread::spawn(|| Client::new(cfg()).login_uid))
+        .map(|_| thread::spawn(|| isolation::IsolatedClient::with_default_config(cfg()).login_uid))
         .collect();
     let uids: Vec<i32> = handles.into_iter().map(|h| h.join().unwrap()).collect();
     for uid in &uids {
@@ -60,7 +63,7 @@ fn concurrent_clients_get_distinct_login_uids() {
 /// so the uid occupies bytes 17..=20 of the unencrypted wrapper.
 #[test]
 fn login_uid_is_present_in_login_wrapper_bytes() {
-    let mut c = Client::new(cfg());
+    let mut c = isolation::IsolatedClient::with_default_config(cfg());
     c.login_uid = 0x5151_5253; // host may overwrite before login
     let seed = [0x0102_0304, 0x1112_1314, 0x2122_2324, 0x3132_3334];
     c.write_login_block(seed, "bob", "pw");

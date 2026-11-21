@@ -3,6 +3,9 @@
 //! Fixtures come from `crates/client/tests/fixtures/revision_289/manifest.json`
 //! (independently derived oracles). Production paths only — no parallel decoder.
 
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision};
 use client::config::{IfType, IfTypeMut};
 use client::io::{ClientStream, Isaac, Packet, ServerProt, ServerProt289};
@@ -641,15 +644,16 @@ fn login_production_outer_frame_and_isaac_r289() {
         s.write_all(&[2, 0, 0]).unwrap(); // response 2
     });
 
-    let mut c = Client::new_with_revision(
+    let mut c = isolation::IsolatedClient::with_config(
         ClientConfig {
-            host: addr.ip().to_string(),
-            port: addr.port(),
-            cache_dir: "/tmp".into(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
         ClientRevision::R289,
+        Some(addr),
     );
     c.jag_checksum = [1, 2, 3, 4, 5, 6, 7, 8, 9];
     c.login("bob", "pw", false).unwrap();
@@ -727,15 +731,16 @@ fn lifecycle_attached_neq_ingame_neq_scene_ready() {
         let (_sock, _) = listener.accept().unwrap();
         done_s.wait();
     });
-    let mut c = Client::new_with_revision(
+    let mut c = isolation::IsolatedClient::with_config(
         ClientConfig {
-            host: addr.ip().to_string(),
-            port: addr.port(),
-            cache_dir: "/tmp".into(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
         ClientRevision::R289,
+        Some(addr),
     );
     c.ingame = false;
     c.scene_state = 0;
@@ -1618,15 +1623,16 @@ fn login_response_2_vs_15_distinct_on_r289() {
         s2.write_all(&[15]).unwrap();
     });
 
-    let mut c = Client::new_with_revision(
+    let mut c = isolation::IsolatedClient::with_config(
         ClientConfig {
-            host: addr.ip().to_string(),
-            port: addr.port(),
-            cache_dir: "/tmp".into(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
         ClientRevision::R289,
+        Some(addr),
     );
     // Dirty prior session state — response 2 must clear
     c.npc_count = 3;

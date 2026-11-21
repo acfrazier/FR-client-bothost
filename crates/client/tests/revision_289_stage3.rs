@@ -4,6 +4,8 @@
 //! `method465` / `method160` / `method206` (openrs2-nonfree). Fixtures are
 //! offline and independently justified — not authentic live cache proof.
 
+#[path = "common/isolation.rs"]
+mod isolation;
 use client::client::{
     Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision, MiniMenuAction,
 };
@@ -26,21 +28,21 @@ fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     }
 }
 
-fn client_289() -> Client {
-    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+fn client_289() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(cfg(), ClientRevision::R289);
     c.ingame = true;
     c.ptype = -1;
     c
 }
 
-fn client_274() -> Client {
-    let mut c = Client::new(cfg());
+fn client_274() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_default_config(cfg());
     c.ingame = true;
     c.ptype = -1;
     c

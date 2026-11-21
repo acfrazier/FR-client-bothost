@@ -2501,11 +2501,11 @@ mod tests {
         use super::super::{ClientConfig, MiniMenuAction};
         use crate::io::ClientRevision;
 
-        let mut client = Client::new_with_revision(
+        let (mut client, _environment) = crate::client::test_support::isolated_client(
             ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: "/tmp".into(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             },
@@ -2539,11 +2539,11 @@ mod tests {
         use super::super::{ClientConfig, MiniMenuAction};
         use crate::io::ClientRevision;
 
-        let mut client = Client::new_with_revision(
+        let (mut client, _environment) = crate::client::test_support::isolated_client(
             ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: "/tmp".into(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             },

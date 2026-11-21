@@ -4,16 +4,19 @@
 //! (300-327) codes return `false` so the `IF_BUTTON` send is vetoed.
 //! Clicks reach `clientButton` through the `doAction` IF_BUTTON arm
 //! (TS 9144-9154), and the non-OK button arms never call it.
+
+#[path = "common/isolation.rs"]
+mod isolation;
 use client::client::{Client, ClientConfig, APPLET_H, APPLET_W};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::graphics::PixMap;
 use client::render::Renderer;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
+fn client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     })
