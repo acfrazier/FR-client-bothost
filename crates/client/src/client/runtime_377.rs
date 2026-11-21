@@ -1406,6 +1406,9 @@ impl Client {
     }
 
     fn move_actor_377(&mut self, npc: bool, id: usize, movement: &ActorMovement377) {
+        let local_player_teleport = !npc
+            && id == LOCAL_PLAYER_INDEX as usize
+            && matches!(movement, ActorMovement377::Teleport { plane: Some(_), .. });
         if let ActorMovement377::Teleport {
             plane: Some(plane), ..
         } = movement
@@ -1439,6 +1442,10 @@ impl Client {
             ActorMovement377::Offset { dx, dz, jump } => {
                 entity.teleport(cache, jump, local_x + dx, local_z + dz)
             }
+        }
+        if local_player_teleport {
+            self.local_player_teleport_watermark =
+                self.local_player_teleport_watermark.saturating_add(1);
         }
     }
 
@@ -1841,6 +1848,58 @@ mod tests {
 
     fn client() -> Client {
         client_with_cache(Cache::default())
+    }
+
+    #[test]
+    fn local_player_teleport_watermark_tracks_only_local_teleport_events() {
+        let mut client = client();
+        let local = LOCAL_PLAYER_INDEX as usize;
+
+        client.move_actor_377(
+            false,
+            local,
+            &ActorMovement377::Step {
+                first_direction: 0,
+                second_direction: None,
+            },
+        );
+        assert_eq!(client.local_player_teleport_watermark, 0);
+
+        client.move_actor_377(
+            false,
+            local,
+            &ActorMovement377::Offset {
+                dx: 1,
+                dz: 0,
+                jump: true,
+            },
+        );
+        assert_eq!(client.local_player_teleport_watermark, 0);
+
+        client.move_actor_377(
+            false,
+            local,
+            &ActorMovement377::Teleport {
+                plane: Some(0),
+                x: 1,
+                z: 0,
+                jump: true,
+            },
+        );
+        assert_eq!(client.local_player_teleport_watermark, 1);
+
+        client.players[0] = Some(Box::new(ClientPlayer::default()));
+        client.move_actor_377(
+            false,
+            0,
+            &ActorMovement377::Teleport {
+                plane: Some(1),
+                x: 2,
+                z: 0,
+                jump: true,
+            },
+        );
+        assert_eq!(client.local_player_teleport_watermark, 1);
     }
 
     #[test]

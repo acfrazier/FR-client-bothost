@@ -1647,6 +1647,9 @@ pub struct Client {
     /// after every applied packet so the host can tell which world slices
     /// changed since its last poll.
     pub gens: ClientGens,
+    /// Monotonic count of applied local-player `PLAYER_INFO` Teleport events.
+    /// The host uses it to fence measurements without inferring from tile distance.
+    pub local_player_teleport_watermark: u64,
     /// Generation watermark at the most recent successful login grant.
     /// A packet drain can straddle a reconnect, so its beginning/end alone
     /// cannot identify which decoded updates belong to the new connection.
@@ -2443,6 +2446,7 @@ impl Client {
             last_outbound: Instant::now(),
             error_loading: construction.error_loading,
             gens: ClientGens::default(),
+            local_player_teleport_watermark: 0,
             session_start_gens: ClientGens::default(),
             login_uid: login_uid(),
         };

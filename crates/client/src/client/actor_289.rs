@@ -494,6 +494,10 @@ impl ActorFrame {
                 Movement::Teleport { x, z, jump } => {
                     let cache = c.cache.clone();
                     actor(c, self.npc, index).teleport(&cache, jump, x, z);
+                    if !self.npc && index == LOCAL_PLAYER_INDEX as usize {
+                        c.local_player_teleport_watermark =
+                            c.local_player_teleport_watermark.saturating_add(1);
+                    }
                 }
             }
         }
@@ -758,5 +762,72 @@ mod fidelity_tests {
         appearance(&parts).apply(&mut player, &cache);
         appearance(&[u16::MAX]).apply(&mut player, &cache);
         assert_eq!(player.team, 0, "transmog must not read retained worn slots");
+    }
+    #[test]
+    fn local_player_teleport_watermark_tracks_applied_mode_three_only() {
+        let mut client = Client::new(crate::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            cache_dir: String::new(),
+            members: false,
+            lowmem: true,
+        });
+        client.local_player = Some(ClientPlayer::default());
+        let local = LOCAL_PLAYER_INDEX as usize;
+
+        ActorFrame {
+            npc: false,
+            plane: Some(0),
+            retained: vec![LOCAL_PLAYER_INDEX],
+            removed: Vec::new(),
+            movements: vec![(
+                local,
+                Movement::Teleport {
+                    x: 1,
+                    z: 0,
+                    jump: true,
+                },
+            )],
+            masks: Vec::new(),
+        }
+        .apply(&mut client);
+        assert_eq!(client.local_player_teleport_watermark, 1);
+
+        ActorFrame {
+            npc: false,
+            plane: None,
+            retained: vec![LOCAL_PLAYER_INDEX],
+            removed: Vec::new(),
+            movements: vec![(
+                local,
+                Movement::Step {
+                    run: true,
+                    first: 0,
+                    second: Some(0),
+                },
+            )],
+            masks: Vec::new(),
+        }
+        .apply(&mut client);
+        assert_eq!(client.local_player_teleport_watermark, 1);
+
+        client.players[0] = Some(Box::new(ClientPlayer::default()));
+        ActorFrame {
+            npc: false,
+            plane: None,
+            retained: vec![LOCAL_PLAYER_INDEX, 0],
+            removed: Vec::new(),
+            movements: vec![(
+                0,
+                Movement::Teleport {
+                    x: 2,
+                    z: 0,
+                    jump: true,
+                },
+            )],
+            masks: Vec::new(),
+        }
+        .apply(&mut client);
+        assert_eq!(client.local_player_teleport_watermark, 1);
     }
 }
