@@ -1,19 +1,16 @@
 // The `draw` CPU-save switch: `mainredraw` skips the whole frame render
 // when `draw` is false, independent of the window (`client-play` sets it
 // true after `WindowTarget::open`; headless bots on later 50-client hosts
-// keep it false). The /tmp cache has no packs, so `Client::new` falls back
-// to `Cache::default()` and never touches the network (see hud.rs).
-use client::client::{Client, ClientConfig};
-use client::render::Renderer;
+// keep it false). Each client has an empty private cache and a closed
+// loopback origin, so no machine-local cache or `/crc` can affect it.
+#[path = "common/isolation.rs"]
+mod isolation;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+use client::render::Renderer;
+use isolation::IsolatedClient;
+
+fn client() -> IsolatedClient {
+    IsolatedClient::new(client::client::ClientRevision::R274, None)
 }
 
 #[test]

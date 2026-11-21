@@ -14,7 +14,7 @@ use client::render::{RenderWorld, Renderer};
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
-use client::client::{Client, ClientBuild, ClientConfig};
+use client::client::{Client, ClientBuild, ClientConfig, ClientRevision};
 use client::config::{Cache, FloType, LocType};
 use client::dash3d::model::ModelProvider;
 use client::dash3d::{
@@ -22,6 +22,11 @@ use client::dash3d::{
 };
 use client::graphics::Colour;
 use client::io::{OnDemand, Packet};
+
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use isolation::IsolatedClient;
 
 // The model store and provider are process-wide. Serialize tests that replace
 // the provider so those mutations cannot race.
@@ -181,16 +186,10 @@ fn prefetch_locations_decodes_loc_id_loop() {
 
 // --- loadLocations / addLoc (TS 718-1137) ---
 
-/// A fresh client off the empty /tmp cache: no packs, so `Cache::default()`
-/// and zeroed `groundh`/`mapl`, like the hud tests.
-fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+/// This fixture owns an empty cache and uses a closed loopback origin, so
+/// construction cannot pick up host cache data or a running update server.
+fn client() -> IsolatedClient {
+    IsolatedClient::new(ClientRevision::R274, None)
 }
 
 /// gsmart byte layout (Packet.ts `gsmart`): values 1..127 are one byte,
@@ -199,6 +198,7 @@ fn client() -> Client {
 fn load_locations_empty_is_noop() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     let mut build = ClientBuild::new();
     // gsmart 0 ends the loc-id loop immediately
     build.load_locations(
@@ -228,6 +228,7 @@ fn load_locations_empty_is_noop() {
 fn load_locations_ground_decor_blocks_when_active() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         active: true,
         blockwalk: true,
@@ -261,6 +262,7 @@ fn load_locations_ground_decor_blocks_when_active() {
 fn load_locations_low_mem_skips_force_high_detail() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         active: true,
         blockwalk: true,
@@ -289,6 +291,7 @@ fn load_locations_low_mem_skips_force_high_detail() {
 fn load_locations_low_mem_skips_wrong_vis_below() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         active: true,
         blockwalk: true,
@@ -316,6 +319,7 @@ fn load_locations_low_mem_skips_wrong_vis_below() {
 fn load_locations_wall_blocks_collision_without_model() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         blockwalk: true,
         ..LocType::default()
@@ -344,6 +348,7 @@ fn load_locations_wall_blocks_collision_without_model() {
 fn load_locations_skips_out_of_area_tiles() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         blockwalk: true,
         ..LocType::default()
@@ -372,6 +377,7 @@ fn load_locations_skips_out_of_area_tiles() {
 fn load_locations_places_at_offset_tiles() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         blockwalk: true,
         ..LocType::default()
@@ -430,6 +436,7 @@ fn ground_src(tiles: &[(i32, i32, i32, &[u8])]) -> Vec<u8> {
 fn finish_build_sets_quick_ground_after_load_ground() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     c.set_draw(true);
     Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {
         chroma: 10,
@@ -482,6 +489,7 @@ fn finish_build_sets_quick_ground_after_load_ground() {
 fn unheaded_build_keeps_stamp_but_no_mesh_until_materialize() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     c.world.overlay_mesh = false;
     Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {
         chroma: 10,
@@ -556,6 +564,7 @@ fn unheaded_build_keeps_stamp_but_no_mesh_until_materialize() {
 #[test]
 fn dematerialize_overlay_rearms_share_light() {
     let mut c = client();
+    let c = &mut *c;
     c.world.share_light_pending = false;
     c.world.dematerialize_overlay();
     assert!(
@@ -570,6 +579,7 @@ fn dematerialize_overlay_rearms_share_light() {
 #[test]
 fn set_draw_true_enables_overlay_mesh_for_later_set_ground() {
     let mut c = client();
+    let c = &mut *c;
     c.set_draw(false);
     c.world.overlay_mesh = c.draw;
     assert!(!c.world.overlay_mesh);
@@ -680,6 +690,7 @@ fn finish_build_blocks_map_flag_block_tiles() {
     let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     c.mapl[0][2][2] = MapFlag::BLOCK as u8;
     let mut build = ClientBuild::new();
     build.finish_build(
@@ -698,6 +709,7 @@ fn finish_build_link_below_blocks_lower_level() {
     let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     // a level-1 Block with LinkBelow lands on level 0's collision grid
     // (TS 79-87: trueLevel = level - 1)
     c.mapl[1][2][2] = (MapFlag::BLOCK | MapFlag::LINK_BELOW) as u8;
@@ -719,6 +731,7 @@ fn finish_build_clamps_hue_and_lig_off() {
     let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     let mut build = ClientBuild::new();
     assert!(
         (-8..=8).contains(&build.hue_off),
@@ -757,6 +770,7 @@ fn finish_build_push_down_link_below() {
     let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     c.set_draw(true);
     c.world.fill_base_level(0);
     // a level-1 PLAIN tile at (2,2); LinkBelow pushes it down to level 0
@@ -803,6 +817,7 @@ fn finish_build_clears_flat_floor_occluder_bits() {
     let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     let mut build = ClientBuild::new();
     // a 1x5 flat-floor run (bit 0x4) at level 0: area 5 >= 4 so it becomes
     // a `setOcclude(level, 4, ...)` box and the bits are cleared (TS 472-496)
@@ -831,6 +846,7 @@ fn finish_build_hooks_share_light() {
     // The render-side pass consumes a model's point normals and lights its
     // vertices exactly as the old `finishBuild` hook did.
     let mut c = client();
+    let c = &mut *c;
     c.world.set_wall(0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
     let mut build = ClientBuild::new();
@@ -889,6 +905,7 @@ fn finish_build_clears_wall_occluder_bits() {
     let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     let mut build = ClientBuild::new();
     // an 8-tile wall0 run (bit 0x1) along z at level 0: area 8 >= 8 so it
     // becomes a `setOcclude(level, 1, ...)` box (TS 343-405)
@@ -913,6 +930,7 @@ fn finish_build_magenta_overlay_floor() {
     let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     c.set_draw(true);
     Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {
         colour: Colour::MAGENTA,
@@ -943,6 +961,7 @@ fn finish_build_magenta_overlay_floor() {
 fn finish_build_textured_overlay_uses_tex_average() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     c.set_draw(true);
     Arc::get_mut(&mut c.cache).unwrap().flos = vec![FloType {
         texture: 0,
@@ -1005,6 +1024,7 @@ fn load_tex_averages_fills_from_textures_jag() {
 fn ground_tile_visible_gates_force_high_detail_in_low_mem() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     // low-mem: a ForceHighDetail tile's ground is culled by the finishBuild
     // gate; high-mem ignores the flag (Java `(mapl[...] & 0x10) == 0`).
     c.mapl[0][2][2] = MapFlag::FORCE_HIGH_DETAIL as u8;
@@ -1026,6 +1046,7 @@ fn ground_tile_visible_requires_matching_vis_below_level() {
 fn fade_adjacent_level0_seam() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     c.groundh[0][64][5] = 100;
     c.groundh[0][65][5] = 50;
     c.groundh[0][5][64] = 100;
@@ -1044,6 +1065,7 @@ fn fade_adjacent_level0_seam() {
 fn scene_model_ids_protects_placed_loc_models() {
     let _r = Renderer::new(false);
     let mut c = client();
+    let c = &mut *c;
     let mut cache = Cache::default();
     cache.locs.push(LocType {
         model: Some(vec![42]),
@@ -1070,6 +1092,7 @@ fn scene_model_ids_protects_placed_loc_models() {
 #[test]
 fn scene_model_ids_protects_push_down_linked_walls() {
     let mut c = client();
+    let c = &mut *c;
     let mut cache = Cache::default();
     cache.locs.push(LocType {
         model: Some(vec![42]),
@@ -1107,6 +1130,7 @@ fn lowmem_does_not_unload_process_wide_models() {
         "fixture model must load before the unload hook"
     );
     let mut c = client();
+    let c = &mut *c;
     c.config.lowmem = true;
     c.unload_unused_lowmem_models();
     assert!(

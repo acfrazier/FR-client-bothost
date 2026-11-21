@@ -1,28 +1,21 @@
 //! `ClientGens` generation tests: per-family monotonic counters the host
 //! reads to know which world slices changed since its last poll.
 //! `handle_packet` bumps one family per applied packet; `REBUILD_NORMAL`
-//! and `logout()` (T1/T2/LOGOUT) bump every family. The /tmp cache has no
-//! packs, so `Client::new` falls back to `Cache::default()` and never
-//! touches the network.
+//! and `logout()` (T1/T2/LOGOUT) bump every family. Every constructed client
+//! uses its own empty cache and a closed loopback game/web endpoint.
+#[path = "common/isolation.rs"]
+mod isolation;
 
-use client::client::{Client, ClientConfig, ClientGens, ClientPlayer, ClientRevision};
+use isolation::IsolatedClient;
+
+use client::client::{ClientGens, ClientPlayer, ClientRevision};
 use client::io::{Packet, ServerProt, ServerProt289};
-
-fn cfg() -> ClientConfig {
-    ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    }
-}
 
 /// A `PLAYER_INFO` and an `UPDATE_INV_FULL` applied through `handle_packet`
 /// each bump exactly their own family; the others stay 0.
 #[test]
 fn applied_packets_bump_their_family() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
 
     // PLAYER_INFO teleport frame (as server_packets.rs): E0 50 C0 00.
     c.ingame = true;
@@ -60,7 +53,7 @@ fn applied_packets_bump_their_family() {
 
 #[test]
 fn inventory_packet_state_preserves_component_and_modal_order() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
 
     // A full packet can precede the modal open. The host compares the
     // component's packet observation with the preceding modal close.
@@ -114,7 +107,7 @@ fn inventory_packet_state_preserves_component_and_modal_order() {
 
 #[test]
 fn logout_clears_inventory_and_modal_packet_observations() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     let mut full = Packet::new(vec![0, 42, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
     let mut open = Packet::new(vec![0, 100]);
@@ -145,7 +138,7 @@ fn bit_packet(fields: &[(usize, u32)]) -> Vec<u8> {
 
 #[test]
 fn revision_289_player_info_publication_is_distinct_from_family_invalidation() {
-    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    let mut c = IsolatedClient::new(ClientRevision::R289, None);
     c.ingame = true;
     c.self_slot = 5;
     c.local_player = Some(ClientPlayer::at(10, 10));
@@ -182,7 +175,7 @@ fn revision_289_player_info_publication_is_distinct_from_family_invalidation() {
 
 #[test]
 fn failed_revision_289_player_info_does_not_publish_player_info() {
-    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    let mut c = IsolatedClient::new(ClientRevision::R289, None);
     c.ingame = true;
     c.local_player = Some(ClientPlayer::at(10, 10));
     c.players[2047] = Some(Box::new(ClientPlayer::at(10, 10)));
@@ -201,7 +194,7 @@ fn failed_revision_289_player_info_does_not_publish_player_info() {
 /// `bump_gens` maps a `ServerProt` opcode to exactly one family.
 #[test]
 fn npc_info_bumps_npc_gen_only() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     let before = c.gens;
     c.bump_gens(ServerProt::NPC_INFO);
     assert_eq!(c.gens.npc, before.npc + 1);
@@ -220,7 +213,7 @@ fn npc_info_bumps_npc_gen_only() {
 /// `bump_gens` maps interface mutation packets to the `iface` family.
 #[test]
 fn iface_packets_bump_iface_gen() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     let before = c.gens;
     c.bump_gens(ServerProt::IF_SETTEXT);
     assert_eq!(c.gens.iface, before.iface + 1);
@@ -239,7 +232,7 @@ fn iface_packets_bump_iface_gen() {
 /// `bump_gens` maps camera control packets to the `camera` family.
 #[test]
 fn camera_packets_bump_camera_gen() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     let before = c.gens;
     c.bump_gens(ServerProt::CAM_LOOKAT);
     assert_eq!(c.gens.camera, before.camera + 1);
@@ -258,7 +251,7 @@ fn camera_packets_bump_camera_gen() {
 /// `bump_gens` maps `UNSET_MAP_FLAG` to the `map_flag` family.
 #[test]
 fn map_flag_packets_bump_map_flag_gen() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     let before = c.gens;
     c.bump_gens(ServerProt::UNSET_MAP_FLAG);
     assert_eq!(c.gens.map_flag, before.map_flag + 1);
@@ -277,7 +270,7 @@ fn map_flag_packets_bump_map_flag_gen() {
 /// `bump_gens` maps world-level flag packets (`SET_MULTIWAY`) to the `world` family.
 #[test]
 fn world_packets_bump_world_gen() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     let before = c.gens;
     c.bump_gens(ServerProt::SET_MULTIWAY);
     assert_eq!(c.gens.world, before.world + 1);
@@ -296,7 +289,7 @@ fn world_packets_bump_world_gen() {
 /// `REBUILD_NORMAL` swaps the whole scene, so every family is stale.
 #[test]
 fn rebuild_bumps_all_gens() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     assert!(c.gens.npc >= 1 && c.gens.player >= 1 && c.gens.inv >= 1);
     assert!(c.gens.varp >= 1 && c.gens.stat >= 1 && c.gens.chat >= 1 && c.gens.scene >= 1);
@@ -311,7 +304,7 @@ fn rebuild_bumps_all_gens() {
 /// family generation (once — `logout()` is the bump, not a second `bump_gens`).
 #[test]
 fn logout_bumps_all_gens() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     let mut p = Packet::alloc(0);
     c.handle_packet(ServerProt::LOGOUT, &mut p);
     assert_eq!(c.gens.npc, 1);
@@ -331,7 +324,7 @@ fn logout_bumps_all_gens() {
 /// invalidates every family, matching spec `REBUILD/logout → all`.
 #[test]
 fn logout_method_bumps_all_gens() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     c.logout();
     assert_eq!(c.gens.npc, 1);
     assert_eq!(c.gens.player, 1);
@@ -352,7 +345,7 @@ fn logout_method_bumps_all_gens() {
 /// still moves every family so the host snapshot is not left live.
 #[test]
 fn t1_unknown_opcode_bumps_all_gens() {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     let mut p = Packet::alloc(0);
     c.handle_packet(1, &mut p);
     assert!(!c.ingame);
@@ -373,7 +366,7 @@ fn t1_unknown_opcode_bumps_all_gens() {
 /// `Default` (zeroed) and every counter a plain `u64`.
 #[test]
 fn gens_defaults_to_zero() {
-    let c = Client::new(cfg());
+    let c = IsolatedClient::new(ClientRevision::R274, None);
     let g: ClientGens = Default::default();
     assert_eq!(c.gens.npc, g.npc);
     assert_eq!(c.gens.scene, g.scene);
@@ -434,7 +427,7 @@ impl GensField {
 /// Fresh client, apply `ptype`, then assert exactly `family` is 1 and every
 /// other family is 0 (`Client::new` leaves all gens zero).
 fn check_bump(ptype: i32, family: GensField) {
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     c.bump_gens(ptype);
     for f in GensField::ALL {
         let expected = if f == family { 1 } else { 0 };
@@ -518,7 +511,7 @@ fn packet_to_family_mapping_is_exact() {
     }
 
     // REBUILD_NORMAL swaps the whole scene: every family advances by 1.
-    let mut c = Client::new(cfg());
+    let mut c = IsolatedClient::new(ClientRevision::R274, None);
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     for f in GensField::ALL {
         assert_eq!(f.get(&c.gens), 1, "REBUILD_NORMAL missed family {f:?}");

@@ -3,9 +3,14 @@
 //! `login(..., reconnect = true)` sends wrapper opcode **18** (server
 //! response **15** keeps state) so a channel-head tune swaps net+sim
 //! without a TCP drop. `from_shared` constructs over a shared `Arc<Cache>`
-//! and iface template without a second unpack or `/crc` probe. The /tmp
-//! cache has no packs, so `Client::new` never touches the network beyond
-//! the listener planted here.
+//! and iface template without an unpack or `/crc` probe. Ordinary clients in
+//! these tests use a private empty cache and closed HTTP port; login cases
+//! connect only to their explicit local test listeners.
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use isolation::IsolatedClient;
+
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -20,8 +25,8 @@ use client::io::{ClientStream, Packet};
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
+        port: 0,
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     }
@@ -299,7 +304,7 @@ fn adopt_reconnects_opcode_18_without_tcp_drop() {
         })
     };
 
-    let mut head = Client::new(cfg());
+    let mut head = IsolatedClient::new(ClientRevision::R274, None);
     head.config.host = addr.ip().to_string();
     head.config.port = addr.port();
     head.login("bob", "pw", false).unwrap();
@@ -339,8 +344,8 @@ fn adopt_reconnects_opcode_18_without_tcp_drop() {
 /// Adopting a `Client` with no live stream is refused without arming `baton`.
 #[test]
 fn adopt_without_live_stream_returns_typed_refusal() {
-    let mut a = Client::new(cfg());
-    let mut b = Client::new(cfg());
+    let mut a = IsolatedClient::new(ClientRevision::R274, None);
+    let mut b = IsolatedClient::new(ClientRevision::R274, None);
     assert_eq!(b.adopt_from(&mut a), Err(ClientAdoptionError::NoLiveStream));
     assert!(!b.baton);
     assert!(b.stream.is_none());
@@ -352,11 +357,11 @@ fn adoption_rejects_general_output_packets_without_state_loss() {
     let address = listener.local_addr().unwrap();
     for replace_target in [false, true] {
         for mut output in [Packet::new(vec![0; 100]), Packet::alloc(0)] {
-            let mut target = Client::new(cfg());
+            let mut target = IsolatedClient::new(ClientRevision::R274, None);
             target.ptype = 41;
             target.psize = 3;
             target.out.p1(0x5a);
-            let mut source = Client::new(cfg());
+            let mut source = IsolatedClient::new(ClientRevision::R274, None);
             source.stream =
                 Some(ClientStream::connect(&address.ip().to_string(), address.port()).unwrap());
             let (server, _) = listener.accept().unwrap();
@@ -396,10 +401,10 @@ fn adoption_rejects_general_output_packets_without_state_loss() {
 
 #[test]
 fn unbound_adoption_requires_matching_transport_and_admission() {
-    fn connected_client() -> (Client, std::net::TcpStream) {
+    fn connected_client() -> (IsolatedClient, std::net::TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
-        let mut client = Client::new(cfg());
+        let mut client = IsolatedClient::new(ClientRevision::R274, None);
         client.stream =
             Some(ClientStream::connect(&address.ip().to_string(), address.port()).unwrap());
         let (server, _) = listener.accept().unwrap();

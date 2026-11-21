@@ -1,20 +1,17 @@
 // Public chat is WordPacked on send and the own echo is sentence-cased
-// and filtered (Task 3). The /tmp cache has no packs, so `Client::new`
-// falls back to `Cache::default()` and never touches the network (the
-// /crc fetch on 127.0.0.1 is refused instantly).
-use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
+// and filtered (Task 3). Each client uses a private empty cache and closed
+// loopback origin, so local cache data cannot change chat tests.
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use client::client::{ClientNpc, ClientPlayer};
 use client::io::{ClientProt, Packet, ServerProt};
 use client::util::JString;
 use client::wordfilter::WordPack;
+use isolation::IsolatedClient;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+fn client() -> IsolatedClient {
+    IsolatedClient::new(client::client::ClientRevision::R274, None)
 }
 
 #[test]

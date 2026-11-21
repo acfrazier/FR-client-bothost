@@ -18,8 +18,12 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+#[path = "common/isolation.rs"]
+mod isolation;
 
-use client::client::{Client, ClientConfig, MiniMenuAction};
+use isolation::IsolatedClient;
+
+use client::client::{ClientRevision, MiniMenuAction};
 use client::config::LocType;
 use client::config::{IfType, IfTypeMut};
 use client::dash3d::store::ModelStore;
@@ -27,15 +31,6 @@ use client::dash3d::ClientEntity;
 use client::io::{Packet, ServerProt};
 use client::render::backend::GpuBackend;
 use client::render::Renderer;
-
-/// An empty cache dir (no pack): `Client::new` yields `Cache::default()`
-/// with `error_loading` false, like the other no-pack tests.
-fn cache_dir() -> String {
-    std::env::temp_dir()
-        .join(format!("274-headless-{}", std::process::id()))
-        .to_string_lossy()
-        .into_owned()
-}
 
 /// The 274 cold-login handshake (probe 14, 8 junk bytes, seed grant,
 /// loginout, response 2), then the socket stays open and the server drains
@@ -112,20 +107,16 @@ fn headless_client_core_runs_sim_without_renderer() {
     let (tx, rx) = mpsc::channel::<()>();
     let server = thread::spawn(move || stub_server(listener, rx));
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: cache_dir(),
-        members: true,
-        lowmem: false,
-    });
+    // Keep the game listener for login, but isolate the constructor's `/crc`.
+    let mut c = IsolatedClient::new(ClientRevision::R274, Some(addr));
     c.login("bot", "pw", false).unwrap();
     assert!(c.ingame);
     // a real local body for the movement pass and the walk read
-    let local = c.local_player.as_mut().unwrap();
+    let client = &mut *c;
+    let local = client.local_player.as_mut().unwrap();
     local.ready = true;
     local.entity = ClientEntity::at(10, 10);
-    local.entity.teleport(&c.cache, true, 10, 10);
+    local.entity.teleport(&client.cache, true, 10, 10);
 
     // Packet apply: REBUILD_NORMAL (zone 50,50) arms the scene build.
     let mut payload = Packet::alloc(0);

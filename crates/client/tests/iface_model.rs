@@ -1,11 +1,15 @@
 // TYPE_MODEL: `NpcType::get_head`, `ObjType::get_model_unlit`, and the
 // `draw_interface` TYPE_MODEL arm (`IfType::get_temp_model` + `objRender`).
-// The /tmp cache has no packs, so `Client::new` falls back to
-// `Cache::default()` and `Model::load` of a missing id is None.
+// The `hud_client` fixture owns an empty cache and closed web origin, so
+// missing model IDs remain missing independently of the host.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::config::npc_type::NpcType;
 use client::config::obj_type::ObjType;
 use client::dash3d::Model;
 use client::render::Renderer;
+use isolation::IsolatedClient;
 
 // Model metadata, decoded geometry, and the OnDemand provider are process-wide.
 // Serialize the tests that reset or replace them so those mutations cannot race.
@@ -145,14 +149,8 @@ fn npc_get_head_queues_every_missing_head_id() {
     );
 }
 
-fn hud_client() -> client::client::Client {
-    client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+fn hud_client() -> IsolatedClient {
+    IsolatedClient::new(client::client::ClientRevision::R274, None)
 }
 
 /// GPU `game_draw` with the mysterious-cube main modal (`macro_cube` 6554)

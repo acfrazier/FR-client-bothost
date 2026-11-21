@@ -1,9 +1,12 @@
 // CAM_* / HINT_ARROW / UPDATE_RUNWEIGHT / UPDATE_REBOOT_TIMER /
 // P_COUNTDIALOG / SET_MULTIWAY / MINIMAP_TOGGLE applies, the cinema camera
 // and the shake jitter, plus the dialog-amount keys, the click-crosshair
-// tick / walk consume / plot. The /tmp cache has no packs, so `Client::new`
-// falls back to `Cache::default()` and never touches the network (the /crc
-// fetch on 127.0.0.1 is refused instantly).
+// Default clients use an isolated empty cache and a closed loopback origin,
+// so tests cannot inherit host cache packs or update-server responses.
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use isolation::IsolatedClient;
 use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, ClientPlayer};
@@ -15,14 +18,8 @@ use client::render::Media;
 use client::render::Renderer;
 use client::util::JavaRandom;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+fn client() -> IsolatedClient {
+    IsolatedClient::new(client::client::ClientRevision::R274, None)
 }
 
 #[test]

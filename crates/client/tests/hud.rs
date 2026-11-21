@@ -1,9 +1,12 @@
 // IF_SETICON / IF_SHOWICON / IF_OPENSIDE / IF_CLOSE handlers and the
 // side-tab state they drive (side_icon / active_icon / side_modal_id /
 // chat_modal_id), plus `draw_interface` drawing the active tab's interface
-// into `area_side`. The /tmp cache has no packs, so `Client::new` falls back
-// to `Cache::default()` and never touches the network (the /crc fetch on
-// 127.0.0.1 is refused instantly).
+// Default clients use an isolated empty cache and a closed loopback origin,
+// so tests cannot inherit local interface packs or engine checksum data.
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use isolation::IsolatedClient;
 use std::sync::Arc;
 
 use client::client::{CheatAdmission, CheatRefusal, CheatSend, Client, ClientConfig, ClientPlayer};
@@ -14,14 +17,8 @@ use client::io::{ClientProt, JagFile, Packet};
 use client::render::Renderer;
 use client::wordfilter::WordPack;
 
-fn client() -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
+fn client() -> IsolatedClient {
+    IsolatedClient::new(client::client::ClientRevision::R274, None)
 }
 
 #[test]
@@ -1874,16 +1871,7 @@ fn animate_interface_recurses_into_each_revisions_java_child_type() {
         ClientRevision::R377,
     ] {
         for nested_type in [ComponentType::TYPE_LAYER, ComponentType::TYPE_UNUSED] {
-            let mut c = Client::new_with_revision(
-                ClientConfig {
-                    host: "127.0.0.1".into(),
-                    port: 43594,
-                    cache_dir: "/tmp".into(),
-                    members: true,
-                    lowmem: false,
-                },
-                revision,
-            );
+            let mut c = IsolatedClient::new(revision, None);
             c.set_iface(
                 1,
                 IfType {

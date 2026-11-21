@@ -1,12 +1,15 @@
 // Minimenu chrome: `open_menu` clamps the menu into the panel holding the
 // click (0 viewport, 1 side, 2 chat) and sizes it to the widest option.
 // World picks: `add_world_options` fills the menu from `pix3d` picks.
-// The /tmp cache has no packs, so `Client::new` falls back to
-// `Cache::default()` and never touches the network (the /crc fetch on
-// 127.0.0.1 is refused instantly).
+// Every fixture owns an empty cache and uses a closed loopback origin, so
+// initialization cannot observe machine-local cache data or an engine `/crc`.
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use isolation::IsolatedClient;
 use std::sync::Arc;
 
-use client::client::{Client, ClientConfig, ClientRevision, MiniMenuAction};
+use client::client::{Client, ClientRevision, MiniMenuAction};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{Cache, LocType, NpcType, ObjType};
 use client::dash3d::{ClientEntity, ClientNpc, ClientObj, ClientPlayer};
@@ -14,34 +17,16 @@ use client::datastruct::LinkList;
 use client::io::{synthetic_jag, JagFile};
 use client::render::Renderer;
 
-fn client() -> Client {
+fn client() -> IsolatedClient {
     client_with_revision(ClientRevision::R274)
 }
 
-fn client_with_revision(revision: ClientRevision) -> Client {
-    Client::new_with_revision(
-        ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: false,
-        },
-        revision,
-    )
+fn client_with_revision(revision: ClientRevision) -> IsolatedClient {
+    IsolatedClient::new(revision, None)
 }
 
-fn client_for(revision: ClientRevision) -> Client {
-    Client::new_with_revision(
-        ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: false,
-        },
-        revision,
-    )
+fn client_for(revision: ClientRevision) -> IsolatedClient {
+    client_with_revision(revision)
 }
 
 fn multiloc_cache() -> Cache {
@@ -1101,7 +1086,8 @@ fn left_click_on_open_menu_row_fires_option_and_closes() {
     assert!(c.is_menu_open);
     // row 1 band: option_y = menu_y + 31, click within option_y - 13 .. + 3
     // (menu_y + 23 lands at shifted click_y menu_y + 19, inside the band)
-    c.shell.apply_mouse_down(1, 100, c.menu_y + 23);
+    let click_y = c.menu_y + 23;
+    c.shell.apply_mouse_down(1, 100, click_y);
     c.shell.latch_click();
     c.mouse_loop();
     assert!(!c.is_menu_open);
