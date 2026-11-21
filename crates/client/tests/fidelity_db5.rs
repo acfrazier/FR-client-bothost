@@ -1,21 +1,21 @@
 //! DB5: Java 289 client.java:4733-4818 supplies welcome and mute-option text.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::{IfType, IfTypeMut};
 use client::io::{Packet, ServerProt289};
 
-fn client() -> Client {
+fn client() -> isolation::IsolatedClient {
     client_with_revision(ClientRevision::R289)
 }
 
-fn client_with_revision(revision: ClientRevision) -> Client {
-    let mut c = Client::new_with_revision(
+fn client_with_revision(revision: ClientRevision) -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: std::env::temp_dir()
-                .join(format!("fidelity-dispatch-{}", std::process::id()))
-                .display()
-                .to_string(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },

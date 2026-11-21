@@ -9,6 +9,9 @@
 // The GPU check needs an adapter and skips without one. This binary owns the
 // textured-mesh colour-table brightness, so it pins
 // `Pix3D::init_colour_table(0.6)` itself.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::config::Cache;
 use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
@@ -360,7 +363,7 @@ fn animated_wall_model() -> client::dash3d::Model {
 fn animated_frame(
     backend: GpuBackend,
     cache_dir: &std::path::Path,
-) -> (Renderer, client::client::Client) {
+) -> (Renderer, isolation::IsolatedClient) {
     let mut renderer = Renderer::with_backend(Box::new(backend), false);
     Pix3D::init_colour_table(0.6);
     let mut client = client(cache_dir);
@@ -1651,14 +1654,18 @@ fn gpu_texture_17_shared_assets_isolate_phase_across_backends() {
 /// A client with an empty cache (the GPU fixture frames need only the
 /// world/camera; no media sprites/fonts/textures load, so the menu
 /// position and the fixture textures stay deterministic).
-fn client(cache_dir: &std::path::Path) -> client::client::Client {
-    client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache_dir.to_string_lossy().into_owned(),
-        members: true,
-        lowmem: false,
-    })
+fn client(cache_dir: &std::path::Path) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_config_preserving_cache(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache_dir.to_string_lossy().into_owned(),
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    )
 }
 
 /// The `GpuVertex` layout stays `bytemuck`-clean for the raw upload (the

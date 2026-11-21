@@ -1,4 +1,7 @@
 //! Revision 377 entity-hint sprites differ from the legacy media indices.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use std::sync::{Arc, Mutex};
 
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision, MiniMenuAction};
@@ -201,15 +204,12 @@ const JAVA_BANNER_BBOXES: [[i32; 4]; 5] = [
     [32, 234, 465, 319],
 ];
 
-fn client(revision: ClientRevision) -> Client {
-    let mut c = Client::new_with_revision(
+fn client(revision: ClientRevision) -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43595,
-            cache_dir: std::env::temp_dir()
-                .join(format!("r377-render-hints-{}", std::process::id()))
-                .to_string_lossy()
-                .into_owned(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: true,
         },

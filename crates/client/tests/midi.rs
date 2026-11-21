@@ -98,13 +98,17 @@ fn client_new_unpacks_sounds_jag() {
         eprintln!("SKIP client_new_unpacks_sounds_jag: local engine sounds pack is missing");
         return;
     }
-    let c = client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let c = isolation::IsolatedClient::with_config_preserving_cache(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache,
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    );
     assert!(
         c.jagfx.synth.iter().any(|s| s.is_some()),
         "sounds.dat must populate JagFX"

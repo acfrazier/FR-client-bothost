@@ -1,23 +1,11 @@
 //! Minimal independent fixtures from RuneWiki/openrs2-nonfree 289 pin
 //! 0c00ef249546fada67b1f6eb8bbe01ea7c250c95, client.java method149
 //! (6794-7050), full-follows2755-2773 and rebuild2999-3125. No captures.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
 use client::io::Packet;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn empty_cache_dir() -> String {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    std::env::temp_dir()
-        .join(format!(
-            "r289-zones-empty-cache-{}-{stamp}",
-            std::process::id()
-        ))
-        .display()
-        .to_string()
-}
 
 fn zone(c: &mut Client, enclosed: bool, id: u8, bytes: &[u8]) {
     let p = if enclosed {
@@ -152,16 +140,16 @@ fn objects_direct_and_enclosed_receiver_count_mask_and_pile() {
     }
 }
 
-fn client() -> Client {
+fn client() -> isolation::IsolatedClient {
     client_with_revision(ClientRevision::R289)
 }
 
-fn client_with_revision(revision: ClientRevision) -> Client {
-    let mut c = Client::new_with_revision(
+fn client_with_revision(revision: ClientRevision) -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: empty_cache_dir(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },

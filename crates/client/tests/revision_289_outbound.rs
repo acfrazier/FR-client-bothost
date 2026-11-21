@@ -1,29 +1,23 @@
 //! H fixtures independently chosen from public primary 289 client.java.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::client::SessionExitReason;
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::IfType;
 use client::io::{ClientStream, Packet, ServerProt289};
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 include!("fixtures/revision_289/outbound_lengths.rs");
 
-fn client(revision: ClientRevision) -> Client {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let mut c = Client::new_with_revision(
+fn client(revision: ClientRevision) -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: std::env::temp_dir()
-                .join(format!(
-                    "289-h-{}-{}",
-                    std::process::id(),
-                    NEXT.fetch_add(1, Ordering::Relaxed)
-                ))
-                .to_string_lossy()
-                .into_owned(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },

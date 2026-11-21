@@ -34,13 +34,11 @@ fn frame(backend: &mut GpuBackend, core: &mut Client, r: &mut Renderer) -> Vec<i
 fn npc_hint_production_gpu_blink_move_clear_cache_and_freeze() {
     let mut backend = GpuBackend::try_new().expect("GPU required for overlay proof");
     let mut r = Renderer::new(false);
-    let cache = std::env::temp_dir().join(format!("npc-hint-no-cache-{}", std::process::id()));
-    assert!(!cache.exists(), "fixture must not use an incidental cache");
-    let mut core = Client::new_with_revision(
+    let mut core = crate::client::test_support::isolated_client_handle(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: cache.display().to_string(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
@@ -250,16 +248,16 @@ fn nav_overlay_bypasses_cpu_surface_and_coverage() {
     let mut backend = GpuBackend::try_new().expect("GPU required for nav overlay proof");
     let mut renderer = Renderer::new(false);
     renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
-    let mut core = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: std::env::temp_dir()
-            .join(format!("nav-overlay-no-cache-{}", std::process::id()))
-            .display()
-            .to_string(),
-        members: true,
-        lowmem: false,
-    });
+    let mut core = crate::client::test_support::isolated_client_handle(
+        ClientConfig {
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R274,
+    );
     core.cam_x = 0;
     core.cam_y = -500;
     core.cam_z = 0;
@@ -434,16 +432,16 @@ fn nav_overlay_matches_pix2d_reference() {
     let mut media = crate::render::media::Media::empty();
     media.b12 = Some(font);
     r.media = std::sync::Arc::new(media);
-    let mut core = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: std::env::temp_dir()
-            .join(format!("nav-parity-no-cache-{}", std::process::id()))
-            .display()
-            .to_string(),
-        members: true,
-        lowmem: false,
-    });
+    let mut core = crate::client::test_support::isolated_client_handle(
+        ClientConfig {
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R274,
+    );
     core.scene_state = 2;
     let mut collision = Vec::new();
     for lz in 2..20 {

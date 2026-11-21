@@ -1,4 +1,7 @@
 //! Synthetic bytes from the original Java Packet/Isaac, not a Rust encoder.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::Cache;
 use client::io::{ClientStream, Isaac, Packet};
@@ -24,16 +27,17 @@ fn hex(text: &str) -> Vec<u8> {
         .collect()
 }
 
-fn client(revision: ClientRevision, port: u16) -> Client {
-    Client::new_with_revision(
+fn client(revision: ClientRevision, port: u16) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_config(
         ClientConfig {
-            host: Ipv4Addr::LOCALHOST.to_string(),
-            port,
-            cache_dir: env!("CARGO_MANIFEST_DIR").into(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
         revision,
+        (port != 0).then(|| (Ipv4Addr::LOCALHOST, port).into()),
     )
 }
 

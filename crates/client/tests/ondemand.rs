@@ -13,6 +13,9 @@ use std::time::{Duration, Instant};
 
 use client::dash3d::Model;
 use client::io::{JagFile, OnDemand};
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::IsolatedEnvironment;
 
 // Resetting and snapshot-loading models mutate the same process-wide stores.
 // Match the isolation used by the interface-model integration fixtures.
@@ -66,29 +69,35 @@ fn tiny_versionlist() -> JagFile {
     JagFile::new(jag(&entries))
 }
 
+fn new_ondemand(versionlist: &JagFile, cache_dir: &str, port: u16) -> OnDemand {
+    OnDemand::new(
+        versionlist,
+        "127.0.0.1",
+        port,
+        cache_dir,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("test versionlist has required OnDemand tables")
+}
+
+fn isolated_ondemand(
+    environment: &IsolatedEnvironment,
+    versionlist: &JagFile,
+    port: u16,
+) -> OnDemand {
+    let cache_dir = environment.cache_dir();
+    new_ondemand(versionlist, &cache_dir, port)
+}
+
 #[test]
 fn two_handles_share_one_worker_on_the_same_port() {
     let _r = Renderer::new(false);
     let versionlist = tiny_versionlist();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
+    let environment = IsolatedEnvironment::new(None);
+    let port = environment.http_port();
     let host = "127.0.0.1";
-    let od1 = OnDemand::new(
-        &versionlist,
-        host,
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
-    let od2 = OnDemand::new(
-        &versionlist,
-        host,
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let od1 = isolated_ondemand(&environment, &versionlist, port);
+    let od2 = isolated_ondemand(&environment, &versionlist, port);
     assert_eq!(OnDemand::live_workers_for(host, port), 1);
     drop(od1);
     assert_eq!(
@@ -110,6 +119,7 @@ fn sibling_does_not_complete_a_file_it_did_not_request() {
     use std::net::TcpListener;
 
     let versionlist = tiny_versionlist();
+    let environment = IsolatedEnvironment::new(None);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let payload: &'static [u8] = b"midi bytes";
@@ -128,22 +138,8 @@ fn sibling_does_not_complete_a_file_it_did_not_request() {
         sock.write_all(&chunk).unwrap();
     });
 
-    let mut asked = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
-    let mut idle = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let mut asked = isolated_ondemand(&environment, &versionlist, port);
+    let mut idle = isolated_ondemand(&environment, &versionlist, port);
     asked.request(2, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut got_asked = false;
@@ -180,6 +176,7 @@ fn provider_model_request_completes_without_ondemand_request() {
 
     Model::reset_for_tests();
     let versionlist = tiny_versionlist();
+    let environment = IsolatedEnvironment::new(None);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let payload: &'static [u8] = b"model bytes";
@@ -199,14 +196,7 @@ fn provider_model_request_completes_without_ondemand_request() {
         sock.write_all(&chunk).unwrap();
     });
 
-    let mut od = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let mut od = isolated_ondemand(&environment, &versionlist, port);
     Model::init(1, od.model_provider().expect("wired worker"));
     assert!(
         !Model::request_download(0),
@@ -238,25 +228,11 @@ fn provider_model_request_completes_without_ondemand_request() {
 fn hub_ingame_is_or_of_live_handles() {
     let _r = Renderer::new(false);
     let versionlist = tiny_versionlist();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
+    let environment = IsolatedEnvironment::new(None);
+    let port = environment.http_port();
     let host = "127.0.0.1";
-    let mut title = OnDemand::new(
-        &versionlist,
-        host,
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
-    let mut game = OnDemand::new(
-        &versionlist,
-        host,
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let mut title = isolated_ondemand(&environment, &versionlist, port);
+    let mut game = isolated_ondemand(&environment, &versionlist, port);
     title.run(false);
     game.run(true);
     assert!(
@@ -286,6 +262,7 @@ fn two_handles_dedupe_the_same_request_on_the_wire() {
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     let versionlist = tiny_versionlist();
+    let environment = IsolatedEnvironment::new(None);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let accepts = Arc::new(AtomicUsize::new(0));
@@ -324,22 +301,8 @@ fn two_handles_dedupe_the_same_request_on_the_wire() {
         assert!(served, "ondemand worker never connected");
     });
 
-    let mut od1 = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
-    let mut od2 = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let mut od1 = isolated_ondemand(&environment, &versionlist, port);
+    let mut od2 = isolated_ondemand(&environment, &versionlist, port);
     od1.request(2, 0);
     od2.request(2, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -377,6 +340,7 @@ fn drop_socket_on_one_handle_does_not_kill_the_hub() {
     use std::net::TcpListener;
 
     let versionlist = tiny_versionlist();
+    let environment = IsolatedEnvironment::new(None);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let payload: &'static [u8] = b"midi bytes";
@@ -404,22 +368,8 @@ fn drop_socket_on_one_handle_does_not_kill_the_hub() {
         }
     });
 
-    let od1 = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
-    let mut od2 = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let od1 = isolated_ondemand(&environment, &versionlist, port);
+    let mut od2 = isolated_ondemand(&environment, &versionlist, port);
     od1.drop_socket();
     od2.request(2, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -445,7 +395,6 @@ fn drop_socket_on_one_handle_does_not_kill_the_hub() {
 #[test]
 fn request_all_models_requests_every_model() {
     let _r = Renderer::new(false);
-    use std::net::TcpListener;
 
     // 3 models; only model 0 carries the "in-use" bit.
     let files: Vec<(&str, Vec<u8>)> = vec![
@@ -462,17 +411,16 @@ fn request_all_models_requests_every_model() {
     let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
     let versionlist = JagFile::new(jag(&entries));
 
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
+    let environment = IsolatedEnvironment::new(None);
+    let port = environment.http_port();
 
-    let mut in_use = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    // This test checks request selection, not the wire protocol. Stop the
+    // worker before queuing requests so scheduling cannot start a handshake.
+    let mut in_use = isolated_ondemand(&environment, &versionlist, port);
+    let mut all = isolated_ondemand(&environment, &versionlist, port);
+    in_use.stop();
+    all.stop();
+
     in_use.request_in_use_models();
     assert_eq!(
         in_use.remaining(),
@@ -480,14 +428,6 @@ fn request_all_models_requests_every_model() {
         "in-use prefetch requests only the flagged model"
     );
 
-    let mut all = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
     all.request_all_models();
     assert_eq!(all.remaining(), 3, "boot prefetch must request every model");
 }
@@ -499,20 +439,14 @@ fn request_all_models_requests_every_model() {
 fn unpack_models_from_cache_makes_a_random_event_model_loadable() {
     let _model_store = lock_model_store();
     let _r = Renderer::new(false);
+    let environment = IsolatedEnvironment::new(None);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/versionlist")).is_file() {
         eprintln!("SKIP unpack_models_from_cache_makes_a_random_event_model_loadable: local engine versionlist is missing");
         return;
     }
     let versionlist = JagFile::new(std::fs::read(format!("{cache}/versionlist")).unwrap());
-    let od = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        1,
-        &cache,
-        Arc::new(AtomicBool::new(false)),
-    )
-    .expect("engine versionlist");
+    let od = new_ondemand(&versionlist, &cache, environment.http_port());
 
     let unpacked = od.unpack_models_from_cache(&cache);
     assert!(unpacked > 0, "the local cache must hold models");
@@ -546,6 +480,7 @@ fn worker_downloads_and_gunzips_from_ondemand_socket() {
     ];
     let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
     let versionlist = JagFile::new(jag(&entries));
+    let environment = IsolatedEnvironment::new(None);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -570,14 +505,7 @@ fn worker_downloads_and_gunzips_from_ondemand_socket() {
         sock.write_all(&chunk).unwrap();
     });
 
-    let mut od = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let mut od = isolated_ondemand(&environment, &versionlist, port);
     od.request(2, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
     let got = loop {
@@ -617,6 +545,7 @@ fn worker_reopens_socket_immediately_after_drop_socket() {
     ];
     let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
     let versionlist = JagFile::new(jag(&entries));
+    let environment = IsolatedEnvironment::new(None);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -642,14 +571,7 @@ fn worker_reopens_socket_immediately_after_drop_socket() {
         }
     });
 
-    let mut od = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        "/tmp",
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let mut od = isolated_ondemand(&environment, &versionlist, port);
 
     // One full download cycle, polling the OnDemand pump like the client
     // main loop; `None` when the deadline passes without a completion.
@@ -706,11 +628,10 @@ fn prefetched_archive0_model_posts_to_completed() {
     ];
     let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
     let versionlist = JagFile::new(jag(&entries));
+    let environment = IsolatedEnvironment::new(None);
 
     // `prefetch_priority` only engages when a local cache exists.
-    let cache_dir = std::env::temp_dir().join("274bot-t12").join("cache");
-    let _ = std::fs::remove_dir_all(cache_dir.parent().unwrap());
-    std::fs::create_dir_all(&cache_dir).unwrap();
+    let cache_dir = std::path::PathBuf::from(environment.cache_dir());
     std::fs::write(cache_dir.join("main_file_cache.dat"), b"").unwrap();
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -736,14 +657,7 @@ fn prefetched_archive0_model_posts_to_completed() {
         sock.write_all(&chunk).unwrap();
     });
 
-    let mut od = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        port,
-        cache_dir.to_str().unwrap(),
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
+    let mut od = isolated_ondemand(&environment, &versionlist, port);
     od.prefetch_priority(0, 1, 5);
     let deadline = Instant::now() + Duration::from_secs(5);
     let got = loop {
@@ -767,6 +681,7 @@ fn prefetched_archive0_model_posts_to_completed() {
 #[test]
 fn bar_urgent_models_are_in_use_bit_only() {
     let _r = Renderer::new(false);
+    let environment = IsolatedEnvironment::new(None);
     let cache = client::cache_dir().display().to_string();
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
@@ -776,14 +691,7 @@ fn bar_urgent_models_are_in_use_bit_only() {
         return;
     }
     let versionlist = JagFile::new(std::fs::read(&path).unwrap());
-    let mut od = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        1,
-        &cache,
-        Arc::new(AtomicBool::new(false)),
-    )
-    .expect("engine versionlist");
+    let mut od = new_ondemand(&versionlist, &cache, environment.http_port());
     od.request_in_use_models();
     let bar = od.remaining();
     let prefetchable = (0..od.get_file_count(0))
@@ -810,6 +718,7 @@ fn bar_urgent_models_are_in_use_bit_only() {
 #[test]
 fn prefetch_cache_hit_posts_extra_model_for_unpack() {
     let _r = Renderer::new(false);
+    let environment = IsolatedEnvironment::new(None);
     let cache = client::cache_dir().display().to_string();
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
@@ -817,14 +726,7 @@ fn prefetch_cache_hit_posts_extra_model_for_unpack() {
         return;
     }
     let versionlist = JagFile::new(std::fs::read(&path).unwrap());
-    let mut od = OnDemand::new(
-        &versionlist,
-        "127.0.0.1",
-        1,
-        &cache,
-        Arc::new(AtomicBool::new(false)),
-    )
-    .expect("engine versionlist");
+    let mut od = new_ondemand(&versionlist, &cache, environment.http_port());
     let extra = (0..od.get_file_count(0)).find(|&i| {
         let bits = od.get_model_use(i);
         bits & 1 == 0 && OnDemand::model_use_priority(bits) != 0

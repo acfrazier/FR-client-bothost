@@ -9,7 +9,7 @@ mod isolation;
 use isolation::IsolatedClient;
 use std::sync::Arc;
 
-use client::client::{Client, ClientConfig, ClientPlayer};
+use client::client::{ClientConfig, ClientPlayer};
 use client::config::idk_type::IdkType;
 use client::config::if_type::{IfType, IfTypeMut};
 use client::graphics::{Pix32, Pix3D};
@@ -20,6 +20,19 @@ use client::util::JavaRandom;
 
 fn client() -> IsolatedClient {
     IsolatedClient::new(client::client::ClientRevision::R274, None)
+}
+fn client_with_cache(cache_dir: String) -> IsolatedClient {
+    IsolatedClient::with_config_preserving_cache(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir,
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    )
 }
 
 #[test]
@@ -513,13 +526,7 @@ fn prepare_game_loads_cross_sprites() {
         eprintln!("SKIP prepare_game_loads_cross_sprites: local media pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     c.scene_state = 2;
     r.game_draw(&mut c);
@@ -546,13 +553,7 @@ fn cross_plot_mode1_into_area_game() {
         eprintln!("SKIP cross_plot_mode1_into_area_game: local media pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     c.scene_state = 2; // game_draw_main (and its overlays) run only in-scene
     r.game_draw(&mut c); // prepare_game loads the media sprites
@@ -582,13 +583,7 @@ fn cross_plot_mode2_uses_second_half() {
         eprintln!("SKIP cross_plot_mode2_uses_second_half: local media pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     c.scene_state = 2;
     r.game_draw(&mut c);
@@ -864,24 +859,12 @@ fn cold_login_reset_revalidates_design() {
 #[test]
 fn cold_login_reset_empty_table_leaves_parts_minus_one() {
     let _r = Renderer::new(false);
-    // Isolate from an ambient /tmp idk pack: a fresh empty cache dir keeps
-    // the "no idks" premise literal.
-    let dir = std::env::temp_dir().join(format!("274-noidk-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: dir.to_string_lossy().into_owned(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client();
     c.idk_design_part = [2; 7];
     c.reset_idk_design(); // empty cache: no idks
     assert!(c.idk_design_gender);
     assert!(c.idk_design_redraw);
     assert_eq!(c.idk_design_part, [-1; 7]);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Java `REBUILD_NORMAL` binds `areaGame` without cls, then plots

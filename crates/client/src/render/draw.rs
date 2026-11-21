@@ -4737,16 +4737,17 @@ mod texture_anim_tests {
             .collect()
     }
 
-    fn client(world_update_num: i32) -> Client {
-        let cache_dir =
-            std::env::temp_dir().join(format!("r274-texture-run-anims-{}", std::process::id()));
-        let mut client = Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: cache_dir.to_string_lossy().into_owned(),
-            members: true,
-            lowmem: false,
-        });
+    fn client(world_update_num: i32) -> crate::client::test_support::IsolatedClient {
+        let mut client = crate::client::test_support::isolated_client_handle(
+            ClientConfig {
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: false,
+            },
+            crate::io::ClientRevision::R274,
+        );
         client.world_update_num = world_update_num;
         client
     }

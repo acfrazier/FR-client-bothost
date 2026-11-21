@@ -15,34 +15,20 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-fn empty_cache_dir() -> String {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    std::env::temp_dir()
-        .join(format!(
-            "r289-stage2-empty-cache-{}-{stamp}",
-            std::process::id()
-        ))
-        .display()
-        .to_string()
-}
+use std::time::Duration;
 
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: empty_cache_dir(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     }
 }
 
-fn client_289() -> Client {
-    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+fn client_289() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(cfg(), ClientRevision::R289);
     c.ingame = true;
     c.ptype = -1;
     c
@@ -706,7 +692,7 @@ fn login_production_outer_frame_and_isaac_r289() {
 
 #[test]
 fn login_wrapper_p2_revision_274_default() {
-    let c = Client::new(cfg());
+    let c = isolation::IsolatedClient::with_default_config(cfg());
     assert_eq!(c.revision(), ClientRevision::R274);
     let mut loginout = Packet::alloc(1);
     loginout.p1(16);
@@ -781,7 +767,7 @@ fn lifecycle_attached_neq_ingame_neq_scene_ready() {
         "PASS (c): scene_ready is scene_state==2 (check_scene success path)"
     );
     // Prove attach alone never sets it:
-    let cold = Client::new_with_revision(cfg(), ClientRevision::R289);
+    let cold = isolation::IsolatedClient::with_revision(cfg(), ClientRevision::R289);
     assert!(
         !cold.ingame && cold.scene_state != 2 && cold.stream.is_none(),
         "PASS (c): fresh client is neither attached, ingame, nor scene_ready"
@@ -1711,7 +1697,7 @@ fn untraced_opcode_still_fail_closed() {
 #[test]
 fn r274_path_untouched_by_289_opcodes() {
     // Default 274 client must still use ServerProt tables, not 289 ids.
-    let mut c = Client::new(cfg());
+    let mut c = isolation::IsolatedClient::with_default_config(cfg());
     c.ingame = true;
     c.ptype = -1;
     // 289 LOGOUT id 121 is not 274 LOGOUT (88) — must T1 on 274.
@@ -2009,7 +1995,7 @@ fn cleanup_f_tutorial_message_state_is_independent_of_interface_transitions() {
 #[test]
 fn cleanup_f_tutorial_274_acknowledges_message_and_preserves_right_click_menu() {
     for button in [1, 2] {
-        let mut c = Client::new(cfg());
+        let mut c = isolation::IsolatedClient::with_default_config(cfg());
         c.ingame = true;
         c.tut_com_id = 123;
         tutorial_input_widget(&mut c);

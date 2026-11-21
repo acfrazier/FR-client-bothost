@@ -1272,12 +1272,14 @@ mod tests {
     use crate::dash3d::LocShape;
     use crate::io::{ClientProt, ClientRevision};
 
-    fn client_with_revision(revision: ClientRevision) -> Client {
-        Client::new_with_revision(
+    fn client_with_revision(
+        revision: ClientRevision,
+    ) -> crate::client::test_support::IsolatedClient {
+        crate::client::test_support::isolated_client_handle(
             ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: ".r377-test-cache".into(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             },
@@ -1306,7 +1308,7 @@ mod tests {
         b: i32,
         c: i32,
         prepare: impl FnOnce(&mut Client),
-    ) -> Client {
+    ) -> crate::client::test_support::IsolatedClient {
         let mut client = client_with_revision(ClientRevision::R377);
         prepare(&mut client);
         set_menu_action(&mut client, action, a, b, c);

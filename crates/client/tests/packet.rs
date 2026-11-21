@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::io::{ClientProt289, Isaac, Packet, PacketObserver, ServerProt289};
 use num_bigint::BigUint;
 use std::str::FromStr;
@@ -45,11 +48,11 @@ impl PacketObserver for RecordingObserver {
             .push(ObserverEvent::Tick(tick, session));
     }
 }
-fn packet_role_test_client() -> client::client::Client {
-    client::client::Client::new_with_revision(
+fn packet_role_test_client() -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_revision(
         client::client::ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
+            host: String::new(),
+            port: 0,
             cache_dir: String::new(),
             members: true,
             lowmem: true,
@@ -58,7 +61,7 @@ fn packet_role_test_client() -> client::client::Client {
     )
 }
 
-fn flush_test_client() -> client::client::Client {
+fn flush_test_client() -> isolation::IsolatedClient {
     let mut client = packet_role_test_client();
     client.ingame = true;
     client.ptype = -1;
@@ -261,11 +264,11 @@ fn released_packet_does_not_retain_observer() {
 
 #[test]
 fn legacy_movement_reports_completion_before_return_without_changing_ciphertext() {
-    fn movement_client() -> client::client::Client {
-        let mut client = client::client::Client::new_with_revision(
+    fn movement_client() -> isolation::IsolatedClient {
+        let mut client = isolation::IsolatedClient::with_revision(
             client::client::ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
+                host: String::new(),
+                port: 0,
                 cache_dir: String::new(),
                 members: true,
                 lowmem: true,
@@ -341,7 +344,7 @@ fn game_loop_flush_commits_last_cheat_after_tick_without_changing_bytes() {
 
 #[test]
 fn game_loop_flush_commits_last_minimap_walk_with_all_fourteen_trailer_bytes() {
-    fn minimap_client() -> client::client::Client {
+    fn minimap_client() -> isolation::IsolatedClient {
         let mut client = flush_test_client();
         let mut player = client::client::ClientPlayer::at(10, 10);
         player.x = 1344;

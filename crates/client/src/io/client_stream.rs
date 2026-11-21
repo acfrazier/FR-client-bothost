@@ -2086,19 +2086,18 @@ mod tests {
         let closed_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let closed_addr = closed_listener.local_addr().unwrap();
         drop(closed_listener);
-        let mut client = Client::new_with_revision(
-            ClientConfig {
-                host: closed_addr.ip().to_string(),
-                port: closed_addr.port(),
-                cache_dir: std::env::temp_dir()
-                    .join(format!("ws-close-{}", std::process::id()))
-                    .to_string_lossy()
-                    .into_owned(),
-                members: true,
-                lowmem: true,
-            },
-            ClientRevision::R289,
-        );
+        let (mut client, _environment) =
+            crate::client::test_support::isolated_client_with_game_server(
+                ClientConfig {
+                    host: String::new(),
+                    port: 0,
+                    cache_dir: String::new(),
+                    members: true,
+                    lowmem: true,
+                },
+                ClientRevision::R289,
+                Some(closed_addr),
+            );
         client.stream = Some(connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap());
         client.ingame = true;
         client.ptype = -1;
@@ -2127,19 +2126,18 @@ mod tests {
         let closed_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let closed_addr = closed_listener.local_addr().unwrap();
         drop(closed_listener);
-        let mut client = Client::new_with_revision(
-            ClientConfig {
-                host: closed_addr.ip().to_string(),
-                port: closed_addr.port(),
-                cache_dir: std::env::temp_dir()
-                    .join(format!("ws-protocol-{}", std::process::id()))
-                    .to_string_lossy()
-                    .into_owned(),
-                members: true,
-                lowmem: true,
-            },
-            ClientRevision::R289,
-        );
+        let (mut client, _environment) =
+            crate::client::test_support::isolated_client_with_game_server(
+                ClientConfig {
+                    host: String::new(),
+                    port: 0,
+                    cache_dir: String::new(),
+                    members: true,
+                    lowmem: true,
+                },
+                ClientRevision::R289,
+                Some(closed_addr),
+            );
         client.stream = Some(connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap());
         client.ingame = true;
         client.ptype = -1;

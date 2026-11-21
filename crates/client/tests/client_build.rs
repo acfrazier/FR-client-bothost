@@ -14,7 +14,7 @@ use client::render::{RenderWorld, Renderer};
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
-use client::client::{Client, ClientBuild, ClientConfig, ClientRevision};
+use client::client::{ClientBuild, ClientConfig, ClientRevision};
 use client::config::{Cache, FloType, LocType};
 use client::dash3d::model::ModelProvider;
 use client::dash3d::{
@@ -1000,13 +1000,17 @@ fn load_tex_averages_fills_from_textures_jag() {
         eprintln!("SKIP load_tex_averages_fills_from_textures_jag: local textures pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: dir,
-        members: true,
-        lowmem: true,
-    });
+    let mut c = IsolatedClient::with_config_preserving_cache(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: dir,
+            members: true,
+            lowmem: true,
+        },
+        ClientRevision::R274,
+        None,
+    );
     assert!(
         c.tex_average.iter().all(|&a| a == 0),
         "Client::new must not pretend textures are decoded"

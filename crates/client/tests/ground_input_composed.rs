@@ -1,28 +1,25 @@
 //! Cache-free diagnostic of the real game_loop -> game_draw -> game_loop seam.
 //! Geometry translates tests/world.rs's flat-world projection into the interior
 //! of a 104-square scene. No expected pick or menu entry is assigned by the test.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision, MiniMenuAction};
 use client::dash3d::TerrainOverlayShape;
 use client::graphics::{Pix3D, PixMap};
 use client::render::backend::{FrameOutput, GpuBackend};
 use client::render::Renderer;
 
-fn fixture(gpu: bool) -> (Client, Renderer) {
+fn fixture(gpu: bool) -> (isolation::IsolatedClient, Renderer) {
     fixture_revision(gpu, ClientRevision::R289)
 }
 
-fn fixture_revision(gpu: bool, revision: ClientRevision) -> (Client, Renderer) {
-    let cache_dir = format!(
-        "{}/../../target/ground-input-absent-cache-{}",
-        env!("CARGO_MANIFEST_DIR"),
-        std::process::id()
-    );
-    assert!(!std::path::Path::new(&cache_dir).exists());
-    let mut c = Client::new_with_revision(
+fn fixture_revision(gpu: bool, revision: ClientRevision) -> (isolation::IsolatedClient, Renderer) {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir,
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },

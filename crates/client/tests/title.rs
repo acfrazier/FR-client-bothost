@@ -1,4 +1,6 @@
-use client::client::Client;
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::ClientConfig;
 use client::graphics::Pix32;
 use client::io::JagFile;
@@ -15,14 +17,18 @@ fn cache_dir() -> Option<String> {
     }
 }
 
-fn client(cache: String) -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    })
+fn client(cache: String) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_config_preserving_cache(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache,
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    )
 }
 
 fn frame_pixels(frame: FrameOutput) -> Vec<i32> {

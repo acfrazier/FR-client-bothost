@@ -1,3 +1,6 @@
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision, MiniMenuAction};
 use client::io::Packet;
 use std::io::{Read, Write};
@@ -23,18 +26,16 @@ fn relog(revision: ClientRevision, expected: &[u8]) {
             stream.write_all(&[2, 0, 0]).unwrap();
         }
     });
-    let mut c = Client::new_with_revision(
+    let mut c = isolation::IsolatedClient::with_config(
         ClientConfig {
-            host: address.ip().to_string(),
-            port: address.port(),
-            cache_dir: std::env::temp_dir()
-                .join(format!("fidelity-b7-{}-{revision:?}", std::process::id()))
-                .to_string_lossy()
-                .into_owned(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: true,
         },
         revision,
+        Some(address),
     );
     c.login("fixture", "fixture", false).unwrap();
     c.in_multizone = 1;
@@ -118,18 +119,16 @@ fn fidelity_b7_reconnect_keeps_multiway_and_menu_counters() {
             stream.read_exact(&mut login).unwrap();
             stream.write_all(&[15]).unwrap();
         });
-        let mut c = Client::new_with_revision(
+        let mut c = isolation::IsolatedClient::with_config(
             ClientConfig {
-                host: address.ip().to_string(),
-                port: address.port(),
-                cache_dir: std::env::temp_dir()
-                    .join(format!("fidelity-b7-reconnect-{}", std::process::id()))
-                    .to_string_lossy()
-                    .into_owned(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: true,
             },
             revision,
+            Some(address),
         );
         c.in_multizone = 1;
         c.oplogic1 = 1;

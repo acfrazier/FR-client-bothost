@@ -1,4 +1,7 @@
-use client::client::{Client, ClientConfig, ClientRevision, MiniMenuAction};
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use client::client::{ClientConfig, ClientRevision, MiniMenuAction};
 
 #[test]
 fn fidelity_b8_close_only_rearms_continue_for_side_or_chat() {
@@ -14,14 +17,11 @@ fn fidelity_b8_close_only_rearms_continue_for_side_or_chat() {
             (-1, 9, -1),
             (8, 9, 7),
         ] {
-            let mut c = Client::new_with_revision(
+            let mut c = isolation::IsolatedClient::with_revision(
                 ClientConfig {
-                    host: "127.0.0.1".into(),
-                    port: 43594,
-                    cache_dir: std::env::temp_dir()
-                        .join(format!("fidelity-b8-{}", std::process::id()))
-                        .to_string_lossy()
-                        .into_owned(),
+                    host: String::new(),
+                    port: 0,
+                    cache_dir: String::new(),
                     members: true,
                     lowmem: true,
                 },

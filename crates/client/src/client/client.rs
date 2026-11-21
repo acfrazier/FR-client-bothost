@@ -15894,7 +15894,7 @@ mod main_modal_packet_tests {
 
 #[cfg(test)]
 mod r377_unsupported_outbound_tests {
-    use super::{Client, ClientConfig, ClientRevision};
+    use super::{ClientConfig, ClientRevision};
     use crate::io::{ClientProt, ClientProt377, ClientStream};
     use std::io::{ErrorKind, Read};
     use std::net::TcpListener;
@@ -15902,11 +15902,11 @@ mod r377_unsupported_outbound_tests {
 
     #[test]
     fn unmapped_legacy_report_abuse_discards_batch_before_socket_write() {
-        let mut client = Client::new_with_revision(
+        let (mut client, _environment) = crate::client::test_support::isolated_client(
             ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: ".r377-test-cache".into(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             },

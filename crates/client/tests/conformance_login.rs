@@ -1,5 +1,8 @@
 //! Java 274 Client.java:7902-7925: LAST_LOGIN_INFO opens the welcome layer.
-use client::client::{Client, ClientConfig};
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use client::client::ClientConfig;
 use client::config::IfType;
 use client::io::{Packet, ServerProt};
 
@@ -12,10 +15,10 @@ fn r274_last_login_info_opens_only_the_java_welcome_layer() {
             (0x01020304, 7, true),
             (0x01020304, -1, false),
         ] {
-            let mut c = Client::new(ClientConfig {
+            let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
                 host: "127.0.0.1".into(),
                 port: 43594,
-                cache_dir: std::env::temp_dir().display().to_string(),
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             });

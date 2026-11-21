@@ -25,7 +25,7 @@ fn renderers_share_one_media_arc() {
 fn renderers_that_drew_share_the_depacked_media_arc() {
     let mut a = Renderer::new_prefer(false, false);
     let mut b = Renderer::new_prefer(false, false);
-    let mut c = client::client::Client::new(client::client::ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(client::client::ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: String::new(),

@@ -1,8 +1,11 @@
 // Config types unpacked from the engine's `config` JAG archive (1:1 of the
 // client-ts `config/` decode loops). Skipped when the engine pack is absent.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use std::sync::Arc;
 
-use client::client::{Client, ClientConfig};
+use client::client::{ClientConfig, ClientRevision};
 use client::config::if_type::IfType;
 use client::config::{Cache, ObjType};
 use client::io::JagFile;
@@ -63,15 +66,10 @@ fn cache_obj_by_id_matches_unpacked_table() {
 
 #[test]
 fn client_owns_an_empty_cache_until_unpacked() {
-    // Private scratch dir: `/tmp` is the live cache that `run`'s `maininit`
-    // fetch loop persists jags into, so it is not reliably empty.
-    let dir = std::env::temp_dir().join("274-empty-cache");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut c = Client::new(ClientConfig {
+    let mut c = isolation::IsolatedClient::with_default_config(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: dir.to_str().unwrap().into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     });
@@ -98,13 +96,17 @@ fn client_new_unpacks_config_from_cache_dir() {
         );
         return;
     }
-    let c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir,
-        members: true,
-        lowmem: false,
-    });
+    let c = isolation::IsolatedClient::with_config_preserving_cache(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir,
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R274,
+        None,
+    );
     assert!(!c.error_loading);
     assert!(c
         .cache
@@ -119,13 +121,17 @@ fn missing_config_jag_sets_error_loading() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("title"), b"not-a-jag").unwrap();
-    let c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: dir.to_string_lossy().into(),
-        members: true,
-        lowmem: false,
-    });
+    let c = isolation::IsolatedClient::with_config_preserving_cache(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: dir.to_string_lossy().into(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R274,
+        None,
+    );
     let _ = std::fs::remove_dir_all(&dir);
     assert!(c.error_loading);
     assert!(c.cache.objs.is_empty());

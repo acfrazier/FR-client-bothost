@@ -765,13 +765,16 @@ mod fidelity_tests {
     }
     #[test]
     fn local_player_teleport_watermark_tracks_applied_mode_three_only() {
-        let mut client = Client::new(crate::client::ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 0,
-            cache_dir: String::new(),
-            members: false,
-            lowmem: true,
-        });
+        let mut client = crate::client::test_support::isolated_client_handle(
+            crate::client::ClientConfig {
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
+                members: false,
+                lowmem: true,
+            },
+            crate::io::ClientRevision::R274,
+        );
         client.local_player = Some(ClientPlayer::default());
         let local = LOCAL_PLAYER_INDEX as usize;
 

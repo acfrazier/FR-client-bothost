@@ -152,6 +152,19 @@ fn npc_get_head_queues_every_missing_head_id() {
 fn hud_client() -> IsolatedClient {
     IsolatedClient::new(client::client::ClientRevision::R274, None)
 }
+fn client_with_cache(cache: String) -> IsolatedClient {
+    IsolatedClient::with_config_preserving_cache(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache,
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    )
+}
 
 /// GPU `game_draw` with the mysterious-cube main modal (`macro_cube` 6554)
 /// plus live `if_setobject` on the three spinning TYPE_MODEL children.
@@ -177,13 +190,7 @@ fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
         return;
     }
 
-    let mut c = client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     r.game_draw(&mut c);
     assert!(
         c.if_(6554).is_some(),
@@ -311,13 +318,7 @@ fn travel_modals_are_full_scene_layers() {
         return;
     }
     let mut r = client::render::Renderer::new(false);
-    let mut c = client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     r.game_draw(&mut c);
     for (id, name) in [(3281, "ship_journey"), (802, "glidermap")] {
         let Some(root) = c.if_(id) else {
@@ -363,13 +364,7 @@ fn gpu_ship_journey_paints_the_title_over_the_scene() {
         client::render::Renderer::set_prefer_gpu(false);
         return;
     }
-    let mut c = client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.set_draw(true);
     c.ingame = true;
     c.scene_state = 2;
@@ -420,13 +415,7 @@ fn gpu_ship_journey_stays_over_a_frozen_scene() {
         client::render::Renderer::set_prefer_gpu(false);
         return;
     }
-    let mut c = client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.set_draw(true);
     c.ingame = true;
     c.scene_state = 2;

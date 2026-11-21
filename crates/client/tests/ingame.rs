@@ -1,4 +1,4 @@
-use client::client::{Client, ClientConfig};
+use client::client::ClientConfig;
 use client::client::{APPLET_H, APPLET_W};
 use client::core::World;
 use client::dash3d::{ClientEntity, ClientPlayer, MapFlag, TerrainOverlayShape};
@@ -18,14 +18,18 @@ fn cache_dir() -> Option<String> {
     }
 }
 
-fn client(cache: String) -> Client {
-    Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    })
+fn client(cache: String) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_config_preserving_cache(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache,
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    )
 }
 
 fn empty_cache_client(lowmem: bool) -> isolation::IsolatedClient {
@@ -46,13 +50,7 @@ fn game_draw_headless_does_not_panic() {
         eprintln!("SKIP game_draw_headless_does_not_panic: local media pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client(cache);
     c.ingame = true;
     r.draw_area = PixMap::new(APPLET_W, APPLET_H);
     r.game_draw(&mut c);

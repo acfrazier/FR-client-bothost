@@ -1,37 +1,26 @@
-use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+#[path = "isolation.rs"]
+mod isolation;
 
-use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
+use client::client::{ClientConfig, ClientPlayer, ClientRevision};
+
 use client::dash3d::TerrainOverlayShape;
 use client::graphics::{Pix3D, PixMap};
 use client::render::backend::{FrameOutput, GpuBackend};
 use client::render::Renderer;
 
-static CACHE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
-
 /// Construct the real GPU backend and the cache-free 3×3 terrain fixture
 /// used by `ground_input_composed`. `None` means the adapter is unavailable.
-pub fn gpu_scene() -> Option<(Client, Renderer)> {
+pub fn gpu_scene() -> Option<(isolation::IsolatedClient, Renderer)> {
     if crate::gpu_serial::skipped() {
         return None;
     }
 
     let backend = GpuBackend::try_new().ok()?;
-    let sequence = CACHE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let cache_dir = format!(
-        "{}/../../target/scene-hook-absent-cache-{}-{sequence}",
-        env!("CARGO_MANIFEST_DIR"),
-        std::process::id()
-    );
-    assert!(
-        !Path::new(&cache_dir).exists(),
-        "the scene-hook fixture must not reuse a client cache"
-    );
-    let mut client = Client::new_with_revision(
+    let mut client = isolation::IsolatedClient::with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir,
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },

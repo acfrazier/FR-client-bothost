@@ -1,4 +1,7 @@
-use client::client::{Client, ClientConfig, ClientRevision};
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use client::client::{ClientConfig, ClientRevision};
 
 #[test]
 fn fidelity_b9_private_message_accepts_zero_userhash() {
@@ -7,14 +10,11 @@ fn fidelity_b9_private_message_accepts_zero_userhash() {
         (ClientRevision::R289, 107),
         (ClientRevision::R377, 227),
     ] {
-        let mut c = Client::new_with_revision(
+        let mut c = isolation::IsolatedClient::with_revision(
             ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: std::env::temp_dir()
-                    .join(format!("fidelity-b9-{}", std::process::id()))
-                    .to_string_lossy()
-                    .into_owned(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: true,
             },

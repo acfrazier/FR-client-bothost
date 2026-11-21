@@ -20,6 +20,19 @@ use client::wordfilter::WordPack;
 fn client() -> IsolatedClient {
     IsolatedClient::new(client::client::ClientRevision::R274, None)
 }
+fn client_with_cache(cache_dir: String) -> IsolatedClient {
+    IsolatedClient::with_config_preserving_cache(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir,
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    )
+}
 
 #[test]
 fn icon_state_defaults() {
@@ -76,13 +89,7 @@ fn sideicons_load_from_media() {
         eprintln!("SKIP sideicons_load_from_media: local media pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c);
     assert!(r.media.sideicons.iter().any(|s| s.is_some()));
@@ -244,13 +251,7 @@ fn draw_interface_text_writes_pixels() {
         eprintln!("SKIP draw_interface_text_writes_pixels: local title pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // loads the p11/p12/b12/q8 fonts from the title jag
 
@@ -295,13 +296,7 @@ fn iftype_keeps_graphic_name() {
         eprintln!("SKIP iftype_keeps_graphic_name: local interface pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c);
     assert!(
@@ -319,13 +314,7 @@ fn draw_graphic_writes_pixels() {
         eprintln!("SKIP draw_graphic_writes_pixels: local media pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c);
 
@@ -371,13 +360,7 @@ fn draw_side_text_component_writes_pixels() {
         eprintln!("SKIP draw_side_text_component_writes_pixels: local interface pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c);
     let before = r.area_side.as_ref().unwrap().pixels.clone();
@@ -630,13 +613,7 @@ fn draw_chat_renders_type0_line_and_input() {
         eprintln!("SKIP draw_chat_renders_type0_line_and_input: local title pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // loads p12 from the title jag
     c.add_chat(0, "hello", "");
@@ -672,14 +649,8 @@ fn sprite_fill_colour(sprite: &Pix8) -> i32 {
 }
 
 /// A client whose `media` sprites and fonts are loaded (`prepare_game`).
-fn chat_client(cache: &str, r: &mut Renderer) -> Client {
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache.into(),
-        members: true,
-        lowmem: false,
-    });
+fn chat_client(cache: &str, r: &mut Renderer) -> IsolatedClient {
+    let mut c = client_with_cache(cache.to_owned());
     c.ingame = true;
     r.game_draw(&mut c);
     c
@@ -829,13 +800,7 @@ fn draw_chat_social_overlay_draws_header_and_input() {
         );
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // loads the b12 font from the title jag
     c.add_chat(0, "hidden by the overlay", "");
@@ -860,13 +825,7 @@ fn draw_chat_dialog_overlay_draws_header_and_input() {
         );
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // loads the b12 font from the title jag
     c.add_chat(0, "hidden by the overlay", "");
@@ -891,13 +850,7 @@ fn draw_reboot_timer_overlay_draws_system_update() {
         );
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     c.scene_state = 2; // game_draw_main (and its overlays) run only in-scene
     r.game_draw(&mut c); // loads the p12 font from the title jag
@@ -1009,13 +962,7 @@ fn draw_interface_substitutes_percent1() {
         eprintln!("SKIP draw_interface_substitutes_percent1: local title pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // loads the p11/p12/b12/q8 fonts from the title jag
     c.stat_effective_level[0] = 12;
@@ -1429,13 +1376,7 @@ fn side_click_real_logout_text_sends_if_button() {
         );
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c);
 
@@ -1599,13 +1540,7 @@ fn draw_interface_inv_text_writes_obj_name() {
         eprintln!("SKIP draw_interface_inv_text_writes_obj_name: local title pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // fonts
     let layer = IfType {
@@ -1701,13 +1636,7 @@ fn draw_chat_modal_clears_stale_chat_lines() {
         eprintln!("SKIP draw_chat_modal_clears_stale_chat_lines: local media pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // chatback + fonts
     c.add_chat(0, "hello", ""); // a black type-0 line (redraw_chat set)
@@ -1945,11 +1874,11 @@ fn r377_rotation_packet_advances_model_angles_and_zero_stops_it() {
         (-32768, 32767, 3, (2046, 2046)),
         (-1, 1, 2, (2044, 3)),
     ] {
-        let mut c = Client::new_with_revision(
+        let mut c = IsolatedClient::with_revision(
             ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: std::env::temp_dir().display().to_string(),
+                host: String::new(),
+                port: 0,
+                cache_dir: String::new(),
                 members: true,
                 lowmem: false,
             },
@@ -2128,13 +2057,7 @@ fn draw_icons_blinks_flashing_tab() {
         eprintln!("SKIP draw_icons_blinks_flashing_tab: local media pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     c.side_icon[3] = 1;
     c.active_icon = 0; // flash stays (flash tab != active tab)
@@ -2416,13 +2339,7 @@ fn resumed_pause_button_text_is_please_wait() {
         eprintln!("SKIP resumed_pause_button_text_is_please_wait: local title pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // loads the p11/p12/b12/q8 fonts from the title jag
 
@@ -2466,13 +2383,7 @@ fn active_text_uses_text2() {
         eprintln!("SKIP active_text_uses_text2: local title pack is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client_with_cache(cache);
     c.ingame = true;
     r.game_draw(&mut c); // loads the p11/p12/b12/q8 fonts from the title jag
 

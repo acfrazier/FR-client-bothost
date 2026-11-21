@@ -1,4 +1,5 @@
 //! Revision 289 stage-3: cache/config seam, basic outbound actions, offline replay.
+
 //!
 //! Outbound IDs/lengths are source-traced from primary 289 `client.java`
 //! `method465` / `method160` / `method206` (openrs2-nonfree). Fixtures are
@@ -594,15 +595,16 @@ fn offline_config_loader_synthetic_fixture() {
     assert!(!man.authentic_cache_present);
 
     // Production Client::load_cache path (via new_with_revision) must bind tables.
-    let mut c = Client::new_with_revision(
+    let mut c = isolation::IsolatedClient::with_config_preserving_cache(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
+            host: String::new(),
+            port: 0,
             cache_dir: dir.display().to_string(),
             members: true,
             lowmem: false,
         },
         ClientRevision::R289,
+        None,
     );
     assert!(!c.error_loading, "valid synthetic config must load");
     assert_eq!(c.cache.flos.len(), 1);

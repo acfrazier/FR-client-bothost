@@ -5,6 +5,9 @@
 //! after its fresh jag fetch — that unpack is intentional and must not be
 //! skipped. The temp caches have no real packs, so the HTTP listener
 //! planted here is the only network these tests touch.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -178,7 +181,11 @@ fn new_maininit_still_reunpacks_fresh_cache() {
     seed_jags(&dir, &[0u8, 0, 6, 0, 0, 6, 0, 0], &mut checksums);
 
     let (port, th) = serve_once(crc_body(&checksums));
-    let mut c = Client::new(cfg(&dir));
+    let mut c = isolation::IsolatedClient::with_config_preserving_cache(
+        cfg(&dir),
+        client::client::ClientRevision::R274,
+        None,
+    );
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
     assert!(

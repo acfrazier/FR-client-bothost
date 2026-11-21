@@ -1,19 +1,19 @@
 //! Integration gates for revision-377 shared writers and chat packet routing.
-use client::client::{CheatAdmission, Client, ClientConfig, ClientRevision};
+#[path = "common/isolation.rs"]
+mod isolation;
+
+use client::client::{CheatAdmission, ClientConfig, ClientRevision};
 use client::config::if_type::IfType;
 use client::io::{map_client_prot, ClientProt, ClientProt377, Packet, PacketObserver};
 use std::sync::Arc;
 use std::time::Instant;
 
-fn client() -> Client {
-    let mut c = Client::new_with_revision(
+fn client() -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43595,
-            cache_dir: std::env::temp_dir()
-                .join(format!("377-outbound-absent-{}", std::process::id()))
-                .to_string_lossy()
-                .into_owned(),
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: true,
         },

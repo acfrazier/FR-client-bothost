@@ -84,13 +84,17 @@ fn chrome_composites_from_the_cpu_draw_area() {
         Renderer::set_prefer_gpu(false);
         return;
     };
-    let mut c = client::client::Client::new(client::client::ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache,
-        members: true,
-        lowmem: false,
-    });
+    let mut c = isolation::IsolatedClient::with_config_preserving_cache(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache,
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    );
     c.set_draw(true);
 
     let title = r.title_screen_draw(&mut c);

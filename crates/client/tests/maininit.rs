@@ -46,6 +46,9 @@ fn client_tmp() -> isolation::IsolatedClient {
         lowmem: false,
     })
 }
+fn client_with_cache(config: ClientConfig) -> isolation::IsolatedClient {
+    isolation::IsolatedClient::with_config_preserving_cache(config, ClientRevision::R274, None)
+}
 
 #[test]
 fn draw_progress_headless_sets_fields_without_touching_pixels() {
@@ -87,7 +90,7 @@ fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
         eprintln!("SKIP draw_progress_headed_paints_stage_text_once_title_jag_exists: local title JAG is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: cache,
@@ -117,7 +120,7 @@ fn draw_progress_headed_paints_torch_columns() {
         eprintln!("SKIP draw_progress_headed_paints_torch_columns: local title JAG is missing");
         return;
     }
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: cache,
@@ -260,7 +263,7 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
     }
     let (port, th) = serve_once(crc_body(&checksums));
 
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: dir.to_str().unwrap().into(),
@@ -305,7 +308,7 @@ fn maininit_with_progress_notifies_callback_at_each_progress_point() {
     }
     let (port, th) = serve_once(crc_body(&checksums));
 
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: dir.to_str().unwrap().into(),
@@ -365,7 +368,7 @@ fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
     responses.extend(bodies.clone());
     let (port, th, seen) = serve_in_order(responses);
 
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: dir.to_str().unwrap().into(),
@@ -436,7 +439,7 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
         fresh.clone(),
     ]);
 
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: dir.to_str().unwrap().into(),
@@ -493,7 +496,7 @@ fn crc_unreachable_sets_error_loading_in_bounded_time() {
     // whole 10-attempt retry budget is the countdown (small
     // `fetch_retry_wait` below).
     let dead = dead_web_origin();
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: dir.to_str().unwrap().into(),
@@ -527,7 +530,7 @@ fn crc_retry_countdown_reports_java_messages() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let dead = dead_web_origin();
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: dir.to_str().unwrap().into(),
@@ -624,7 +627,7 @@ fn crc_retry_pumps_present_target() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let dead = dead_web_origin();
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: dir.to_str().unwrap().into(),
@@ -682,7 +685,7 @@ fn maininit_clears_error_loading_from_new_unpack() {
             Packet::getcrc(&bytes, 0, bytes.len())
         };
     }
-    let mut c = Client::new(ClientConfig {
+    let mut c = client_with_cache(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: dir.to_str().unwrap().into(),

@@ -25,14 +25,18 @@ fn client() -> isolation::IsolatedClient {
 }
 
 /// A client whose `media` sprites and fonts are loaded (`prepare_game`).
-fn overlay_client(cache: &str, r: &mut Renderer) -> Client {
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: cache.into(),
-        members: true,
-        lowmem: false,
-    });
+fn overlay_client(cache: &str, r: &mut Renderer) -> isolation::IsolatedClient {
+    let mut c = isolation::IsolatedClient::with_config_preserving_cache(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache.into(),
+            members: true,
+            lowmem: false,
+        },
+        client::client::ClientRevision::R274,
+        None,
+    );
     c.ingame = true;
     r.game_draw(&mut c);
     c

@@ -1,5 +1,8 @@
 //! Offline production-frame proof. All fonts, sprites and interfaces are synthetic;
 //! no cache-dependent early returns or GPU adapter are involved.
+#[path = "common/isolation.rs"]
+mod isolation;
+
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::graphics::{Pix8, PixFont, PixMap};
@@ -61,21 +64,12 @@ fn interface(c: &mut Client, id: i32, colour: i32) {
     );
 }
 
-fn fixture(revision: ClientRevision) -> (Client, Renderer) {
-    let cache_dir = format!(
-        "{}/../../target/tutorial-presentation-absent-cache-{}",
-        env!("CARGO_MANIFEST_DIR"),
-        std::process::id()
-    );
-    assert!(
-        !std::path::Path::new(&cache_dir).exists(),
-        "no incidental cache"
-    );
-    let mut c = Client::new_with_revision(
+fn fixture(revision: ClientRevision) -> (isolation::IsolatedClient, Renderer) {
+    let mut c = isolation::IsolatedClient::with_revision(
         ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir,
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
             members: true,
             lowmem: false,
         },
