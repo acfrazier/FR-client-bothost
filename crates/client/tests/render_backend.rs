@@ -4,8 +4,11 @@ mod gpu_serial;
 #[path = "common/scene_fixture.rs"]
 mod scene_fixture;
 
+#[cfg(not(feature = "render-test-hooks"))]
 #[path = "common/isolation.rs"]
 mod isolation;
+#[cfg(feature = "render-test-hooks")]
+use scene_fixture::isolation;
 
 // Task 4 (render backend seam): a frame routes through the renderer's
 // backend as `begin` → `scene` → `chrome` → `finish`, in order, on both

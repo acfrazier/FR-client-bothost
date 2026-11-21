@@ -1,5 +1,5 @@
 #[path = "isolation.rs"]
-mod isolation;
+pub(crate) mod isolation;
 
 use client::client::{ClientConfig, ClientPlayer, ClientRevision};
 
