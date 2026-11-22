@@ -144,9 +144,12 @@ Revision-377 tests that compare real JAGs with pinned Java-oracle fixtures use
 JAG set (`config`, `interface`, `media`, `sounds`, `textures`, `title`,
 `versionlist`, `wordenc`). They print a skip notice when this local-only input
 is absent, locally or on hosted CI. An explicit path must contain all eight
-archives; missing or malformed files fail. Tests that need the current cache,
-including live cells, continue to use `CLIENT_377_CACHE_DIR`. The sound oracle
-test uses `CLIENT_377_RUNTIME_CACHE_DIR` when set, then the pinned oracle cache.
+Client live/runtime tests use `CLIENT_377_RUNTIME_CACHE_DIR`. The sound oracle
+test reads it when set, then falls back to the pinned oracle cache. The only
+client test that reads `CLIENT_377_CACHE_DIR` is
+`hint_media_loading_requires_explicit_revision_377` in
+`crates/client/tests/revision_377_render.rs:326`. The fixture regeneration
+command below also uses `CLIENT_377_CACHE_DIR`.
 
 Revision 377 explicitly selects Java's 5000-slot sound/delay tables; the
 274/289 default and shared 1000-slot tables are unchanged. Sound loading is
