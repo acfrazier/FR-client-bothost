@@ -1,5 +1,6 @@
 //! Executes the registered revision-377 public config modules.
 //! The frozen oracle comes from compiling and calling untouched Client-Java 377.
+//! Read the pinned cache input from CLIENT_377_ORACLE_CACHE_DIR.
 
 use client::config::config_377;
 use client::io;
@@ -307,10 +308,10 @@ fn malformed_records_cannot_hide_unknown_opcodes_or_trailing_bytes() {
 }
 
 fn real_cache_dir() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("CLIENT_377_CACHE_DIR") {
+    if let Some(path) = std::env::var_os("CLIENT_377_ORACLE_CACHE_DIR") {
         return Some(PathBuf::from(path));
     }
-    eprintln!("SKIP real 377 decoder cache: CLIENT_377_CACHE_DIR is not set");
+    eprintln!("SKIP real 377 decoder cache: CLIENT_377_ORACLE_CACHE_DIR is not set");
     None
 }
 

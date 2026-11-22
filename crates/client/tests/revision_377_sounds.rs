@@ -1,4 +1,5 @@
 //! Java-377 sound table boundaries and real-cache decode/constructor regression.
+//! Use CLIENT_377_RUNTIME_CACHE_DIR when set, then use CLIENT_377_ORACLE_CACHE_DIR.
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::io::{JagFile, Packet};
@@ -95,10 +96,10 @@ fn constructor_and_memory_reconfiguration_select_revision_local_tables() {
 #[test]
 fn real_377_sounds_match_java_timing_and_construct_with_sound_enabled() {
     let dir = std::env::var_os("CLIENT_377_RUNTIME_CACHE_DIR")
-        .or_else(|| std::env::var_os("CLIENT_377_CACHE_DIR"));
+        .or_else(|| std::env::var_os("CLIENT_377_ORACLE_CACHE_DIR"));
     let Some(dir) = dir else {
         eprintln!(
-            "SKIP real 377 sounds: CLIENT_377_RUNTIME_CACHE_DIR and CLIENT_377_CACHE_DIR are not set"
+            "SKIP real 377 sounds: CLIENT_377_RUNTIME_CACHE_DIR and CLIENT_377_ORACLE_CACHE_DIR are not set"
         );
         return;
     };

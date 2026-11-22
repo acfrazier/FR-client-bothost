@@ -139,12 +139,14 @@ cargo test -p client
 274bot `cargo test` does **not** run these. Live engine tests stay in
 274bot (`LIVE=1 cargo test -p e2e` / `-p host-play`).
 
-Revision-377 real-cache tests use `CLIENT_377_CACHE_DIR`, an absolute path to
-the eight extracted JAGs (`config`, `interface`, `media`, `sounds`, `textures`,
-`title`, `versionlist`, `wordenc`). They print a skip notice when this
-local-only binding is absent, locally or on hosted CI. An explicit path
-must contain valid fixtures; missing or malformed files fail. The sound
-regression also accepts `CLIENT_377_RUNTIME_CACHE_DIR`, which takes precedence.
+Revision-377 tests that compare real JAGs with pinned Java-oracle fixtures use
+`CLIENT_377_ORACLE_CACHE_DIR`. Set it to an absolute path to the 2026-11-03
+JAG set (`config`, `interface`, `media`, `sounds`, `textures`, `title`,
+`versionlist`, `wordenc`). They print a skip notice when this local-only input
+is absent, locally or on hosted CI. An explicit path must contain all eight
+archives; missing or malformed files fail. Tests that need the current cache,
+including live cells, continue to use `CLIENT_377_CACHE_DIR`. The sound oracle
+test uses `CLIENT_377_RUNTIME_CACHE_DIR` when set, then the pinned oracle cache.
 
 Revision 377 explicitly selects Java's 5000-slot sound/delay tables; the
 274/289 default and shared 1000-slot tables are unchanged. Sound loading is

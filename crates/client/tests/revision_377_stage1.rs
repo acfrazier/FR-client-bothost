@@ -3,9 +3,9 @@
 //! These tests
 //! prove metadata, shared JAG decoding and CRC admission, not network dispatch,
 //! config-record decoding, interface decoding, login or an in-game session.
-//! Set CLIENT_377_CACHE_DIR to the eight extracted real 377 JAGs used to
-//! generate fixtures/revision_377/cache.json. Tests skip that local-only asset
-//! when the binding is absent; an explicit path must contain the real JAGs.
+//! Set CLIENT_377_ORACLE_CACHE_DIR to the frozen 2026-11-03 JAGs for
+//! fixtures/revision_377/cache.json. Tests skip this local-only input when the
+//! variable is unset. An explicit path must contain the real JAGs.
 
 use client::io::{cache_377, ClientProt377, Packet, SERVER_PROT_SIZES_377};
 use serde_json::Value;
@@ -230,10 +230,10 @@ fn real_377_jags_and_every_member_match_independent_oracles() {
 }
 
 fn real_cache_dir() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("CLIENT_377_CACHE_DIR") {
+    if let Some(path) = std::env::var_os("CLIENT_377_ORACLE_CACHE_DIR") {
         return Some(PathBuf::from(path));
     }
-    eprintln!("SKIP real 377 cache: CLIENT_377_CACHE_DIR is not set");
+    eprintln!("SKIP real 377 cache: CLIENT_377_ORACLE_CACHE_DIR is not set");
     None
 }
 

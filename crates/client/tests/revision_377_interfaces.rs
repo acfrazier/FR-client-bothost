@@ -1,6 +1,6 @@
 //! Tests for the registered revision-377 interface decoder modules.
 //! They cover component fields, sparse storage, lazy reload, and a pinned real
-//! interface archive. The real cache gate follows `revision_377_stage1`.
+//! interface archive from CLIENT_377_ORACLE_CACHE_DIR.
 
 use client::config::{config_377, if_type_377};
 use client::io;
@@ -587,9 +587,9 @@ fn real_377_interface_archive_matches_pinned_bytes_and_scans_every_record() {
 }
 
 fn real_cache_dir() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("CLIENT_377_CACHE_DIR") {
+    if let Some(path) = std::env::var_os("CLIENT_377_ORACLE_CACHE_DIR") {
         return Some(PathBuf::from(path));
     }
-    eprintln!("SKIP real 377 interface archive: CLIENT_377_CACHE_DIR is not set");
+    eprintln!("SKIP real 377 interface archive: CLIENT_377_ORACLE_CACHE_DIR is not set");
     None
 }
