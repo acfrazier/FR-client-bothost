@@ -40,6 +40,7 @@ use std::time::Instant;
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 
+use crate::client::http_reply::BodyProof;
 use crate::client::Client;
 use crate::io::jagfile::JagFile;
 use crate::io::ondemand::cache_read;
@@ -1988,6 +1989,7 @@ fn start_jag_download(
         endpoint.host,
         addrs,
         &format!("/{name}{crc}"),
+        BodyProof::Crc(crc),
     )
     .map_err(|e| jag_fetch_error(slot, e))
 }

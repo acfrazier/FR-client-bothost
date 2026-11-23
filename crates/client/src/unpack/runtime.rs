@@ -17,6 +17,7 @@ use super::fill::{FillProgress, NetworkSnapshot, SnapshotStart};
 use super::http::HttpFetch;
 use super::{unpack_cache_from_store, FetchEndpoint, JagRefresh, SnapshotState};
 use crate::client::client::AssetFetchError;
+use crate::client::http_reply::BodyProof;
 use crate::client::Client;
 use crate::content_identity::{compute_decoded_content_identity, DecodedContentIdentity};
 use crate::io::{ClientRevision, JagFile, OnDemand};
@@ -196,7 +197,8 @@ impl RuntimeCacheError {
         matches!(
             self,
             Self::Asset {
-                kind: crate::client::client::AssetFetchError::Connection,
+                kind: crate::client::client::AssetFetchError::Connection
+                    | crate::client::client::AssetFetchError::Incomplete,
                 ..
             } | Self::Lookup { .. }
         )
@@ -748,6 +750,7 @@ impl RuntimeCacheFill {
                                         &request.asset_host,
                                         addrs,
                                         "/crc",
+                                        BodyProof::Checksums,
                                     )
                                     .map_err(crc_error)?,
                                 )
@@ -756,7 +759,7 @@ impl RuntimeCacheFill {
                         let Some(body) = fetch.poll(until).map_err(crc_error)? else {
                             return Ok((Stage::Negotiate(Some(fetch)), waiting));
                         };
-                        Client::parse_jag_checksums(body)
+                        Client::parse_jag_checksums(&body)
                             .map_err(|_| crc_error(AssetFetchError::Checksum))?
                     }
                 };

@@ -26,6 +26,9 @@ use crate::client::client_build::ClientBuild;
 use crate::client::client_draw::get_av_h;
 use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
+use crate::client::http_reply::{
+    reply_body, tls_connector, BodyProof, ReplyEnd, LOGIN_MODULUS_DIGITS,
+};
 use crate::client::login_error::{LoginError, LoginStage, LoginTransportError};
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::packet_377::rebuild_377::Rebuild377;
@@ -60,15 +63,21 @@ use crate::util::JString;
 use crate::wordfilter::{WordFilter, WordPack};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+// Downstream crates (Fairy Ring) match on this: a new kind of failure must not break them.
+#[non_exhaustive]
 pub enum AssetFetchError {
     Connection,
     Checksum,
+    /// The response ended before the body was whole: shorter than its
+    /// `Content-Length`, or cut by a broken connection with no length and
+    /// no check of its own to show it whole. A failure of the connection.
+    Incomplete,
 }
 
 impl AssetFetchError {
     pub fn message(self) -> &'static str {
         match self {
-            Self::Connection => "connection problem",
+            Self::Connection | Self::Incomplete => "connection problem",
             Self::Checksum => "checksum problem",
         }
     }
@@ -2618,9 +2627,17 @@ impl Client {
 
     /// HTTP/1.0 `GET {path}` returning the response body, headers split on
     /// `\r\n\r\n` (client-ts `getJagChecksums`/`getJagFile` fetch the same
-    /// way). `None` on connect/read failure or a bodyless response.
-    fn http_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
-        Self::http_get_plain(host, port, path)
+    /// way). `proof` is what shows a body whole when it has no
+    /// `Content-Length` and the connection breaks at its end; see
+    /// [`reply_body`]. `Err` on connect/read failure, a bodyless response or
+    /// a body that is not whole.
+    fn http_get(
+        host: &str,
+        port: u16,
+        path: &str,
+        proof: BodyProof,
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        Self::http_get_plain(host, port, path, proof)
     }
 
     fn http_get_for(
@@ -2628,8 +2645,9 @@ impl Client {
         host: &str,
         port: u16,
         path: &str,
-    ) -> Option<Vec<u8>> {
-        Self::http_get_to(transport, host, (host, port), path)
+        proof: BodyProof,
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        Self::http_get_to(transport, host, (host, port), path, proof)
     }
 
     /// [`Self::http_get_for`] that connects to `target`; `host` names the
@@ -2639,30 +2657,53 @@ impl Client {
         host: &str,
         target: impl std::net::ToSocketAddrs,
         path: &str,
-    ) -> Option<Vec<u8>> {
+        proof: BodyProof,
+    ) -> Result<Vec<u8>, AssetFetchError> {
         if transport.uses_tls() {
-            Self::https_get_to(host, target, path, None)
+            Self::https_get_to(host, target, path, None, proof)
         } else {
-            Self::http_get_plain_to(host, target, path)
+            Self::http_get_plain_to(host, target, path, proof)
         }
     }
 
-    fn http_get_plain(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
-        Self::http_get_plain_to(host, (host, port), path)
+    fn http_get_plain(
+        host: &str,
+        port: u16,
+        path: &str,
+        proof: BodyProof,
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        Self::http_get_plain_to(host, (host, port), path, proof)
     }
 
     fn http_get_plain_to(
         host: &str,
         target: impl std::net::ToSocketAddrs,
         path: &str,
-    ) -> Option<Vec<u8>> {
-        use std::io::{Read, Write};
-        let mut stream = std::net::TcpStream::connect(target).ok()?;
-        stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-        write!(stream, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n").ok()?;
-        let mut buf = Vec::new();
-        stream.read_to_end(&mut buf).ok()?;
-        Self::split_http_body(&buf)
+        proof: BodyProof,
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        use std::io::Write;
+        let connect = || -> io::Result<std::net::TcpStream> {
+            let mut stream = std::net::TcpStream::connect(target)?;
+            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+            write!(stream, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n")?;
+            Ok(stream)
+        };
+        let mut stream = connect().map_err(|_| AssetFetchError::Connection)?;
+        let (received, end) = Self::read_reply(&mut stream);
+        reply_body(&received, end, proof)
+    }
+
+    /// Read `stream` until it ends. A read error ends the read as
+    /// [`ReplyEnd::Broken`] and the bytes that arrived before it stay in the
+    /// result.
+    fn read_reply(stream: &mut impl io::Read) -> (Vec<u8>, ReplyEnd) {
+        let mut received = Vec::new();
+        // `read_to_end` leaves the bytes it read in `received` when it fails.
+        let end = match stream.read_to_end(&mut received) {
+            Ok(_) => ReplyEnd::Closed,
+            Err(_) => ReplyEnd::Broken,
+        };
+        (received, end)
     }
 
     fn https_get(
@@ -2670,8 +2711,9 @@ impl Client {
         port: u16,
         path: &str,
         login_key_timeout: Option<Duration>,
-    ) -> Option<Vec<u8>> {
-        Self::https_get_to(host, (host, port), path, login_key_timeout)
+        proof: BodyProof,
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        Self::https_get_to(host, (host, port), path, login_key_timeout, proof)
     }
 
     fn https_get_to(
@@ -2679,39 +2721,34 @@ impl Client {
         target: impl std::net::ToSocketAddrs,
         path: &str,
         login_key_timeout: Option<Duration>,
-    ) -> Option<Vec<u8>> {
-        use std::io::{Read, Write};
-        let tcp = if let Some(timeout) = login_key_timeout {
-            target
-                .to_socket_addrs()
-                .ok()?
-                .find_map(|addr| std::net::TcpStream::connect_timeout(&addr, timeout).ok())?
-        } else {
-            std::net::TcpStream::connect(target).ok()?
-        };
-        tcp.set_read_timeout(Some(login_key_timeout.unwrap_or(Duration::from_secs(8))))
+        proof: BodyProof,
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        use std::io::Write;
+        let connect = || -> Option<native_tls::TlsStream<std::net::TcpStream>> {
+            let tcp = if let Some(timeout) = login_key_timeout {
+                target
+                    .to_socket_addrs()
+                    .ok()?
+                    .find_map(|addr| std::net::TcpStream::connect_timeout(&addr, timeout).ok())?
+            } else {
+                std::net::TcpStream::connect(target).ok()?
+            };
+            tcp.set_read_timeout(Some(login_key_timeout.unwrap_or(Duration::from_secs(8))))
+                .ok()?;
+            if let Some(timeout) = login_key_timeout {
+                tcp.set_write_timeout(Some(timeout)).ok()?;
+            }
+            let mut stream = tls_connector().ok()?.connect(host, tcp).ok()?;
+            write!(
+                stream,
+                "GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            )
             .ok()?;
-        if let Some(timeout) = login_key_timeout {
-            tcp.set_write_timeout(Some(timeout)).ok()?;
-        }
-        let connector = native_tls::TlsConnector::new().ok()?;
-        let mut stream = connector.connect(host, tcp).ok()?;
-        write!(
-            stream,
-            "GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-        )
-        .ok()?;
-        let mut buf = Vec::new();
-        stream.read_to_end(&mut buf).ok()?;
-        Self::split_http_body(&buf)
-    }
-
-    pub(crate) fn split_http_body(buf: &[u8]) -> Option<Vec<u8>> {
-        if !buf.starts_with(b"HTTP/1.0 200 ") && !buf.starts_with(b"HTTP/1.1 200 ") {
-            return None;
-        }
-        let split = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
-        Some(buf[split + 4..].to_vec())
+            Some(stream)
+        };
+        let mut stream = connect().ok_or(AssetFetchError::Connection)?;
+        let (received, end) = Self::read_reply(&mut stream);
+        reply_body(&received, end, proof)
     }
 
     /// Extract the first whole decimal run of at least 250 digits in client.js.
@@ -2743,17 +2780,35 @@ impl Client {
         host: &str,
         port: u16,
     ) -> Option<String> {
+        Self::fetch_login_modulus_checked(transport, host, port).ok()
+    }
+
+    /// [`Self::fetch_login_modulus_for`] with the reason for a failure. The
+    /// key is always exactly [`LOGIN_MODULUS_DIGITS`] digits, however the
+    /// response ended: a shorter one is `Incomplete` and never returned, a
+    /// longer one or a body with no key is `Checksum`.
+    pub fn fetch_login_modulus_checked(
+        transport: crate::Transport,
+        host: &str,
+        port: u16,
+    ) -> Result<String, AssetFetchError> {
         let body = if transport.uses_tls() {
             Self::https_get(
                 host,
                 port,
                 "/client/client.js",
                 Some(Duration::from_secs(2)),
+                BodyProof::LoginKey,
             )?
         } else {
-            Self::http_get_plain(host, port, "/client/client.js")?
+            Self::http_get_plain(host, port, "/client/client.js", BodyProof::LoginKey)?
         };
-        Self::login_modulus_from_client_js(&body)
+        let key = Self::login_modulus_from_client_js(&body).ok_or(AssetFetchError::Checksum)?;
+        match key.len().cmp(&LOGIN_MODULUS_DIGITS) {
+            std::cmp::Ordering::Less => Err(AssetFetchError::Incomplete),
+            std::cmp::Ordering::Equal => Ok(key),
+            std::cmp::Ordering::Greater => Err(AssetFetchError::Checksum),
+        }
     }
 
     /// TS `getJagChecksums`: GET `/crc` (9×g4 + hash). Hash check matches
@@ -2762,8 +2817,9 @@ impl Client {
     /// `checksum problem` on a bad parse), which `fetch_jag_checksums`
     /// shows in the per-second countdown.
     fn get_jag_checksums(host: &str, port: u16) -> Result<[i32; 9], &'static str> {
-        let body = Self::http_get(host, port, "/crc").ok_or("connection problem")?;
-        Self::parse_jag_checksums(body)
+        let body = Self::http_get(host, port, "/crc", BodyProof::Checksums)
+            .map_err(AssetFetchError::message)?;
+        Self::parse_jag_checksums(&body)
     }
 
     pub fn get_jag_checksums_for(
@@ -2790,12 +2846,11 @@ impl Client {
         host: &str,
         target: impl std::net::ToSocketAddrs,
     ) -> Result<[i32; 9], AssetFetchError> {
-        let body = Self::http_get_to(transport, host, target, "/crc")
-            .ok_or(AssetFetchError::Connection)?;
-        Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
+        let body = Self::http_get_to(transport, host, target, "/crc", BodyProof::Checksums)?;
+        Self::parse_jag_checksums(&body).map_err(|_| AssetFetchError::Checksum)
     }
 
-    pub(crate) fn parse_jag_checksums(body: Vec<u8>) -> Result<[i32; 9], &'static str> {
+    pub(crate) fn parse_jag_checksums(body: &[u8]) -> Result<[i32; 9], &'static str> {
         if body.len() < 40 {
             return Err("checksum problem");
         }
@@ -2868,8 +2923,13 @@ impl Client {
                 return Ok(bytes);
             }
         }
-        let bytes = Self::http_get_for(transport, host, port, &format!("/{filename}{crc}"))
-            .ok_or(AssetFetchError::Connection)?;
+        let bytes = Self::http_get_for(
+            transport,
+            host,
+            port,
+            &format!("/{filename}{crc}"),
+            BodyProof::Crc(crc),
+        )?;
         Self::accept_jag_download(cache_dir, filename, crc, bytes)
     }
 
@@ -15597,7 +15657,7 @@ mod public_login_key_tests {
 
     #[test]
     fn extracts_first_long_decimal_run_and_fetches_from_client_js() {
-        let modulus = "1234567890".repeat(26);
+        let modulus = format!("{}123456789", "1234567890".repeat(30));
         let body = format!(
             "const short=12345; const key=\"{modulus}\"; const later=\"{}\";",
             "9".repeat(260)
@@ -15675,6 +15735,119 @@ mod public_login_key_tests {
             Client::get_jag_checksums_checked(Transport::Tcp, "127.0.0.1", port),
             Err(AssetFetchError::Connection)
         );
+    }
+
+    /// How the login key fetch reads a response that ends in each way
+    /// (`reply_server::end_cases`): a complete body behind an abrupt end
+    /// is the key, and a truncated key is never returned.
+    #[test]
+    fn login_key_fetch_reads_every_end_of_a_response() {
+        use crate::client::reply_server::{check_reader, end_cases};
+
+        let good = format!("const key=\"{}\";", crate::PROD_LOGIN_RSAN);
+        let cut = &good.as_bytes()[..good.len() - 30];
+        let cases = end_cases(good.as_bytes(), cut, crate::PROD_LOGIN_RSAN.to_string());
+        check_reader(&cases, |transport, port| {
+            Client::fetch_login_modulus_checked(transport, "localhost", port)
+        });
+    }
+
+    /// The login key is exactly the expected length however the response
+    /// ended: a shorter key is `Incomplete` and never returned, also from a
+    /// complete body that ends in order; a longer one is `Checksum`.
+    #[test]
+    fn login_key_fetch_wants_the_exact_modulus_length_at_every_end() {
+        use super::AssetFetchError;
+        use crate::client::reply_server::{framed, unframed, End, ReplyServer};
+
+        let key = |digits: usize| {
+            let digits = crate::PROD_LOGIN_RSAN.repeat(2)[..digits].to_string();
+            format!("const key=\"{digits}\";")
+        };
+        for transport in [Transport::Tcp, Transport::Wss] {
+            for (name, bytes, expect) in [
+                (
+                    "short key, no length, orderly close",
+                    unframed(key(280).as_bytes()),
+                    Err(AssetFetchError::Incomplete),
+                ),
+                (
+                    "short key, complete by its length",
+                    framed(key(280).as_bytes(), key(280).len()),
+                    Err(AssetFetchError::Incomplete),
+                ),
+                (
+                    "long key, complete by its length",
+                    framed(key(310).as_bytes(), key(310).len()),
+                    Err(AssetFetchError::Checksum),
+                ),
+                (
+                    "exact key, no length, orderly close",
+                    unframed(key(309).as_bytes()),
+                    Ok(crate::PROD_LOGIN_RSAN.to_string()),
+                ),
+            ] {
+                let server = ReplyServer::start(transport, bytes, End::Clean);
+                let got =
+                    Client::fetch_login_modulus_checked(transport, "localhost", server.port());
+                server.finish();
+                assert_eq!(got, expect, "{transport:?}: {name}");
+            }
+        }
+    }
+
+    /// The same for `/crc`.
+    #[test]
+    fn checksum_fetch_reads_every_end_of_a_response() {
+        use crate::client::reply_server::{check_reader, end_cases};
+
+        let checksums = [3, 1, 4, 1, 5, 9, 2, 6, 5];
+        let mut good: Vec<u8> = checksums
+            .iter()
+            .flat_map(|c: &i32| c.to_be_bytes())
+            .collect();
+        let hash = checksums
+            .iter()
+            .fold(1234i32, |hash, c| hash.wrapping_shl(1).wrapping_add(*c));
+        good.extend_from_slice(&hash.to_be_bytes());
+        let cases = end_cases(&good, &good[..36], checksums);
+        check_reader(&cases, |transport, port| {
+            Client::get_jag_checksums_at(transport, "localhost", ("127.0.0.1", port))
+        });
+    }
+
+    /// The same for a JAG file: a body that is not accepted is not cached.
+    #[test]
+    fn jag_file_fetch_reads_every_end_of_a_response() {
+        use crate::client::reply_server::{check_reader, end_cases};
+        use crate::io::Packet;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static DIRS: AtomicUsize = AtomicUsize::new(0);
+        let good: Vec<u8> = (0..4096u32).map(|n| (n * 7 % 251) as u8).collect();
+        let mut checksums = [0i32; 9];
+        checksums[1] = Packet::getcrc(&good, 0, good.len());
+        let root = std::env::temp_dir().join(format!("274bot-jag-ends-{}", std::process::id()));
+        let cases = end_cases(&good, &good[..2048], good.clone());
+        check_reader(&cases, |transport, port| {
+            let dir = root.join(DIRS.fetch_add(1, Ordering::SeqCst).to_string());
+            let fetched = Client::get_jag_file_checked(
+                transport,
+                dir.to_str().unwrap(),
+                "localhost",
+                port,
+                "title",
+                1,
+                &checksums,
+            );
+            assert_eq!(
+                dir.join("title").is_file(),
+                fetched.is_ok(),
+                "a file is cached exactly when the fetch succeeded"
+            );
+            fetched
+        });
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Read the whole request head and return its request line. A mock that

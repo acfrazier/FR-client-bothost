@@ -8,13 +8,19 @@
 //! read timeout, 2 s over TCP and 8 s over TLS, counted from the last bytes
 //! received. The caller looks up the host's addresses: the fetch never
 //! calls the resolver, which cannot be interrupted.
+//!
+//! What the bytes received are worth when the connection ends, and when it
+//! breaks (a TLS close without `close_notify`, a reset, a quiet limit), is
+//! decided by `http_reply::reply_body`, as for the blocking fetch: the bytes
+//! that arrived are kept, a `Content-Length` frames the body, and a body with
+//! no length counts after a broken end only when its [`BodyProof`] holds.
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 use crate::client::client::AssetFetchError;
-use crate::client::Client;
+use crate::client::http_reply::{reply_body, tls_connector, BodyProof, ReplyEnd};
 use crate::io::client_stream::{park_until_ready, PendingConnect, Readiness};
 use crate::Transport;
 
@@ -26,6 +32,8 @@ const TLS_QUIET_LIMIT: Duration = Duration::from_secs(8);
 pub(super) struct HttpFetch {
     host: String,
     request: Vec<u8>,
+    /// What shows a body with no `Content-Length` whole after a broken end.
+    proof: BodyProof,
     /// The TLS connector for a fetch over TLS; `None` over plain TCP.
     tls: Option<native_tls::TlsConnector>,
     quiet_limit: Duration,
@@ -83,19 +91,21 @@ const FAILED: AssetFetchError = AssetFetchError::Connection;
 impl HttpFetch {
     /// Start the connect to `addrs`, the addresses of `host` that the
     /// caller looked up. No other wait happens here. `host` names the
-    /// server in the request and for TLS.
+    /// server in the request and for TLS. `proof` is what the body of
+    /// `path` shows it whole with, as for the blocking fetch.
     pub(super) fn start(
         transport: Transport,
         host: &str,
         addrs: &[SocketAddr],
         path: &str,
+        proof: BodyProof,
     ) -> Result<Self, AssetFetchError> {
         let tls = if transport.uses_tls() {
-            Some(native_tls::TlsConnector::new().map_err(|_| FAILED)?)
+            Some(tls_connector().map_err(|_| FAILED)?)
         } else {
             None
         };
-        Ok(Self::start_with(tls, host, addrs, path))
+        Ok(Self::start_with(tls, host, addrs, path, proof))
     }
 
     fn start_with(
@@ -103,6 +113,7 @@ impl HttpFetch {
         host: &str,
         addrs: &[SocketAddr],
         path: &str,
+        proof: BodyProof,
     ) -> Self {
         let request = if tls.is_some() {
             format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n")
@@ -112,6 +123,7 @@ impl HttpFetch {
         Self {
             host: host.to_string(),
             request: request.into_bytes(),
+            proof,
             quiet_limit: if tls.is_some() {
                 TLS_QUIET_LIMIT
             } else {
@@ -143,7 +155,7 @@ impl HttpFetch {
             let now = Instant::now();
             let quiet_at = self.progress_at.map(|at| at + self.quiet_limit);
             if quiet_at.is_some_and(|quiet_at| now >= quiet_at) {
-                return Err(self.fail());
+                return self.quiet().map(Some);
             }
             if now >= until {
                 return Ok(None);
@@ -155,6 +167,17 @@ impl HttpFetch {
                 }
             }
         }
+    }
+
+    /// The fetch has been quiet for its limit. A response that is whole by
+    /// its `Content-Length` is a result; anything else is a failure, as a
+    /// read timeout is for the blocking fetch.
+    fn quiet(&mut self) -> Result<Vec<u8>, AssetFetchError> {
+        let State::Receiving { response, .. } = std::mem::replace(&mut self.state, State::Failed)
+        else {
+            return Err(FAILED);
+        };
+        reply_body(&response, ReplyEnd::Broken, self.proof)
     }
 
     fn fail(&mut self) -> AssetFetchError {
@@ -240,9 +263,8 @@ impl HttpFetch {
                     let mut chunk = [0u8; 16 * 1024];
                     match conn.read(&mut chunk) {
                         Ok(0) => {
-                            return Client::split_http_body(&response)
-                                .map(Advance::Done)
-                                .ok_or(FAILED);
+                            return reply_body(&response, ReplyEnd::Closed, self.proof)
+                                .map(Advance::Done);
                         }
                         Ok(n) => {
                             response.extend_from_slice(&chunk[..n]);
@@ -256,7 +278,10 @@ impl HttpFetch {
                             self.state = State::Receiving { conn, response };
                             return Ok(Advance::Blocked(Readiness::Read));
                         }
-                        Err(_) => return Err(FAILED),
+                        Err(_) => {
+                            return reply_body(&response, ReplyEnd::Broken, self.proof)
+                                .map(Advance::Done);
+                        }
                     }
                 }
                 State::Failed => return Err(FAILED),
@@ -331,8 +356,14 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
             socket.write_all(&response(b"crc-body")).unwrap();
         });
-        let mut fetch =
-            HttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
+        let mut fetch = HttpFetch::start(
+            Transport::Tcp,
+            "127.0.0.1",
+            &loopback(port),
+            "/crc",
+            BodyProof::Checksums,
+        )
+        .unwrap();
         let (body, polls, longest) = poll_steps(&mut fetch);
         server.join().unwrap();
         assert_eq!(body.unwrap(), b"crc-body");
@@ -357,8 +388,14 @@ mod tests {
             let _ = done_rx.recv_timeout(Duration::from_secs(10));
         });
         let started = Instant::now();
-        let mut fetch =
-            HttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
+        let mut fetch = HttpFetch::start(
+            Transport::Tcp,
+            "127.0.0.1",
+            &loopback(port),
+            "/crc",
+            BodyProof::Checksums,
+        )
+        .unwrap();
         let (body, _, longest) = poll_steps(&mut fetch);
         let failed = started.elapsed();
         done_tx.send(()).unwrap();
@@ -401,8 +438,13 @@ mod tests {
             .add_root_certificate(native_tls::Certificate::from_pem(ca).unwrap())
             .build()
             .unwrap();
-        let mut fetch =
-            HttpFetch::start_with(Some(connector), "localhost", &loopback(port), "/config1234");
+        let mut fetch = HttpFetch::start_with(
+            Some(connector),
+            "localhost",
+            &loopback(port),
+            "/config1234",
+            BodyProof::Checksums,
+        );
         let (fetched, polls, longest) = poll_steps(&mut fetch);
         server.join().unwrap();
         assert_eq!(fetched.unwrap(), body);
@@ -412,5 +454,68 @@ mod tests {
         );
         assert!(polls > 10, "{polls} polls");
         assert!(longest < STEP_BOUND, "longest poll {longest:?}");
+    }
+
+    /// The stepped fetch reads every end of a response as the blocking fetch
+    /// does (`reply_server::end_cases`), for a `/crc` body and a JAG body.
+    #[test]
+    fn the_fetch_reads_every_end_of_a_response() {
+        use crate::client::reply_server::{check_reader, end_cases};
+        use crate::io::Packet;
+
+        let fetch_body = |proof| {
+            move |transport, port| {
+                let mut fetch =
+                    HttpFetch::start(transport, "localhost", &loopback(port), "/title1234", proof)
+                        .unwrap();
+                poll_steps(&mut fetch).0
+            }
+        };
+        let jag: Vec<u8> = (0..4096u32).map(|n| (n * 7 % 251) as u8).collect();
+        let jag_crc = Packet::getcrc(&jag, 0, jag.len());
+        check_reader(
+            &end_cases(&jag, &jag[..2048], jag.clone()),
+            fetch_body(BodyProof::Crc(jag_crc)),
+        );
+        let mut crc: Vec<u8> = [3i32, 1, 4, 1, 5, 9, 2, 6, 5]
+            .iter()
+            .flat_map(|c| c.to_be_bytes())
+            .collect();
+        let hash = [3i32, 1, 4, 1, 5, 9, 2, 6, 5]
+            .iter()
+            .fold(1234i32, |hash, c| hash.wrapping_shl(1).wrapping_add(*c));
+        crc.extend_from_slice(&hash.to_be_bytes());
+        check_reader(
+            &end_cases(&crc, &crc[..36], crc.clone()),
+            fetch_body(BodyProof::Checksums),
+        );
+    }
+
+    /// A server that sends a whole length-framed response and then stays
+    /// quiet and open still gives the body, when the quiet limit ends the
+    /// fetch.
+    #[test]
+    fn a_whole_framed_response_wins_over_a_server_that_stays_open() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            read_head(&mut socket);
+            socket.write_all(&response(b"crc-body")).unwrap();
+            let _ = done_rx.recv_timeout(Duration::from_secs(10));
+        });
+        let mut fetch = HttpFetch::start(
+            Transport::Tcp,
+            "127.0.0.1",
+            &loopback(port),
+            "/crc",
+            BodyProof::Checksums,
+        )
+        .unwrap();
+        let (body, _, _) = poll_steps(&mut fetch);
+        done_tx.send(()).unwrap();
+        server.join().unwrap();
+        assert_eq!(body.unwrap(), b"crc-body");
     }
 }

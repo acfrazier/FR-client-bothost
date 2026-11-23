@@ -12,10 +12,13 @@ pub mod config;
 pub use config::ClientConfig;
 pub mod game_shell;
 mod ground_trace_289;
+pub(crate) mod http_reply;
 mod mouse_recorder_289;
 mod outbound_289;
 mod outbound_377;
 pub mod packet_377;
+#[cfg(test)]
+pub(crate) mod reply_server;
 pub use game_shell::GameShell;
 pub mod key_codes;
 pub use key_codes::lookup;
