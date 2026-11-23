@@ -3964,13 +3964,9 @@ impl Client {
                 "Your account is already logged in.".into(),
                 "Try again in 60 secs...".into(),
             ),
-            6 if self.revision.is_377() => (
-                "RuneScape has been updated!".into(),
-                "Please reload this page.".into(),
-            ),
             6 => (
                 "RuneScape has been updated!".into(),
-                "Wrong RSA key; check this world's login key.".into(),
+                "Please reload this page.".into(),
             ),
             7 => (
                 "This world is full.".into(),

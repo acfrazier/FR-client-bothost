@@ -136,10 +136,9 @@ fn response_26_matches_java() {
 #[test]
 fn legacy_messages_and_host_owned_transfer_are_unchanged() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        assert_eq!(
-            refusal(6, revision).mes2,
-            "Wrong RSA key; check this world's login key."
-        );
+        let response = refusal(6, revision);
+        assert_eq!(response.mes1, "RuneScape has been updated!");
+        assert_eq!(response.mes2, "Please reload this page.");
         for code in [18, 22, 23, 24, 25, 26] {
             assert_eq!(refusal(code, revision).mes1, "Unexpected server response");
         }
