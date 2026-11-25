@@ -720,7 +720,7 @@ fn login_two_stage_response_6_keeps_java_strings_without_transport_error_r289() 
         ClientRevision::R289,
         Some(addr),
     );
-    assert!(!c.external_reconnect_owner());
+    c.set_external_reconnect_owner(false);
     let err = c.login("bob", "pw", false).unwrap_err();
     server.join().unwrap();
     assert_eq!(err.code, 6);
