@@ -484,6 +484,8 @@ fn login_code_6_is_error() {
     let mut c = login_client(addr, false);
     let e = c.login("bob", "pw", false).unwrap_err();
     assert_eq!(e.code, 6);
+    assert!(!c.external_reconnect_owner());
+    assert!(e.transport.is_none());
     assert_eq!(e.mes1, "RuneScape has been updated!");
     assert_eq!(e.mes2, "Please reload this page.");
     assert_eq!(c.login_mes1, "RuneScape has been updated!");

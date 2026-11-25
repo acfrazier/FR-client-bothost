@@ -691,6 +691,48 @@ fn login_production_outer_frame_and_isaac_r289() {
 }
 
 #[test]
+fn login_two_stage_response_6_keeps_java_strings_without_transport_error_r289() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14);
+        s.write_all(&[0u8; 9]).unwrap();
+        s.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).unwrap();
+        let mut frame_hdr = [0u8; 2];
+        s.read_exact(&mut frame_hdr).unwrap();
+        assert_eq!(frame_hdr[0], 16);
+        let mut payload = vec![0u8; frame_hdr[1] as usize];
+        s.read_exact(&mut payload).unwrap();
+        s.write_all(&[6]).unwrap();
+    });
+
+    let mut c = isolation::IsolatedClient::with_config(
+        ClientConfig {
+            host: String::new(),
+            port: 0,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R289,
+        Some(addr),
+    );
+    assert!(!c.external_reconnect_owner());
+    let err = c.login("bob", "pw", false).unwrap_err();
+    server.join().unwrap();
+    assert_eq!(err.code, 6);
+    assert!(err.transport.is_none());
+    assert_eq!(err.mes1, "RuneScape has been updated!");
+    assert_eq!(err.mes2, "Please reload this page.");
+    assert_eq!(c.login_mes1, "RuneScape has been updated!");
+    assert_eq!(c.login_mes2, "Please reload this page.");
+    assert!(!c.ingame);
+}
+
+#[test]
 fn login_wrapper_p2_revision_274_default() {
     let c = isolation::IsolatedClient::with_default_config(cfg());
     assert_eq!(c.revision(), ClientRevision::R274);
