@@ -13,9 +13,7 @@ pub use midi::{Midi, NullMidi, PreparedSong, SongPreparer};
 pub use output::{Fade, WavePlayback};
 pub use tone::Tone;
 
-#[cfg(all(feature = "audio", feature = "test-support"))]
-pub use midi::preload_sound_font_async_gated;
 #[cfg(feature = "audio")]
-pub use midi::{preload_sound_font_async, RustyMidi};
+pub use midi::RustyMidi;
 #[cfg(feature = "audio")]
 pub use output::{AudioError, AudioOut};

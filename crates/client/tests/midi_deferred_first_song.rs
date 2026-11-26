@@ -6,7 +6,8 @@
 //! test binary. The loader thread is gated: it does not touch the disk until
 //! the test releases it, so "the load is still running" is a state the test
 //! holds, not a race it hopes to win. Three clients share that one loading
-//! window: one plays, one is stopped, one is superseded by a newer song.
+//! window: one plays, one is stopped, one is superseded by a newer song and
+//! one gets garbage bytes after a valid song (the garbage is rejected).
 #![cfg(all(feature = "audio", feature = "test-support"))]
 
 #[path = "common/isolation.rs"]
@@ -17,7 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use client::client::ClientConfig;
-use client::sound::{preload_sound_font_async_gated, Midi, RustyMidi};
+use client::sound::midi::preload_sound_font_async_gated;
+use client::sound::{Midi, RustyMidi};
 
 /// A valid one-track MIDI whose only note sounds 8192 ticks (about 8.5 s)
 /// after the start: it plays, but the first second is silent.
@@ -83,6 +85,7 @@ fn songs_arriving_during_the_background_font_load_are_held_not_loaded() {
     let mut played = slot();
     let mut stopped = slot();
     let mut superseded = slot();
+    let mut kept = slot();
 
     // The loader is parked before its first file read. A slot-thread load
     // would leave a SoundFont behind; a blocking wait would never return.
@@ -91,7 +94,9 @@ fn songs_arriving_during_the_background_font_load_are_held_not_loaded() {
     stopped.client.stop_midi();
     superseded.client.save_midi(&song, true);
     superseded.client.save_midi(LATE_NOTE_MIDI, true);
-    for s in [&mut played, &mut stopped, &mut superseded] {
+    kept.client.save_midi(&song, true);
+    kept.client.save_midi(b"not a midi file", true);
+    for s in [&mut played, &mut stopped, &mut superseded, &mut kept] {
         s.client.music_tick();
         assert!(
             !s.midi.lock().unwrap().has_sound_font(),
@@ -114,7 +119,7 @@ fn songs_arriving_during_the_background_font_load_are_held_not_loaded() {
     release.send(()).unwrap();
     loader.join().unwrap();
 
-    for s in [&mut played, &mut stopped, &mut superseded] {
+    for s in [&mut played, &mut stopped, &mut superseded, &mut kept] {
         s.client.music_tick();
     }
 
@@ -139,5 +144,14 @@ fn songs_arriving_during_the_background_font_load_are_held_not_loaded() {
     assert!(
         superseded.peak_of_one_second() < 1e-4,
         "the superseded song must not start"
+    );
+
+    // Garbage after a valid held song is rejected and does not replace it:
+    // the valid first song still starts once the font is there.
+    assert!(kept.client.midi_playing && !kept.client.midi_deferred);
+    assert!(kept.midi.lock().unwrap().is_playing());
+    assert!(
+        kept.peak_of_one_second() > 0.01,
+        "rejected bytes must not replace the held song"
     );
 }

@@ -14462,20 +14462,22 @@ impl Client {
 
     /// Start the first song the backend held while the host's background
     /// SoundFont load ran. Still loading: keep waiting, touch nothing. Ready:
-    /// the normal play path runs and finds the font in memory. The fade was
-    /// already restored when the song was accepted, so only a rejected song
-    /// needs undoing.
+    /// the synthesizer is built off the lock from the in-memory font (no file
+    /// read) and swapped in. The fade was already restored when the song was
+    /// accepted, so only a failed start needs undoing.
     fn start_deferred_midi(&mut self) {
-        let (song, still_held) = {
+        let (start, still_held) = {
             let mut midi = self.midi.lock().unwrap();
-            (midi.take_deferred_song(), midi.awaiting_sound_font())
+            (midi.take_deferred_start(), midi.awaiting_sound_font())
         };
         self.midi_deferred = still_held;
-        if let Some(data) = song {
-            if !self.play_midi(&data, self.midi_volume, false) {
+        if let Some(start) = start {
+            let song = start();
+            let mut midi = self.midi.lock().unwrap();
+            if !midi.play_prepared(song, self.midi_volume, false) {
                 self.midi_playing = false;
             }
-            self.midi_deferred = self.midi.lock().unwrap().awaiting_sound_font();
+            self.midi_deferred = midi.awaiting_sound_font();
         }
     }
 

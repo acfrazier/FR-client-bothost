@@ -14,6 +14,11 @@ pub struct PreparedSong(pub Box<dyn Any + Send>);
 /// can run it without holding the lock the audio callback renders under.
 pub type SongPreparer = Box<dyn FnOnce(&[u8]) -> PreparedSong + Send>;
 
+/// The slow half of starting a song the backend held for the SoundFont load
+/// (synthesizer build only; the song is already parsed), detached like a
+/// [`SongPreparer`] so it runs without the shared `midi` lock.
+pub type DeferredStart = Box<dyn FnOnce() -> PreparedSong + Send>;
+
 pub trait Midi: Send {
     /// `saveMidi(fading, data)`: start the on-demand archive-2 bytes. The
     /// 274 `midivol` ladder is applied by the output `Fade`, never here.
@@ -39,14 +44,15 @@ pub trait Midi: Send {
     /// True while the backend holds a song it could not start yet because the
     /// host's background SoundFont load (`preload_sound_font_async`) is still
     /// running. Only the `audio` backend ever defers; the song is released by
-    /// [`Midi::take_deferred_song`].
+    /// [`Midi::take_deferred_start`].
     fn awaiting_sound_font(&self) -> bool {
         false
     }
-    /// Hand back the held song's bytes once the SoundFont is ready, so the
-    /// caller can run the normal prepare/play path (no file read left to do).
-    /// `None` while the load is still running or when nothing is held.
-    fn take_deferred_song(&mut self) -> Option<Vec<u8>> {
+    /// Release the held song once the SoundFont is ready: the returned start
+    /// builds its synthesizer off the lock (no file read left to do) and its
+    /// result goes to [`Midi::play_prepared`]. `None` while the load is still
+    /// running or when nothing is held.
+    fn take_deferred_start(&mut self) -> Option<DeferredStart> {
         None
     }
     /// `stopMidi()`: silence the current song. A song still held for the
@@ -137,7 +143,7 @@ mod rusty {
         MidiFile, MidiFileLoopType, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings,
     };
 
-    use super::{Midi, PreparedSong, SongPreparer};
+    use super::{DeferredStart, Midi, PreparedSong, SongPreparer};
 
     const SAMPLE_RATE: i32 = 22050;
 
@@ -255,8 +261,9 @@ mod rusty {
         cache_dir: String,
         sequencer: Option<MidiFileSequencer>,
         /// The newest song that arrived while the host's background
-        /// SoundFont load was still running; see `take_deferred_song`.
-        deferred: Option<Vec<u8>>,
+        /// SoundFont load was still running, already parsed; see
+        /// `take_deferred_start`.
+        deferred: Option<Arc<MidiFile>>,
     }
 
     impl RustyMidi {
@@ -314,9 +321,10 @@ mod rusty {
                 self.sequencer = sequencer;
             }
             let midi_file = match outcome {
-                Outcome::AwaitingFont(bytes) => {
-                    // The newest song wins; the slot thread did no disk work.
-                    self.deferred = Some(bytes);
+                Outcome::AwaitingFont(song) => {
+                    // The newest valid song wins; the slot thread did no disk
+                    // work.
+                    self.deferred = Some(song);
                     return true;
                 }
                 Outcome::Silent => {
@@ -348,9 +356,9 @@ mod rusty {
         /// No SoundFont/synthesizer: the backend accepts and stays silent,
         /// like `NullMidi`; there is nothing to leave playing.
         Silent,
-        /// The host's background SoundFont load is still running: the bytes
-        /// are held (unparsed) until it finishes. Nothing was read from disk.
-        AwaitingFont(Vec<u8>),
+        /// The host's background SoundFont load is still running: the parsed
+        /// song is held until it finishes. Nothing was read from disk.
+        AwaitingFont(Arc<MidiFile>),
         /// The bytes are not a MIDI file the backend can play.
         Rejected,
         Song(Arc<MidiFile>),
@@ -363,9 +371,14 @@ mod rusty {
         let sequencer = if needs_sequencer {
             match font_for_play(cache_dir) {
                 FontLookup::Loading => {
+                    // Parsing needs no SoundFont and no disk: validate now, so
+                    // garbage never replaces a valid held song.
                     return Prepared {
                         sequencer: None,
-                        outcome: Outcome::AwaitingFont(data.to_vec()),
+                        outcome: match parse_song(data) {
+                            Some(song) => Outcome::AwaitingFont(song),
+                            None => Outcome::Rejected,
+                        },
                     };
                 }
                 FontLookup::Ready(font) => font.and_then(|font| sequencer_from_font(&font)),
@@ -379,17 +392,20 @@ mod rusty {
                 outcome: Outcome::Silent,
             };
         }
-        let outcome = match MidiFile::new_with_loop_type(
-            &mut Cursor::new(data),
-            MidiFileLoopType::RpgMaker,
-        ) {
-            Ok(midi_file) => Outcome::Song(Arc::new(midi_file)),
-            // A rejected swap-in must not silently keep the old song: the
-            // caller leaves the fade at the floor, so the previous song
-            // cannot come back at full volume.
-            Err(_) => Outcome::Rejected,
+        // A rejected swap-in must not silently keep the old song: the caller
+        // leaves the fade at the floor, so the previous song cannot come back
+        // at full volume.
+        let outcome = match parse_song(data) {
+            Some(midi_file) => Outcome::Song(midi_file),
+            None => Outcome::Rejected,
         };
         Prepared { sequencer, outcome }
+    }
+
+    fn parse_song(data: &[u8]) -> Option<Arc<MidiFile>> {
+        MidiFile::new_with_loop_type(&mut Cursor::new(data), MidiFileLoopType::RpgMaker)
+            .ok()
+            .map(Arc::new)
     }
 
     impl Midi for RustyMidi {
@@ -424,13 +440,19 @@ mod rusty {
             self.deferred.is_some()
         }
 
-        fn take_deferred_song(&mut self) -> Option<Vec<u8>> {
+        fn take_deferred_start(&mut self) -> Option<DeferredStart> {
             // `FONT.get()` never blocks: ready means loaded or known missing.
-            if FONT.get().is_some() {
-                self.deferred.take()
-            } else {
-                None
-            }
+            let font = FONT.get()?.clone();
+            let song = self.deferred.take()?;
+            Some(Box::new(move || {
+                let sequencer = font.and_then(|font| sequencer_from_font(&font));
+                let outcome = if sequencer.is_some() {
+                    Outcome::Song(song)
+                } else {
+                    Outcome::Silent
+                };
+                PreparedSong(Box::new(Prepared { sequencer, outcome }))
+            }))
         }
 
         fn stop(&mut self) {
