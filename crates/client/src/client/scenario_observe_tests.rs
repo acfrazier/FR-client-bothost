@@ -493,3 +493,36 @@ fn invalid_selection_and_unselected_varp_fail_closed() {
         Err(DecodedDomainFault::NotArmed)
     );
 }
+
+#[test]
+fn failed_apply_voids_partial_events_instead_of_reusing_stamps() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let (mut client, _environment) = test_client(revision);
+        arm(
+            &mut client,
+            DecodedDomainSelection {
+                stat_skills: vec![0],
+                ..DecodedDomainSelection::default()
+            },
+            8,
+        );
+        send_stat(&mut client, revision, 0, 100, 1);
+        let opcode = match revision {
+            ClientRevision::R274 => ServerProt::UPDATE_STAT,
+            _ => ServerProt289::UPDATE_STAT,
+        };
+        // A truncated frame panics inside the apply and is caught as T2.
+        send(&mut client, opcode, &[0]);
+        let (drain, events) = drain_events(&mut client);
+        assert_eq!(
+            drain.fault,
+            Some(DecodedDomainFault::ApplyFailed),
+            "{revision:?}"
+        );
+        assert_eq!(
+            drain.written, 0,
+            "{revision:?}: no event survives a failed apply"
+        );
+        assert!(events.iter().all(Option::is_none));
+    }
+}

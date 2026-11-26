@@ -32,6 +32,8 @@ pub enum DecodedDomainFault {
     SessionChanged,
     CounterOverflow,
     NotSelected,
+    /// A packet failed to apply after it began; its partial events are void.
+    ApplyFailed,
 }
 
 /// Counts written to caller-owned storage and the observer's retained fault.
@@ -574,6 +576,17 @@ impl Client {
         if !self.decoded_domain_counter_overflowed {
             self.decoded_domain_application_serial = self.decoded_domain_current_application_serial;
         }
+    }
+
+    /// A packet that began dispatch did not apply cleanly (a protocol error
+    /// or a caught panic). Events it already recorded are not an applied
+    /// state, so latch `ApplyFailed` (which drops queued events) and still
+    /// consume the serial, so no later packet reuses its stamps.
+    pub(super) fn fail_decoded_domain_dispatch(&mut self) {
+        if let Some(observer) = self.decoded_domain_observer.as_mut() {
+            observer.latch_fault(DecodedDomainFault::ApplyFailed);
+        }
+        self.finish_decoded_domain_dispatch();
     }
 
     pub(super) fn reset_decoded_domain_counters(&mut self) {

@@ -5874,6 +5874,10 @@ impl Client {
             }));
             #[cfg(feature = "scenario-observe")]
             let applied = result.as_ref().is_ok_and(|result| result.is_ok());
+            #[cfg(feature = "scenario-observe")]
+            if !applied {
+                self.fail_decoded_domain_dispatch();
+            }
             match result {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
@@ -5900,6 +5904,10 @@ impl Client {
             }));
             #[cfg(feature = "scenario-observe")]
             let applied = result.is_ok();
+            #[cfg(feature = "scenario-observe")]
+            if !applied {
+                self.fail_decoded_domain_dispatch();
+            }
             match result {
                 Ok(R289Outcome::Applied(publication)) => publication.publish(&mut self.gens),
                 Ok(R289Outcome::Reset) => {}
@@ -5921,6 +5929,8 @@ impl Client {
             self.dispatch_packet(ptype, payload);
         }));
         if result.is_err() {
+            #[cfg(feature = "scenario-observe")]
+            self.fail_decoded_domain_dispatch();
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
             self.record_session_exit(self.protocol_error("T2", ptype));
             // `logout()` bumps every family (spec: REBUILD/logout → all).
