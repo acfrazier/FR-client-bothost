@@ -756,7 +756,7 @@ impl Client {
                 let inv = self.iface_mut(component as usize).unwrap();
                 let types = inv.link_obj_type.as_mut().unwrap();
                 let numbers = inv.link_obj_number.as_mut().unwrap();
-                for entry in entries {
+                for entry in &entries {
                     let slot = entry.slot as usize;
                     if slot < types.len() {
                         types[slot] = entry.entry.object_plus_one;
@@ -765,6 +765,13 @@ impl Client {
                 }
                 self.redraw_side = true;
                 self.observe_inventory_partial(component);
+                #[cfg(feature = "scenario-observe")]
+                self.observe_decoded_inventory_partial(
+                    component,
+                    entries
+                        .iter()
+                        .map(|entry| (entry.slot, entry.entry.object_plus_one, entry.entry.count)),
+                );
                 p.inv = true;
             }
             O::InventoryStopTransmit { component } => {
@@ -775,8 +782,12 @@ impl Client {
                     .as_mut()
                     .unwrap()
                     .fill(0);
+                self.observe_inventory_stop(component);
                 p.inv = true;
             }
+            #[cfg(feature = "scenario-observe")]
+            O::Varp { id, value, form } => return Some(self.apply_varp_289(id, value, form)),
+            #[cfg(not(feature = "scenario-observe"))]
             O::Varp { id, value } => return Some(self.apply_varp_289(id, value)),
             O::VarpSync => return Some(self.apply_varp_sync_289()),
             O::UpdateStat {

@@ -32,6 +32,8 @@ use crate::client::http_reply::{
 use crate::client::login_error::{LoginError, LoginStage, LoginTransportError};
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::packet_377::rebuild_377::Rebuild377;
+#[cfg(feature = "scenario-observe")]
+use crate::client::packet_377::VarpPacketForm;
 use crate::client::skill::Skill;
 use crate::config::if_type::{
     default_mut, ButtonType, ComponentType, IfType, IfTypeMut, IfTypeOwned, IfTypeView,
@@ -1063,6 +1065,16 @@ pub struct Client {
     main_modal_packet_state: MainModalPacketState,
     local_animation_update: Option<LocalAnimationUpdate>,
     packet_observation: u64,
+    #[cfg(feature = "scenario-observe")]
+    pub(super) decoded_domain_observer: Option<Box<super::scenario_observe::DecodedDomainObserver>>,
+    #[cfg(feature = "scenario-observe")]
+    pub(super) decoded_domain_source_serial: u64,
+    #[cfg(feature = "scenario-observe")]
+    pub(super) decoded_domain_application_serial: u64,
+    #[cfg(feature = "scenario-observe")]
+    pub(super) decoded_domain_current_application_serial: u64,
+    #[cfg(feature = "scenario-observe")]
+    pub(super) decoded_domain_counter_overflowed: bool,
     session_profile: Option<Arc<ClientSessionProfile>>,
     transport: crate::Transport,
     cheat_admission: CheatAdmission,
@@ -1883,6 +1895,8 @@ impl Client {
         state.full_generation = state.full_generation.wrapping_add(1);
         state.transmitting = true;
         state.full_observation = observation;
+        #[cfg(feature = "scenario-observe")]
+        self.observe_decoded_inventory_full(component);
     }
 
     fn observe_inventory_partial(&mut self, component: i32) {
@@ -1897,6 +1911,8 @@ impl Client {
         let state = self.inventory_packet_states.entry(component).or_default();
         state.generation = state.generation.wrapping_add(1);
         state.transmitting = false;
+        #[cfg(feature = "scenario-observe")]
+        self.observe_decoded_inventory_stop(component);
     }
 
     fn observe_main_modal_open(&mut self) {
@@ -2127,6 +2143,16 @@ impl Client {
             main_modal_packet_state: MainModalPacketState::default(),
             local_animation_update: None,
             packet_observation: 0,
+            #[cfg(feature = "scenario-observe")]
+            decoded_domain_observer: None,
+            #[cfg(feature = "scenario-observe")]
+            decoded_domain_source_serial: 0,
+            #[cfg(feature = "scenario-observe")]
+            decoded_domain_application_serial: 0,
+            #[cfg(feature = "scenario-observe")]
+            decoded_domain_current_application_serial: 0,
+            #[cfg(feature = "scenario-observe")]
+            decoded_domain_counter_overflowed: false,
             session_profile: construction.session_profile,
             transport,
             cheat_admission: CheatAdmission::Denied,
@@ -3916,6 +3942,8 @@ impl Client {
             self.local_player = Some(player);
             self.reset_packet_observations();
             self.gens.session = self.gens.session.wrapping_add(1);
+            #[cfg(feature = "scenario-observe")]
+            self.reset_decoded_domain_counters();
             self.session_start_gens = self.gens;
             // Java `Client.java` 3700: `prepareGame()` rebuilds the game
             // frame the title draw consumed (Task 4b nulls the game areas,
@@ -3953,6 +3981,8 @@ impl Client {
             self.scene_load_start_time = Instant::now();
             self.reset_packet_observations();
             self.gens.session = self.gens.session.wrapping_add(1);
+            #[cfg(feature = "scenario-observe")]
+            self.reset_decoded_domain_counters();
             self.session_start_gens = self.gens;
             self.stream = Some(stream);
             return Ok(());
@@ -5834,12 +5864,16 @@ impl Client {
     /// Packet OOB (and any other logic panic) is Java `catch (Exception)`:
     /// T2 + logout, so one short frame cannot take down the OS thread.
     pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
+        #[cfg(feature = "scenario-observe")]
+        self.begin_decoded_domain_dispatch();
         let ptype1 = self.ptype1;
         let ptype2 = self.ptype2;
         if self.revision.is_377() {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 self.dispatch_packet_377(ptype, payload)
             }));
+            #[cfg(feature = "scenario-observe")]
+            let applied = result.as_ref().is_ok_and(|result| result.is_ok());
             match result {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
@@ -5853,6 +5887,10 @@ impl Client {
                     self.logout();
                 }
             }
+            #[cfg(feature = "scenario-observe")]
+            if applied {
+                self.finish_decoded_domain_dispatch();
+            }
             return;
         }
         if self.revision.is_289() {
@@ -5860,6 +5898,8 @@ impl Client {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 self.dispatch_packet_289(ptype, payload)
             }));
+            #[cfg(feature = "scenario-observe")]
+            let applied = result.is_ok();
             match result {
                 Ok(R289Outcome::Applied(publication)) => publication.publish(&mut self.gens),
                 Ok(R289Outcome::Reset) => {}
@@ -5870,6 +5910,10 @@ impl Client {
                         self.logout();
                     }
                 }
+            }
+            #[cfg(feature = "scenario-observe")]
+            if applied {
+                self.finish_decoded_domain_dispatch();
             }
             return;
         }
@@ -5884,6 +5928,8 @@ impl Client {
         } else {
             // Preserve the established 274 publication behavior verbatim.
             self.bump_gens(ptype);
+            #[cfg(feature = "scenario-observe")]
+            self.finish_decoded_domain_dispatch();
         }
     }
 
@@ -6408,8 +6454,18 @@ impl Client {
                     ..Default::default()
                 }
             }
-            R289Operation::VarpSmall { id, value } => self.apply_varp_289(id, value),
-            R289Operation::VarpLarge { id, value } => self.apply_varp_289(id, value),
+            R289Operation::VarpSmall { id, value } => self.apply_varp_289(
+                id,
+                value,
+                #[cfg(feature = "scenario-observe")]
+                VarpPacketForm::Small,
+            ),
+            R289Operation::VarpLarge { id, value } => self.apply_varp_289(
+                id,
+                value,
+                #[cfg(feature = "scenario-observe")]
+                VarpPacketForm::Large,
+            ),
             R289Operation::VarpSync => self.apply_varp_sync_289(),
             R289Operation::UpdateStat { stat, xp, level } => {
                 self.apply_update_stat_289(stat, xp, level);
@@ -6603,7 +6659,7 @@ impl Client {
             if let (Some(types), Some(numbers)) =
                 (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
             {
-                for (slot, object, count) in entries {
+                for &(slot, object, count) in &entries {
                     if slot >= 0 && (slot as usize) < types.len() {
                         types[slot as usize] = object;
                         numbers[slot as usize] = count;
@@ -6612,6 +6668,8 @@ impl Client {
             }
         }
         self.observe_inventory_partial(component);
+        #[cfg(feature = "scenario-observe")]
+        self.observe_decoded_inventory_partial(component, entries.iter().copied());
     }
 
     fn apply_inventory_stop_transmit_289(&mut self, component: i32) {
@@ -6627,7 +6685,12 @@ impl Client {
         self.observe_inventory_stop(component);
     }
 
-    fn apply_varp_289(&mut self, id: i32, value: i32) -> R289Publication {
+    fn apply_varp_289(
+        &mut self,
+        id: i32,
+        value: i32,
+        #[cfg(feature = "scenario-observe")] form: VarpPacketForm,
+    ) -> R289Publication {
         let changed = self.var.get(id as usize).copied().unwrap_or(0) != value;
         grow_write(&mut self.var_serv, id, value);
         if changed {
@@ -6638,6 +6701,8 @@ impl Client {
                 self.redraw_chat = true;
             }
         }
+        #[cfg(feature = "scenario-observe")]
+        self.observe_decoded_varp_direct(id, value, form);
         R289Publication {
             varp: true,
             ..Default::default()
@@ -6659,6 +6724,8 @@ impl Client {
         if changed {
             self.redraw_side = true;
         }
+        #[cfg(feature = "scenario-observe")]
+        self.observe_decoded_varp_sync();
         R289Publication {
             varp: true,
             ..Default::default()
@@ -6680,6 +6747,8 @@ impl Client {
                 }
             }
             self.stat_base_level[index] = base;
+            #[cfg(feature = "scenario-observe")]
+            self.observe_decoded_stat(stat, level, xp);
         }
     }
 
@@ -9200,6 +9269,8 @@ impl Client {
                         }
                     }
                     self.stat_base_level[stat as usize] = base;
+                    #[cfg(feature = "scenario-observe")]
+                    self.observe_decoded_stat(stat, level, xp);
                 }
                 self.ptype = -1;
             }
@@ -9296,6 +9367,8 @@ impl Client {
                     self.client_var(varp_id);
                     self.redraw_side = true;
                 }
+                #[cfg(feature = "scenario-observe")]
+                self.observe_decoded_varp_direct(varp_id, value, VarpPacketForm::Small);
                 self.ptype = -1;
             }
 
@@ -9309,6 +9382,8 @@ impl Client {
                     self.client_var(varp_id);
                     self.redraw_side = true;
                 }
+                #[cfg(feature = "scenario-observe")]
+                self.observe_decoded_varp_direct(varp_id, value, VarpPacketForm::Large);
                 self.ptype = -1;
             }
 
@@ -9327,6 +9402,8 @@ impl Client {
                         self.redraw_side = true;
                     }
                 }
+                #[cfg(feature = "scenario-observe")]
+                self.observe_decoded_varp_sync();
                 self.ptype = -1;
             }
 
@@ -14956,7 +15033,7 @@ impl Client {
             if let (Some(link_types), Some(link_numbers)) =
                 (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
             {
-                for (slot, id, count) in staged {
+                for &(slot, id, count) in &staged {
                     if slot >= 0 && (slot as usize) < link_types.len() {
                         link_types[slot as usize] = id;
                         link_numbers[slot as usize] = count;
@@ -14965,6 +15042,8 @@ impl Client {
             }
         }
         self.observe_inventory_partial(com_id);
+        #[cfg(feature = "scenario-observe")]
+        self.observe_decoded_inventory_partial(com_id, staged.iter().copied());
     }
 }
 

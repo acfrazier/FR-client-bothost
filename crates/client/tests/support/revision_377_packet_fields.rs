@@ -204,7 +204,7 @@ pub fn operation(op: &O<'_>) -> Value {
                 .collect::<Vec<_>>()
         ]),
         O::InventoryStopTransmit { component } => json!(["InventoryStopTransmit", component]),
-        O::Varp { id, value } => json!(["Varp", id, value]),
+        O::Varp { id, value, .. } => json!(["Varp", id, value]),
         O::VarpSync => json!(["VarpSync"]),
         O::UpdateStat {
             stat,

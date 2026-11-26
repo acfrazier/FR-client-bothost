@@ -234,9 +234,17 @@ impl IgnoreNames377<'_> {
     }
 }
 
+/// Wire form of a revision-377 direct varp update.
+#[cfg(feature = "scenario-observe")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VarpPacketForm {
+    Small,
+    Large,
+}
 /// Decoded Java meaning, not a revision-289 opcode alias. Asset lookup, chat
 /// filtering/decompression, redraws, timers, and conditional effects belong to
 /// apply. In particular sound delay 65535 retains Java's special immediate path.
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operation377<'a> {
     Interface(InterfaceOperation377<'a>),
@@ -258,6 +266,8 @@ pub enum Operation377<'a> {
     Varp {
         id: i32,
         value: i32,
+        #[cfg(feature = "scenario-observe")]
+        form: VarpPacketForm,
     },
     VarpSync,
     UpdateStat {
@@ -463,12 +473,16 @@ fn decode_other<'a>(
         182 => O::Varp {
             id: p.g2_alt2()?,
             value: p.g1b_alt3()?,
+            #[cfg(feature = "scenario-observe")]
+            form: VarpPacketForm::Small,
         },
         115 => {
             let value = p.g4_alt3()?;
             O::Varp {
                 id: p.g2_alt1()?,
                 value,
+                #[cfg(feature = "scenario-observe")]
+                form: VarpPacketForm::Large,
             }
         }
         113 => O::VarpSync, // Client.java:8527-8538: cache -> active, not zero reset.

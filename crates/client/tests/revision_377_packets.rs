@@ -11,6 +11,8 @@ mod zones;
 
 use client::client::packet_377;
 
+#[cfg(feature = "scenario-observe")]
+use packet_377::VarpPacketForm;
 use packet_377::{
     decode_packet_377, CameraTarget377, HintArrow377, InventoryEntry377, InventorySlot377,
     Operation377 as O, PacketContext377, PacketErrorKind377 as E, PacketReader377,
@@ -220,6 +222,8 @@ fn status_social_audio_and_camera_table_has_java_field_order() {
             O::Varp {
                 id: 259,
                 value: -37,
+                #[cfg(feature = "scenario-observe")]
+                form: VarpPacketForm::Small,
             },
         ),
         (
@@ -228,6 +232,8 @@ fn status_social_audio_and_camera_table_has_java_field_order() {
             O::Varp {
                 id: 0x123,
                 value: 0x12345678,
+                #[cfg(feature = "scenario-observe")]
+                form: VarpPacketForm::Large,
             },
         ),
         (113, vec![], O::VarpSync),

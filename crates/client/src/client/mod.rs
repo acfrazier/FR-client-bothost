@@ -1,5 +1,16 @@
 #[allow(clippy::module_inception)]
 pub mod client;
+#[cfg(feature = "scenario-observe")]
+mod scenario_observe;
+#[cfg(feature = "scenario-observe")]
+pub use scenario_observe::{
+    DecodedDomainDrain, DecodedDomainEvent, DecodedDomainFault, DecodedDomainSelection,
+    DecodedDomainStamp, DecodedDomainVarpWitness, DecodedDomainWatermark, InventoryForm, VarpForm,
+    MAX_DECODED_DOMAIN_EVENTS,
+};
+#[cfg(all(test, feature = "scenario-observe"))]
+#[path = "scenario_observe_tests.rs"]
+mod scenario_observe_tests;
 pub use crate::core::build as client_build;
 pub use crate::io::{ClientRevision, ServerProt289, SERVER_PROT_SIZES_289};
 pub use crate::render::draw as client_draw;

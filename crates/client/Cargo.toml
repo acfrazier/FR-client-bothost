@@ -17,6 +17,8 @@ render-test-hooks = []
 snapshot-test-hooks = []
 # Host transport regressions only; never enabled by product frontends.
 test-support = []
+# Bounded test-only observations of selected decoded domains.
+scenario-observe = []
 
 [dependencies]
 bzip2 = "0.6.1"
