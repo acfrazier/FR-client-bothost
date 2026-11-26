@@ -244,7 +244,6 @@ pub enum VarpPacketForm {
 /// Decoded Java meaning, not a revision-289 opcode alias. Asset lookup, chat
 /// filtering/decompression, redraws, timers, and conditional effects belong to
 /// apply. In particular sound delay 65535 retains Java's special immediate path.
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operation377<'a> {
     Interface(InterfaceOperation377<'a>),

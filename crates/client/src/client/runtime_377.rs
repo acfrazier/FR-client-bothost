@@ -782,7 +782,8 @@ impl Client {
                     .as_mut()
                     .unwrap()
                     .fill(0);
-                self.observe_inventory_stop(component);
+                #[cfg(feature = "scenario-observe")]
+                self.observe_decoded_inventory_stop(component);
                 p.inv = true;
             }
             #[cfg(feature = "scenario-observe")]
