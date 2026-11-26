@@ -36,7 +36,21 @@ pub trait Midi: Send {
     fn play_prepared(&mut self, _song: PreparedSong, _volume: i32, _fading: bool) -> bool {
         false
     }
-    /// `stopMidi()`: silence the current song.
+    /// True while the backend holds a song it could not start yet because the
+    /// host's background SoundFont load (`preload_sound_font_async`) is still
+    /// running. Only the `audio` backend ever defers; the song is released by
+    /// [`Midi::take_deferred_song`].
+    fn awaiting_sound_font(&self) -> bool {
+        false
+    }
+    /// Hand back the held song's bytes once the SoundFont is ready, so the
+    /// caller can run the normal prepare/play path (no file read left to do).
+    /// `None` while the load is still running or when nothing is held.
+    fn take_deferred_song(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+    /// `stopMidi()`: silence the current song. A song still held for the
+    /// SoundFont load is dropped too.
     fn stop(&mut self);
     /// True while the backend is still rendering. Headless backends report
     /// true (the control plane owns the fade); the audio backend reports
@@ -73,7 +87,8 @@ mod rusty {
     use std::fs::File;
     use std::io::Cursor;
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, OnceLock};
 
     fn sound_font_candidates(cache_dir: &str) -> Vec<String> {
         let mut out = vec![
@@ -126,22 +141,99 @@ mod rusty {
 
     const SAMPLE_RATE: i32 = 22050;
 
-    fn shared_sound_font(cache_dir: &str) -> Option<Arc<SoundFont>> {
-        static FONT: std::sync::OnceLock<Option<Arc<SoundFont>>> = std::sync::OnceLock::new();
-        FONT.get_or_init(|| {
-            for candidate in sound_font_candidates(cache_dir) {
-                if let Ok(mut file) = File::open(&candidate) {
-                    if let Ok(font) = SoundFont::new(&mut file) {
-                        return Some(Arc::new(font));
-                    }
+    /// The process-wide SoundFont: `None` inside means "looked, none found".
+    static FONT: OnceLock<Option<Arc<SoundFont>>> = OnceLock::new();
+    /// Set by [`preload_sound_font_async`]: the host loads the SoundFont on a
+    /// background thread, so a play must never touch the disk itself.
+    static HOST_PRELOAD: AtomicBool = AtomicBool::new(false);
+
+    /// The SoundFont search: first readable candidate wins; logs once when
+    /// none is found.
+    fn load_sound_font(cache_dir: &str) -> Option<Arc<SoundFont>> {
+        for candidate in sound_font_candidates(cache_dir) {
+            if let Ok(mut file) = File::open(&candidate) {
+                if let Ok(font) = SoundFont::new(&mut file) {
+                    return Some(Arc::new(font));
                 }
             }
-            eprintln!(
-                "audio: no soundfont (looked for Florestan.sf2 / SCC1_Florestan.sf2 under {cache_dir} and engine/public); midi silent"
-            );
-            None
+        }
+        eprintln!(
+            "audio: no soundfont (looked for Florestan.sf2 / SCC1_Florestan.sf2 under {cache_dir} and engine/public); midi silent"
+        );
+        None
+    }
+
+    /// Lazy synchronous load (the standalone client path): the first caller
+    /// reads the file, everyone else waits for that one load.
+    fn shared_sound_font(cache_dir: &str) -> Option<Arc<SoundFont>> {
+        FONT.get_or_init(|| load_sound_font(cache_dir)).clone()
+    }
+
+    /// What a play sees of the SoundFont.
+    enum FontLookup {
+        /// Loaded (or known missing: `None`).
+        Ready(Option<Arc<SoundFont>>),
+        /// The host's background load has not finished. Never blocks, never
+        /// reads a file.
+        Loading,
+    }
+
+    fn font_for_play(cache_dir: &str) -> FontLookup {
+        if HOST_PRELOAD.load(Ordering::Acquire) {
+            FONT.get()
+                .map_or(FontLookup::Loading, |font| FontLookup::Ready(font.clone()))
+        } else {
+            FontLookup::Ready(shared_sound_font(cache_dir))
+        }
+    }
+
+    /// Host opt-in: load the SoundFont once on a background thread so no song
+    /// ever reads the file on the caller's (slot) thread. After this call a
+    /// play that arrives before the load finishes is held by the backend and
+    /// started by `Client::music_tick` once the font is ready. A missing or
+    /// unreadable font ends as "silent", logged once, never probed again.
+    /// Idempotent: the first call's `cache_dir` is the one searched. Without
+    /// this call the backend keeps its lazy synchronous load.
+    pub fn preload_sound_font_async(cache_dir: &str) {
+        spawn_preload(cache_dir, || {});
+    }
+
+    fn spawn_preload(
+        cache_dir: &str,
+        before_load: impl FnOnce() + Send + 'static,
+    ) -> Option<std::thread::JoinHandle<()>> {
+        if HOST_PRELOAD.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        let cache_dir = cache_dir.to_string();
+        let spawned = std::thread::Builder::new()
+            .name("soundfont-preload".into())
+            .spawn(move || {
+                before_load();
+                shared_sound_font(&cache_dir);
+            });
+        match spawned {
+            Ok(handle) => Some(handle),
+            Err(_) => {
+                // No thread, no background load: fall back to the lazy load.
+                HOST_PRELOAD.store(false, Ordering::Release);
+                None
+            }
+        }
+    }
+
+    /// Test seam: like [`preload_sound_font_async`], but the loader thread
+    /// waits for `gate` (a message or the sender's drop) before it touches
+    /// the disk, so a test controls exactly when the load finishes. Returns
+    /// the loader's handle; joining it means the font state is final.
+    #[cfg(feature = "test-support")]
+    pub fn preload_sound_font_async_gated(
+        cache_dir: &str,
+        gate: std::sync::mpsc::Receiver<()>,
+    ) -> Option<std::thread::JoinHandle<()>> {
+        spawn_preload(cache_dir, move || {
+            let _ = gate.recv();
         })
-        .clone()
     }
 
     fn sequencer_from_font(sound_font: &Arc<SoundFont>) -> Option<MidiFileSequencer> {
@@ -162,6 +254,9 @@ mod rusty {
     pub struct RustyMidi {
         cache_dir: String,
         sequencer: Option<MidiFileSequencer>,
+        /// The newest song that arrived while the host's background
+        /// SoundFont load was still running; see `take_deferred_song`.
+        deferred: Option<Vec<u8>>,
     }
 
     impl RustyMidi {
@@ -169,6 +264,7 @@ mod rusty {
             Self {
                 cache_dir: cache_dir.to_string(),
                 sequencer: None,
+                deferred: None,
             }
         }
 
@@ -187,6 +283,7 @@ mod rusty {
             Some(Self {
                 cache_dir: String::new(),
                 sequencer: Some(sequencer),
+                deferred: None,
             })
         }
 
@@ -217,10 +314,20 @@ mod rusty {
                 self.sequencer = sequencer;
             }
             let midi_file = match outcome {
-                Outcome::Silent => return true,
+                Outcome::AwaitingFont(bytes) => {
+                    // The newest song wins; the slot thread did no disk work.
+                    self.deferred = Some(bytes);
+                    return true;
+                }
+                Outcome::Silent => {
+                    self.deferred = None;
+                    return true;
+                }
+                // A rejected song keeps the old state, a held song included.
                 Outcome::Rejected => return false,
                 Outcome::Song(midi_file) => midi_file,
             };
+            self.deferred = None;
             let Some(sequencer) = &mut self.sequencer else {
                 return true;
             };
@@ -241,6 +348,9 @@ mod rusty {
         /// No SoundFont/synthesizer: the backend accepts and stays silent,
         /// like `NullMidi`; there is nothing to leave playing.
         Silent,
+        /// The host's background SoundFont load is still running: the bytes
+        /// are held (unparsed) until it finishes. Nothing was read from disk.
+        AwaitingFont(Vec<u8>),
         /// The bytes are not a MIDI file the backend can play.
         Rejected,
         Song(Arc<MidiFile>),
@@ -251,7 +361,15 @@ mod rusty {
     /// backend state, so it runs without the shared lock.
     fn prepare(cache_dir: &str, needs_sequencer: bool, data: &[u8]) -> Prepared {
         let sequencer = if needs_sequencer {
-            shared_sound_font(cache_dir).and_then(|font| sequencer_from_font(&font))
+            match font_for_play(cache_dir) {
+                FontLookup::Loading => {
+                    return Prepared {
+                        sequencer: None,
+                        outcome: Outcome::AwaitingFont(data.to_vec()),
+                    };
+                }
+                FontLookup::Ready(font) => font.and_then(|font| sequencer_from_font(&font)),
+            }
         } else {
             None
         };
@@ -302,7 +420,21 @@ mod rusty {
                 .is_some_and(|s| !s.end_of_sequence())
         }
 
+        fn awaiting_sound_font(&self) -> bool {
+            self.deferred.is_some()
+        }
+
+        fn take_deferred_song(&mut self) -> Option<Vec<u8>> {
+            // `FONT.get()` never blocks: ready means loaded or known missing.
+            if FONT.get().is_some() {
+                self.deferred.take()
+            } else {
+                None
+            }
+        }
+
         fn stop(&mut self) {
+            self.deferred = None;
             if let Some(sequencer) = &mut self.sequencer {
                 sequencer.stop();
             }
@@ -319,5 +451,7 @@ mod rusty {
     }
 }
 
+#[cfg(all(feature = "audio", feature = "test-support"))]
+pub use rusty::preload_sound_font_async_gated;
 #[cfg(feature = "audio")]
-pub use rusty::RustyMidi;
+pub use rusty::{preload_sound_font_async, RustyMidi};

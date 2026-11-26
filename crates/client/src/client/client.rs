@@ -1193,6 +1193,9 @@ pub struct Client {
     /// played by `music_tick` once the current song has faded out to the
     /// floor.
     pub midi_pending: Option<(Vec<u8>, i32)>,
+    /// The backend holds a song until the host's background SoundFont load
+    /// finishes (`sound::preload_sound_font_async`); `music_tick` starts it.
+    pub midi_deferred: bool,
     /// True once the first song/jingle has been handed to the backend; the
     /// first song plays immediately (Java first-song short-circuit), later
     /// zone-song changes fade the current song out first.
@@ -2196,6 +2199,7 @@ impl Client {
             midi_volume: 0,
             midi,
             midi_pending: None,
+            midi_deferred: false,
             midi_playing: false,
             fade: Arc::new(Mutex::new(Fade::new())),
             waves: Arc::new(Mutex::new(WavePlayback::new())),
@@ -14405,6 +14409,7 @@ impl Client {
                 self.fade.lock().unwrap().finish_fade(self.midi_volume);
                 self.midi_playing = true;
                 self.midi_pending = None;
+                self.midi_deferred = self.midi.lock().unwrap().awaiting_sound_font();
             }
             // A rejected play keeps the old state: no gain restore, no
             // `midi_playing`, and any held pending swap survives.
@@ -14440,6 +14445,9 @@ impl Client {
     /// the new song at the current `midivol`, no fade-in). The latch is only
     /// advanced by the audio callback, so headless there is no swap.
     pub fn music_tick(&mut self) {
+        if self.midi_deferred {
+            self.start_deferred_midi();
+        }
         if !self.fade.lock().unwrap().swap_due() {
             return;
         }
@@ -14452,6 +14460,25 @@ impl Client {
         }
     }
 
+    /// Start the first song the backend held while the host's background
+    /// SoundFont load ran. Still loading: keep waiting, touch nothing. Ready:
+    /// the normal play path runs and finds the font in memory. The fade was
+    /// already restored when the song was accepted, so only a rejected song
+    /// needs undoing.
+    fn start_deferred_midi(&mut self) {
+        let (song, still_held) = {
+            let mut midi = self.midi.lock().unwrap();
+            (midi.take_deferred_song(), midi.awaiting_sound_font())
+        };
+        self.midi_deferred = still_held;
+        if let Some(data) = song {
+            if !self.play_midi(&data, self.midi_volume, false) {
+                self.midi_playing = false;
+            }
+            self.midi_deferred = self.midi.lock().unwrap().awaiting_sound_font();
+        }
+    }
+
     /// `stopMidi()` from Java (`Client.java` 6272): clear the fade flag and
     /// stop the backend (signlink `midi = "stop"`). The fade hard-cuts and
     /// any pending zone-song swap is dropped.
@@ -14461,6 +14488,7 @@ impl Client {
         self.midi.lock().unwrap().stop();
         self.midi_pending = None;
         self.midi_playing = false;
+        self.midi_deferred = false;
     }
 
     /// `setMidiVolume(active, volume)` from Java (`Client.java` 7712): store
