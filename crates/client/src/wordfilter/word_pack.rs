@@ -16,13 +16,19 @@ impl WordPack {
     ];
 
     pub fn unpack(word: &mut Packet, length: usize) -> String {
+        Self::unpack_iter((0..length).map(|_| word.g1() as u8))
+    }
+
+    pub(crate) fn unpack_bytes(bytes: &[u8]) -> String {
+        Self::unpack_iter(bytes.iter().copied())
+    }
+
+    fn unpack_iter(mut bytes: impl Iterator<Item = u8>) -> String {
         let mut builder: Vec<char> = Vec::new();
         let mut carry: i32 = -1;
-        for _index in 0..length {
-            if builder.len() >= 100 {
-                break;
-            }
-            let value: i32 = word.g1();
+        while builder.len() < 100 {
+            let Some(value) = bytes.next() else { break };
+            let value = i32::from(value);
             let mut nibble: i32 = (value >> 4) & 0xf;
             if carry != -1 {
                 builder.push(Self::TABLE[((carry << 4) + nibble - 195) as usize]);

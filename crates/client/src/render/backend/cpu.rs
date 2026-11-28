@@ -52,6 +52,9 @@ impl RenderBackend for CpuBackend {
             // `other_overlays` when no menu is open (Client.ts 4865-4867),
             // ahead of this frame's side/chat draws.
             r.prepare_game(core);
+            if core.fullscreen_interface_id_0 != -1 {
+                return;
+            }
 
             // J274 Client.java:10948-10950 redraws chat every frame while a
             // tutorial message is pending; publish the flag before CPU chrome.
@@ -131,7 +134,8 @@ impl RenderBackend for CpuBackend {
     /// (the main overlay and modal, TS 4250) draws into `area_game` before
     /// the blit.
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        if kind != FrameKind::Game || core.scene_state != 2 {
+        if kind != FrameKind::Game || core.scene_state != 2 || core.fullscreen_interface_id_0 != -1
+        {
             return;
         }
 
@@ -294,7 +298,8 @@ impl RenderBackend for CpuBackend {
     /// of it); this lands it in `draw_area` ahead of the 2D chrome, which
     /// is the same point the wgpu backend blits its scene texture at.
     fn composite_scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        if kind == FrameKind::Game && core.scene_state == 2 {
+        if kind == FrameKind::Game && core.scene_state == 2 && core.fullscreen_interface_id_0 == -1
+        {
             if let Some(game) = &r.area_game {
                 game.blit_into(&mut r.draw_area, 4, 4);
             }
@@ -323,6 +328,10 @@ impl RenderBackend for CpuBackend {
     /// (2/3/5/6/7/8 only while `redraw_frame` is set), and the torch
     /// columns over `image_title0/1`.
     fn chrome(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        if kind == FrameKind::Game && core.fullscreen_interface_id_0 != -1 {
+            r.draw_fullscreen_377(core);
+            return;
+        }
         if kind == FrameKind::Title {
             let w = 360;
             let h = 200;
@@ -813,7 +822,11 @@ impl RenderBackend for CpuBackend {
                         p12.centre_string_tag(&mut surface, label, 184, 41, rgb, true);
                         p12.centre_string_tag(
                             &mut surface,
-                            "Trade/duel",
+                            if core.revision().is_377() {
+                                "Trade/compete"
+                            } else {
+                                "Trade/duel"
+                            },
                             324,
                             28,
                             Colour::WHITE,

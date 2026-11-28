@@ -1348,6 +1348,9 @@ pub struct Client {
     /// The open main modal (Java `mainModalId`), set by the report-abuse
     /// button in `chat_mode_loop` and cleared by `close_modal` (-1 none).
     pub main_modal_id: i32,
+    /// Java 377 fullscreen main and overlay layers; -1 means closed.
+    pub fullscreen_interface_id_0: i32,
+    pub fullscreen_interface_id_1: i32,
     /// `mainOverlayId` (TS): the interface drawn above the game view,
     /// written by `IF_OPENOVERLAY` (-1 none).
     pub main_overlay_id: i32,
@@ -1602,6 +1605,8 @@ pub struct Client {
     pub members_warning: i32,
     pub welcome_interface_id: i32,
     pub last_login_dns_display: Option<String>,
+    /// Complete revision-377 LAST_LOGIN_INFO, without synchronous DNS.
+    pub last_login_377: Option<crate::client::packet_377::LastLogin377>,
     pub private_message_ids: [i32; 100],
     pub private_message_count: i32,
     pub node_id: i32,
@@ -1855,6 +1860,24 @@ impl Client {
     /// Read-only session protocol revision (bound at construction or adopt).
     pub fn revision(&self) -> ClientRevision {
         self.revision
+    }
+
+    /// The revision-377 fullscreen main layer, or -1 when closed.
+    pub fn fullscreen_interface_id(&self) -> i32 {
+        self.fullscreen_interface_id_0
+    }
+
+    /// Java 377 Client.java:5696-5707 stretches only fullscreen layer roots.
+    pub(crate) fn interface_layer_size(&self, id: i32, width: i32, height: i32) -> (i32, i32) {
+        if self.revision.is_377()
+            && (id == self.fullscreen_interface_id_0 || id == self.fullscreen_interface_id_1)
+            && width == 512
+            && height == 334
+        {
+            (APPLET_W, APPLET_H)
+        } else {
+            (width, height)
+        }
     }
 
     /// Packet-family generations immediately after the last successful
@@ -2314,6 +2337,8 @@ impl Client {
             side_modal_id: -1,
             chat_modal_id: -1,
             main_modal_id: -1,
+            fullscreen_interface_id_0: -1,
+            fullscreen_interface_id_1: -1,
             main_overlay_id: -1,
             tut_com_id: -1,
             tut_com_message: None,
@@ -2459,6 +2484,7 @@ impl Client {
             members_warning: 0,
             welcome_interface_id: -1,
             last_login_dns_display: None,
+            last_login_377: None,
             private_message_ids: [0; 100],
             private_message_count: 0,
             node_id: 10,
@@ -3883,6 +3909,8 @@ impl Client {
             self.side_modal_id = -1;
             self.chat_modal_id = -1;
             self.main_modal_id = -1;
+            self.clear_fullscreen_interfaces_377();
+            self.last_login_377 = None;
             self.tut_com_id = -1;
             self.tut_com_message = None;
             self.tut_flash_icon = -1;
@@ -7333,11 +7361,14 @@ impl Client {
     /// same-world friends to the front, with offline (world 0) friends last.
     /// The row swap needs temps: two runtime-indexed array elements cannot
     /// be mutably borrowed at once.
-    #[allow(clippy::manual_swap)]
     pub fn apply_update_friendlist(&mut self, payload: &mut Packet) {
         let username = payload.g8();
         let world = payload.g1();
+        self.update_friend_377_289(username, world);
+    }
 
+    #[allow(clippy::manual_swap)]
+    pub(super) fn update_friend_377_289(&mut self, username: i64, world: i32) {
         let mut display_name = Some(JString::to_screen_name(&JString::to_raw_username(username)));
         for i in 0..self.friend_count {
             if self.friend_userhash[i as usize] == username {
@@ -7402,6 +7433,9 @@ impl Client {
     /// click inside a box, select that tab and redraw both the side panel
     /// and the icon strips. Hit boxes verbatim from 2792-2844.
     pub fn handle_tab_clicks(&mut self) {
+        if self.fullscreen_interface_id_0 != -1 {
+            return;
+        }
         if self.shell.mouse_click_button == 0 {
             return;
         }
@@ -8143,7 +8177,138 @@ impl Client {
                 }
                 _ => {}
             }
+        } else if let Some(info) = self.last_login_377.as_ref() {
+            // Java 377 Client.java:11831-11904. Reuse text storage and display
+            // the numeric address instead of performing blocking DNS.
+            match client_code {
+                660 => {
+                    com.text.clear();
+                    com.text.push_str("You last logged in @red@");
+                    match info.current_day - info.previous_login_day {
+                        days if days <= 0 => com.text.push_str("earlier today"),
+                        1 => com.text.push_str("yesterday"),
+                        days => write!(com.text, "{days} days ago").expect("writing to String"),
+                    }
+                    write!(
+                        com.text,
+                        "@bla@ from: @red@{}",
+                        std::net::Ipv4Addr::from(info.last_address as u32)
+                    )
+                    .expect("writing to String");
+                }
+                661 => {
+                    com.text.clear();
+                    if info.recovery_change_day == 0 {
+                        com.text.push_str(r"\nYou have not yet set any recovery questions.\nIt is @lre@strongly@yel@ recommended that you do so.\n\nIf you don't you will be @lre@unable to recover your\n@lre@password@yel@ if you forget it, or it is stolen.");
+                    } else if info.recovery_change_day <= info.current_day {
+                        com.text
+                            .push_str(r"\n\nRecovery Questions Last Set:\n@gre@");
+                        Self::write_login_date_377(
+                            &mut com.text,
+                            info.recovery_change_day,
+                            info.current_day,
+                        );
+                    } else {
+                        match info.current_day + 14 - info.recovery_change_day {
+                            days if days <= 0 => com.text.push_str("Earlier today"),
+                            1 => com.text.push_str("Yesterday"),
+                            days => write!(com.text, "{days} days ago").expect("writing to String"),
+                        }
+                        com.text.push_str(r" you requested@lre@ new recovery\n@lre@questions.@yel@ The requested change will occur\non: @lre@");
+                        Self::write_login_date_377(
+                            &mut com.text,
+                            info.recovery_change_day,
+                            info.current_day,
+                        );
+                        com.text.push_str(r"\n\nIf you do not remember making this request\ncancel it immediately, and change your password.");
+                    }
+                }
+                662 => {
+                    com.text.clear();
+                    match info.unread_messages {
+                        0 => com.text.push_str("You have @yel@0 unread messages"),
+                        1 => com.text.push_str("You have @gre@1 unread message"),
+                        count => write!(com.text, "You have @gre@{count} unread messages")
+                            .expect("writing to String"),
+                    }
+                    com.text.push_str(r"\nin your message centre.");
+                }
+                663 => {
+                    com.text.clear();
+                    com.text.push_str(r"Last password change:\n@gre@");
+                    if info.days_since_password_change > 0
+                        && info.days_since_password_change <= info.current_day + 10
+                    {
+                        Self::write_login_date_377(
+                            &mut com.text,
+                            info.days_since_password_change,
+                            info.current_day,
+                        );
+                    } else {
+                        com.text.push_str("Never changed");
+                    }
+                }
+                665 => {
+                    com.text.clear();
+                    if info.members_days > 2 && !self.config.members {
+                        com.text.push_str(r"This is a non-members\nworld. To enjoy your\nmembers benefits we\nrecommend you play on a\nmembers world instead.");
+                    } else if info.members_days > 2 {
+                        write!(
+                            com.text,
+                            r"\n\nYou have @gre@{}@yel@ days of\nmember credit remaining.",
+                            info.members_days
+                        )
+                        .expect("writing to String");
+                    } else if info.members_days > 0 {
+                        write!(com.text, r"You have @gre@{}@yel@ days of\nmember credit remaining.\n\n@lre@Credit low! Renew now\n@lre@to avoid losing members.", info.members_days).expect("writing to String");
+                    } else {
+                        com.text.push_str(r"You are not a member.\n\nChoose to subscribe and\nyou'll get loads of extra\nbenefits and features.");
+                    }
+                }
+                667 => {
+                    let text = if info.members_days > 2 && !self.config.members {
+                        r"To switch to a members-only world:\n1) Logout and return to the world selection page.\n2) Choose one of the members world with a gold star next to it's name.\n\nIf you prefer you can continue to use this world,\nbut members only features will be unavailable here."
+                    } else if info.members_days > 0 {
+                        r"To extend or cancel a subscription:\n1) Logout and return to the frontpage of this website.\n2)Choose the relevant option from the 'membership' section.\n\nNote: If you are a credit card subscriber a top-up payment will\nautomatically be taken when 3 days credit remain.\n(unless you cancel your subscription, which can be done at any time.)"
+                    } else {
+                        r"To start a subscripton:\n1) Logout and return to the frontpage of this website.\n2) Choose 'Start a new subscription'"
+                    };
+                    text.clone_into(&mut com.text);
+                }
+                668 => {
+                    let text = if info.recovery_change_day > info.current_day {
+                        r"To cancel this request:\n1) Logout and return to the frontpage of this website.\n2) Choose 'Cancel recovery questions'."
+                    } else {
+                        r"To change your recovery questions:\n1) Logout and return to the frontpage of this website.\n2) Choose 'Set new recovery questions'."
+                    };
+                    text.clone_into(&mut com.text);
+                }
+                _ => {}
+            }
         }
+    }
+
+    fn write_login_date_377(text: &mut String, day: i32, current_day: i32) {
+        // Java 377 Client.java:12905-12916: day zero is Unix day 11745.
+        if day > current_day + 10 {
+            text.push_str("Unknown");
+            return;
+        }
+        // Gregorian civil date from an epoch-day, without a calendar allocation.
+        let z = day + 11745 + 719468;
+        let era = z / 146097;
+        let doe = z - era * 146097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let mut year = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let date = doy - (153 * mp + 2) / 5 + 1;
+        let month = mp + if mp < 10 { 3 } else { -9 };
+        year += i32::from(month <= 2);
+        let month_name = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ][(month - 1) as usize];
+        write!(text, "{date}-{month_name}-{year}").expect("writing to String");
     }
 
     /// TS has no `handleSideIfClicks`: every button click flows through
@@ -8220,6 +8385,21 @@ impl Client {
         self.menu_option[0] = "Cancel".into();
         self.menu_action[0] = MiniMenuAction::CANCEL;
         self.menu_num_entries = 1;
+
+        // Java 377 Client.java:3888-3899 routes only the main fullscreen root.
+        if self.fullscreen_interface_id_0 != -1 {
+            self.last_over_com_id = 0;
+            self.add_component_options(
+                self.fullscreen_interface_id_0,
+                self.shell.mouse_x,
+                self.shell.mouse_y,
+                0,
+                0,
+                0,
+            );
+            self.over_main_com_id = self.last_over_com_id;
+            return;
+        }
 
         self.add_private_chat_options();
         self.last_over_com_id = 0;
@@ -8528,12 +8708,13 @@ impl Client {
         let Some(com) = self.if_(com_id as usize) else {
             return;
         };
+        let (width, height) = self.interface_layer_size(com_id, com.width, com.height);
         if com.r#type != ComponentType::TYPE_LAYER
             || com.hide
             || mouse_x < x
             || mouse_y < y
-            || mouse_x > x + com.width
-            || mouse_y > y + com.height
+            || mouse_x > x + width
+            || mouse_y > y + height
         {
             return;
         }
@@ -11418,6 +11599,8 @@ impl Client {
         self.chat_modal_id = -1;
         self.main_modal_id = -1;
         self.side_modal_id = -1;
+        self.clear_fullscreen_interfaces_377();
+        self.last_login_377 = None;
         self.reset_packet_observations();
         self.world.reset_map();
         self.projectiles.clear();
@@ -11770,6 +11953,9 @@ impl Client {
     /// (412..512) closes the modals, resets the report form and arms name
     /// input using the first interface with client code 600.
     pub fn chat_mode_loop(&mut self) {
+        if self.fullscreen_interface_id_0 != -1 {
+            return;
+        }
         if self.shell.mouse_click_button != 1 {
             return;
         }
@@ -11994,7 +12180,7 @@ impl Client {
             return;
         }
 
-        if self.chat_modal_id != -1 {
+        if self.chat_modal_id != -1 || self.fullscreen_interface_id_0 != -1 {
             return;
         }
 
@@ -12191,7 +12377,8 @@ impl Client {
         let mut button = self.shell.mouse_click_button;
         // TS 8263-8265: a target-mode click in the 516..765 x 160..205
         // strip (minimap/feedback area) is swallowed.
-        if self.target_mode == 1
+        if self.fullscreen_interface_id_0 == -1
+            && self.target_mode == 1
             && self.shell.mouse_click_x >= 516
             && self.shell.mouse_click_y >= 160
             && self.shell.mouse_click_x <= 765
@@ -12218,7 +12405,9 @@ impl Client {
                 // TS 8293-8325: leave-check on the live pointer position.
                 let mut x = self.shell.mouse_x;
                 let mut y = self.shell.mouse_y;
-                if self.menu_area == 0 {
+                if self.fullscreen_interface_id_0 != -1 {
+                    // Fullscreen menus already use canvas coordinates.
+                } else if self.menu_area == 0 {
                     x -= 4;
                     y -= 4;
                 } else if self.menu_area == 1 {
@@ -12332,6 +12521,16 @@ impl Client {
         let height: i32 = self.menu_num_entries * 15 + 21;
 
         let (click_x, click_y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
+
+        if self.fullscreen_interface_id_0 != -1 {
+            self.is_menu_open = true;
+            self.menu_area = 0;
+            self.menu_x = (click_x - width / 2).clamp(0, APPLET_W - width);
+            self.menu_y = click_y.clamp(0, (APPLET_H - height).max(0));
+            self.menu_width = width;
+            self.menu_height = self.menu_num_entries * 15 + 22;
+            return;
+        }
 
         // the viewport (TS 8463-8482)
         if Self::world_viewport_hit(click_x, click_y) {
@@ -12755,10 +12954,10 @@ impl Client {
     /// into the menu's viewport, side-panel, or chat-local coordinates.
     /// Iteration deliberately keeps the last matching row, as mouse_loop did.
     pub fn menu_option_at(&self, x: i32, y: i32) -> Option<i32> {
-        let (x, y) = match self.menu_area {
-            0 => (x - 4, y - 4),
-            1 => (x - 553, y - 205),
-            2 => (x - 17, y - 357),
+        let (x, y) = match (self.fullscreen_interface_id_0 != -1, self.menu_area) {
+            (false, 0) => (x - 4, y - 4),
+            (false, 1) => (x - 553, y - 205),
+            (false, 2) => (x - 17, y - 357),
             _ => (x, y),
         };
         let mut option = None;
@@ -12790,7 +12989,10 @@ impl Client {
     /// angle/zoom into a destination tile, then `tryMove(..., 1)` writes
     /// MOVE_MINIMAPCLICK and the 14 trailing bytes.
     pub fn minimap_loop(&mut self) {
-        if self.minimap_state != 0 || self.shell.mouse_click_button != 1 {
+        if self.fullscreen_interface_id_0 != -1
+            || self.minimap_state != 0
+            || self.shell.mouse_click_button != 1
+        {
             return;
         }
         let (px, pz, src_x, src_z) = match &self.local_player {
@@ -13780,6 +13982,14 @@ impl Client {
                     .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7));
             }
         }
+        let fullscreen_input = self.fullscreen_interface_id_0 != -1;
+        if fullscreen_input {
+            self.world.ground_x = -1;
+            self.world.ground_z = -1;
+            if !self.is_menu_open {
+                self.build_minimenu();
+            }
+        }
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
         self.handle_main_if_clicks();
@@ -13894,7 +14104,9 @@ impl Client {
         {
             t.complete("no_walk_selected");
         }
-        self.minimap_loop();
+        if !fullscreen_input {
+            self.minimap_loop();
+        }
         // Java 9466-9467 then 9580: the entity movement pass runs before
         // the camera pass, so the orbit camera and minimap follow the walk.
         self.move_players();

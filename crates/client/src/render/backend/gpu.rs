@@ -1883,7 +1883,7 @@ impl RenderBackend for GpuBackend {
         if core.nav_debug_paint().is_none() {
             self.release_nav_overlay();
         }
-        if kind == FrameKind::Title {
+        if kind == FrameKind::Title || core.fullscreen_interface_id_0 != -1 {
             // Left torch column sits inside the scene-window rect. A stale
             // `scene_ready` from the last ingame frame would punch a 3D
             // hole through the flames. Title has no scene.
@@ -1899,6 +1899,10 @@ impl RenderBackend for GpuBackend {
     /// composites over it; chat bubbles, modals and the minimenu remain CPU
     /// viewport overlays composited afterward.
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        if core.fullscreen_interface_id_0 != -1 {
+            self.scene_ready = false;
+            return;
+        }
         if kind != FrameKind::Game || core.scene_state != 2 {
             // Loading (`scene_state == 1`): do not rebuild the mesh and do
             // not drop the last scene texture — `finish` still copies it
@@ -2117,6 +2121,9 @@ impl RenderBackend for GpuBackend {
     /// `scene_state==2`; GPU also blits on a freeze so the modal coverage
     /// lands on the last 3D texture.
     fn composite_scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        if core.fullscreen_interface_id_0 != -1 {
+            return;
+        }
         if freeze_last_scene(kind, core.scene_state) {
             if let Some(game) = &r.area_game {
                 game.blit_into(&mut r.draw_area, 4, 4);
@@ -2133,6 +2140,13 @@ impl RenderBackend for GpuBackend {
     /// flag is set). Atlas upload is gated on those same flags (plus
     /// title flames every frame); minimap is a separate layer.
     fn chrome(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        if kind == FrameKind::Game && core.fullscreen_interface_id_0 != -1 {
+            self.minimap_live = false;
+            self.minimap_held = false;
+            self.chrome_upload_pending = true;
+            self.cpu.chrome(core, r, kind);
+            return;
+        }
         // Capture atlas dirtiness before cpu.chrome clears the flags.
         let mut atlas_dirty = kind == FrameKind::Title;
         if kind == FrameKind::Game {

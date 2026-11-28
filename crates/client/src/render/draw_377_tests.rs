@@ -3,11 +3,292 @@ use std::sync::Arc;
 use super::Renderer;
 use crate::client::client::Client;
 use crate::client::config::ClientConfig;
+use crate::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use crate::config::{Cache, LocType, NpcType};
 use crate::dash3d::{ClientNpc, ClientPlayer};
-use crate::graphics::{Pix32, Pix8, PixMap};
+use crate::graphics::{Pix32, Pix8, PixFont, PixMap};
 use crate::io::ClientRevision;
+use crate::render::backend::FrameOutput;
 use crate::render::media::{Media, Media377};
+
+const FULLSCREEN_ROOT: i32 = 500;
+
+fn fullscreen_interface(client: &mut Client, root_id: i32, x: i32, y: i32, button_type: i32) {
+    client.set_iface(
+        root_id as usize,
+        IfType {
+            id: root_id,
+            layer_id: root_id,
+            r#type: ComponentType::TYPE_LAYER,
+            width: 512,
+            height: 334,
+            children: Some(vec![root_id + 1]),
+            child_x: Some(vec![x]),
+            child_y: Some(vec![y]),
+            ..IfType::default()
+        },
+    );
+    client.set_iface_mut(root_id as usize, IfTypeMut::default());
+    client.set_iface(
+        (root_id + 1) as usize,
+        IfType {
+            id: root_id + 1,
+            layer_id: root_id,
+            r#type: ComponentType::TYPE_RECT,
+            width: 30,
+            height: 20,
+            fill: true,
+            button_text: "CLICK HERE TO PLAY".into(),
+            ..IfType::default()
+        },
+    );
+    client.set_iface_mut(
+        (root_id + 1) as usize,
+        IfTypeMut {
+            button_type,
+            colour: 0x123456,
+            ..IfTypeMut::default()
+        },
+    );
+}
+
+fn solid_test_font() -> PixFont {
+    PixFont {
+        char_mask: vec![vec![1]; 256],
+        char_mask_width: [1; 256],
+        char_mask_height: [1; 256],
+        char_offset_x: [0; 256],
+        char_offset_y: [0; 256],
+        char_advance: [2; 256],
+        height: 1,
+    }
+}
+
+fn chat_mode_strip(revision: ClientRevision) -> Vec<i32> {
+    let mut client = client(revision, Cache::default());
+    client.redraw_chat_mode = true;
+    let mut renderer = Renderer::new_prefer(false, false);
+    renderer.prepare_game(&mut client);
+    let mut media = Media::empty();
+    media.p12 = Some(solid_test_font());
+    renderer.media = Arc::new(media);
+    let FrameOutput::PixMap(frame) = renderer.game_draw(&mut client) else {
+        panic!("CPU renderer should return the software frame");
+    };
+    (453..503)
+        .flat_map(|y| frame.pixels[y * 765 + 280..y * 765 + 370].iter().copied())
+        .collect()
+}
+
+#[test]
+fn fullscreen_377_draws_both_layers_across_the_765_by_503_frame() {
+    let mut client = client(ClientRevision::R377, Cache::default());
+    fullscreen_interface(
+        &mut client,
+        FULLSCREEN_ROOT,
+        700,
+        400,
+        ButtonType::BUTTON_CLOSE,
+    );
+    fullscreen_interface(
+        &mut client,
+        FULLSCREEN_ROOT + 100,
+        720,
+        420,
+        ButtonType::BUTTON_CLOSE,
+    );
+    client.fullscreen_interface_id_0 = FULLSCREEN_ROOT;
+    client.fullscreen_interface_id_1 = FULLSCREEN_ROOT + 100;
+    client.scene_state = 2;
+
+    let mut renderer = Renderer::new_prefer(false, false);
+    renderer.media = Arc::new(Media::empty());
+    renderer.draw_area.pixels.fill(0xabcdef);
+    let FrameOutput::PixMap(frame) = renderer.game_draw(&mut client) else {
+        panic!("CPU renderer should return the software frame");
+    };
+
+    assert_eq!(frame.width, 765);
+    assert_eq!(frame.height, 503);
+    assert_eq!(pixel(&frame.pixels, 765, 700, 400), 0x123456);
+    assert_eq!(pixel(&frame.pixels, 765, 720, 420), 0x123456);
+    assert_eq!(pixel(&frame.pixels, 765, 650, 350), 0);
+    assert_eq!(client.if_(FULLSCREEN_ROOT as usize).unwrap().width, 512);
+}
+
+#[test]
+fn fullscreen_377_routes_component_input_without_chat_or_world_actions() {
+    let mut client = client(ClientRevision::R377, Cache::default());
+    fullscreen_interface(
+        &mut client,
+        FULLSCREEN_ROOT,
+        300,
+        480,
+        ButtonType::BUTTON_OK,
+    );
+    client.fullscreen_interface_id_0 = FULLSCREEN_ROOT;
+    client.shell.mouse_x = 300;
+    client.shell.mouse_y = 480;
+    client.shell.mouse_click_button = 1;
+    client.shell.mouse_click_x = 300;
+    client.shell.mouse_click_y = 480;
+    client.chat_trade_mode = 0;
+    client.social_input_open = false;
+    client.social_input_type = 0;
+    client.shell.key_queue[0] = i32::from(b'x');
+    client.shell.key_queue_write = 1;
+    let mut local = ClientPlayer::default();
+    local.entity.x = 25 * 128 + 64;
+    local.entity.z = 25 * 128 + 64;
+    local.entity.route_x[0] = 25;
+    local.entity.route_z[0] = 25;
+    client.local_player = Some(local);
+    client.world.ground_x = 26;
+    client.world.ground_z = 25;
+
+    client.build_minimenu();
+    assert_eq!(client.menu_num_entries, 2);
+    assert_eq!(
+        client.menu_action[1],
+        crate::client::mini_menu_action::MiniMenuAction::IF_BUTTON
+    );
+    assert_eq!(client.menu_param_c[1], FULLSCREEN_ROOT + 1);
+    client.game_loop();
+
+    let packet = &client.out.data()[client.out.pos - 3..client.out.pos];
+    assert_eq!(packet, &[79, 0x01, 0xf5]);
+    assert_eq!(client.chat_trade_mode, 0);
+    assert!(client.chat_input.is_empty());
+    assert!(client.social_input.is_empty());
+    assert_eq!(client.shell.key_queue_read, client.shell.key_queue_write);
+    assert_eq!(client.minimap_flag_x, 0);
+    assert_eq!(client.fullscreen_interface_id(), FULLSCREEN_ROOT);
+}
+
+#[test]
+fn fullscreen_377_close_button_uses_close_modal_wire_action() {
+    let mut client = client(ClientRevision::R377, Cache::default());
+    fullscreen_interface(
+        &mut client,
+        FULLSCREEN_ROOT,
+        700,
+        400,
+        ButtonType::BUTTON_CLOSE,
+    );
+    client.fullscreen_interface_id_0 = FULLSCREEN_ROOT;
+    client.shell.mouse_x = 700;
+    client.shell.mouse_y = 400;
+    client.shell.mouse_click_button = 1;
+    client.shell.mouse_click_x = 700;
+    client.shell.mouse_click_y = 400;
+    client.build_minimenu();
+    assert_eq!(client.menu_num_entries, 2);
+    assert_eq!(
+        client.menu_action[1],
+        crate::client::mini_menu_action::MiniMenuAction::CLOSE_BUTTON
+    );
+    client.mouse_loop();
+
+    assert_eq!(client.out.data()[0], 110);
+    assert_eq!(client.fullscreen_interface_id(), -1);
+}
+
+#[test]
+fn revision_377_welcome_components_use_last_login_metadata_without_dns() {
+    let mut client = client(ClientRevision::R377, Cache::default());
+    assert_eq!(client.fullscreen_interface_id(), -1);
+    client.last_login_377 = Some(crate::client::packet_377::LastLogin377 {
+        days_since_password_change: 0,
+        field371: 0,
+        unused_word: 0,
+        field504: 0,
+        current_day: 100,
+        unread_messages: 2,
+        previous_login_day: 100,
+        members_days: 0,
+        last_address: 0x01020304,
+        recovery_change_day: 0,
+        unused_byte: 0,
+    });
+    for client_code in [660, 661, 662, 663, 665, 667, 668] {
+        client.set_iface(
+            client_code as usize,
+            IfType {
+                id: client_code,
+                layer_id: FULLSCREEN_ROOT,
+                client_code,
+                r#type: ComponentType::TYPE_TEXT,
+                ..IfType::default()
+            },
+        );
+        client.set_iface_mut(client_code as usize, IfTypeMut::default());
+        client.client_component(client_code);
+    }
+
+    assert_eq!(
+        client.if_(660).unwrap().text,
+        "You last logged in @red@earlier today@bla@ from: @red@1.2.3.4"
+    );
+    assert_eq!(
+        client.if_(661).unwrap().text,
+        r"\nYou have not yet set any recovery questions.\nIt is @lre@strongly@yel@ recommended that you do so.\n\nIf you don't you will be @lre@unable to recover your\n@lre@password@yel@ if you forget it, or it is stolen."
+    );
+    assert_eq!(
+        client.if_(662).unwrap().text,
+        r"You have @gre@2 unread messages\nin your message centre."
+    );
+    assert_eq!(
+        client.if_(663).unwrap().text,
+        r"Last password change:\n@gre@Never changed"
+    );
+    assert_eq!(
+        client.if_(665).unwrap().text,
+        r"You are not a member.\n\nChoose to subscribe and\nyou'll get loads of extra\nbenefits and features."
+    );
+    assert_eq!(
+        client.if_(667).unwrap().text,
+        r"To start a subscripton:\n1) Logout and return to the frontpage of this website.\n2) Choose 'Start a new subscription'"
+    );
+    assert_eq!(
+        client.if_(668).unwrap().text,
+        r"To change your recovery questions:\n1) Logout and return to the frontpage of this website.\n2) Choose 'Set new recovery questions'."
+    );
+}
+
+#[test]
+fn logout_clears_fullscreen_and_last_login_377_state() {
+    let mut client = client(ClientRevision::R377, Cache::default());
+    client.fullscreen_interface_id_0 = FULLSCREEN_ROOT;
+    client.fullscreen_interface_id_1 = FULLSCREEN_ROOT + 100;
+    client.last_login_377 = Some(crate::client::packet_377::LastLogin377 {
+        days_since_password_change: 1,
+        field371: 0,
+        unused_word: 0,
+        field504: 0,
+        current_day: 100,
+        unread_messages: 0,
+        previous_login_day: 99,
+        members_days: 0,
+        last_address: 0,
+        recovery_change_day: 0,
+        unused_byte: 0,
+    });
+    client.logout();
+
+    assert_eq!(client.fullscreen_interface_id(), -1);
+    assert_eq!(client.fullscreen_interface_id_1, -1);
+    assert!(client.last_login_377.is_none());
+}
+
+#[test]
+fn revision_377_chat_strip_uses_trade_compete_wording_only() {
+    let strip_377 = chat_mode_strip(ClientRevision::R377);
+    let strip_289 = chat_mode_strip(ClientRevision::R289);
+    let strip_274 = chat_mode_strip(ClientRevision::R274);
+
+    assert_ne!(strip_377, strip_289);
+    assert_eq!(strip_289, strip_274);
+}
 
 fn client(revision: ClientRevision, cache: Cache) -> Client {
     let mut client = Client::from_shared_with_revision(

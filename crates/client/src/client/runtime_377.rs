@@ -1,7 +1,6 @@
-//! Standalone revision-377 runtime for captured Fairy Ring tutorial and mainland packets.
-//! Decode and resource validation finish before application. Unsupported families
-//! fail closed; none can enter a 274/289 wire handler. Java anchors are the
-//! corresponding `readPacket`, entity-info, and interface packet handlers.
+//! Revision-377 runtime for every decoded Java inbound operation.
+//! Decode and resource validation finish before application. Unknown packets
+//! fail closed; none can enter a 274/289 wire handler.
 use super::*;
 use crate::client::packet_377::{
     decode_packet_377,
@@ -69,78 +68,6 @@ impl Client {
         payload: &mut Packet,
     ) -> Result<(), String> {
         let opcode = u8::try_from(opcode).map_err(|_| "377 opcode outside byte range")?;
-        // Java login, tutorial and captured mainland interaction cohort.
-        if !matches!(
-            opcode,
-            2 | 3
-                | 5
-                | 6
-                | 10
-                | 13
-                | 18
-                | 21
-                | 26
-                | 29
-                | 40
-                | 49
-                | 50
-                | 53
-                | 58
-                | 59
-                | 61
-                | 63
-                | 67
-                | 71
-                | 75
-                | 82
-                | 88
-                | 90
-                | 106
-                | 107
-                | 109
-                | 113
-                | 115
-                | 121
-                | 125
-                | 126
-                | 128
-                | 134
-                | 142
-                | 148
-                | 152
-                | 156
-                | 157
-                | 158
-                | 159
-                | 162
-                | 166
-                | 167
-                | 174
-                | 181
-                | 182
-                | 183
-                | 186
-                | 199
-                | 200
-                | 201
-                | 206
-                | 208
-                | 218
-                | 219
-                | 220
-                | 222
-                | 226
-                | 232
-                | 233
-                | 238
-                | 249
-                | 251
-                | 255
-        ) {
-            return Err(format!(
-                "377 packet {opcode}: outside captured runtime cohort"
-            ));
-        }
         let end = payload.frame_end().unwrap_or(payload.length());
         if end > payload.length() {
             return Err("377 frame exceeds payload storage".into());
@@ -207,26 +134,8 @@ impl Client {
             {
                 return Err("377 tab exceeds runtime capacity".into())
             }
-            O::Zone(frame)
-                if !(0..4).contains(&self.minusedlevel)
-                    || frame.operations().iter().any(|op| {
-                        !matches!(
-                            op,
-                            Z::LocAddChange { .. }
-                                | Z::LocDel { .. }
-                                | Z::ObjAdd { .. }
-                                | Z::ObjDel { .. }
-                                | Z::ObjCount { .. }
-                                | Z::ObjectReveal { .. }
-                                | Z::MapProjAnim { .. }
-                                | Z::MapAnim { .. }
-                                | Z::LocAnim { .. }
-                        )
-                    }) =>
-            {
-                return Err(format!(
-                    "377 zone outside mainland location/object/animation cohort: {frame:?}"
-                ))
+            O::Zone(_) if !(0..4).contains(&self.minusedlevel) => {
+                return Err("377 zone plane outside runtime capacity".into())
             }
             O::Interface(I::SetPlayerHead { .. }) if self.local_player.is_none() => {
                 return Err("377 player dialogue head without local player".into())
@@ -281,6 +190,17 @@ impl Client {
         }
     }
 
+    /// Java 377 Client.java:4583-4591 restores the ordinary game frame.
+    pub(super) fn clear_fullscreen_interfaces_377(&mut self) {
+        if self.fullscreen_interface_id_0 != -1 {
+            self.unload_interface_377(self.fullscreen_interface_id_0);
+            self.fullscreen_interface_id_0 = -1;
+            self.redraw_frame = true;
+        }
+        self.unload_interface_377(self.fullscreen_interface_id_1);
+        self.fullscreen_interface_id_1 = -1;
+    }
+
     /// Java 377 Client.closeInterfaces (4567-4596), for a local Close button.
     /// Unlike IF_CLOSE, only a side or chat layer resets Continue debounce.
     pub(super) fn close_interfaces_377(&mut self) {
@@ -298,6 +218,7 @@ impl Client {
             self.redraw_chat = true;
             self.resumed_pause_button = false;
         }
+        self.clear_fullscreen_interfaces_377();
         self.unload_interface_377(self.main_modal_id);
         self.main_modal_id = -1;
     }
@@ -352,8 +273,9 @@ impl Client {
                         | Z::ObjectReveal { tile, .. }
                         | Z::LocAnim { tile, .. }
                         | Z::MapProjAnim { tile, .. }
-                        | Z::MapAnim { tile, .. } => tile,
-                        _ => unreachable!("preflight rejects other zone operations"),
+                        | Z::MapAnim { tile, .. }
+                        | Z::SoundArea { tile, .. }
+                        | Z::LocMerge { tile, .. } => tile,
                     };
                     let x = self.zone_update_x + tile.x;
                     let z = self.zone_update_z + tile.z;
@@ -526,7 +448,111 @@ impl Client {
                                 -1,
                             );
                         }
-                        _ => unreachable!("preflight rejects other zone operations"),
+                        Z::SoundArea {
+                            sound,
+                            radius,
+                            loops,
+                            ..
+                        } => {
+                            // Java Client.java:8779-8793, inclusive square radius.
+                            if self.wave_enabled
+                                && !self.config.lowmem
+                                && self.wave_count < 50
+                                && self.local_player.as_ref().is_some_and(|player| {
+                                    (x - radius..=x + radius).contains(&player.route_x[0])
+                                        && (z - radius..=z + radius).contains(&player.route_z[0])
+                                })
+                            {
+                                let slot = self.wave_count as usize;
+                                self.wave_ids[slot] = *sound;
+                                self.wave_loops[slot] = *loops;
+                                self.wave_delay[slot] = self.jagfx.delays[*sound as usize];
+                                self.wave_count += 1;
+                            }
+                        }
+                        Z::LocMerge {
+                            shape,
+                            angle,
+                            location,
+                            player_slot,
+                            start_cycle,
+                            end_cycle,
+                            min_x_offset,
+                            max_x_offset,
+                            min_z_offset,
+                            max_z_offset,
+                            ..
+                        } => {
+                            // Java Client.java:8606-8646: no model, no merge.
+                            let present = if *player_slot == self.self_slot {
+                                self.local_player.is_some()
+                            } else {
+                                self.players
+                                    .get(*player_slot as usize)
+                                    .is_some_and(Option::is_some)
+                            };
+                            if !present {
+                                continue;
+                            }
+                            let level = self.minusedlevel as usize;
+                            let loc = self.cache.loc(*location as usize);
+                            let Some(model) = loc.get_model(
+                                &self.cache,
+                                *shape,
+                                *angle,
+                                self.groundh[level][x as usize][z as usize],
+                                self.groundh[level][x as usize + 1][z as usize],
+                                self.groundh[level][x as usize + 1][z as usize + 1],
+                                self.groundh[level][x as usize][z as usize + 1],
+                                -1,
+                            ) else {
+                                continue;
+                            };
+                            let (width, length) = if *angle == 1 || *angle == 3 {
+                                (loc.length, loc.width)
+                            } else {
+                                (loc.width, loc.length)
+                            };
+                            self.loc_change_create(
+                                self.minusedlevel,
+                                x,
+                                z,
+                                LOC_SHAPE_TO_LAYER[*shape as usize],
+                                -1,
+                                0,
+                                0,
+                                start_cycle + 1,
+                                end_cycle + 1,
+                            );
+                            let offset_x = x * 128 + width * 64;
+                            let offset_z = z * 128 + length * 64;
+                            let offset_y = get_av_h(
+                                &self.groundh,
+                                &self.mapl,
+                                offset_x,
+                                offset_z,
+                                self.minusedlevel,
+                            );
+                            let player = if *player_slot == self.self_slot {
+                                self.local_player.as_mut()
+                            } else {
+                                self.players
+                                    .get_mut(*player_slot as usize)
+                                    .and_then(Option::as_deref_mut)
+                            }
+                            .expect("merge target was resolved before building its model");
+                            player.loc_start_cycle = self.loop_cycle.wrapping_add(*start_cycle);
+                            player.loc_stop_cycle = self.loop_cycle.wrapping_add(*end_cycle);
+                            player.loc_model = Some(Box::new(model));
+                            player.loc_offset_x = offset_x;
+                            player.loc_offset_z = offset_z;
+                            player.loc_offset_y = offset_y;
+                            player.min_tile_x = x + min_x_offset;
+                            player.max_tile_x = x + max_x_offset;
+                            player.min_tile_z = z + min_z_offset;
+                            player.max_tile_z = z + max_z_offset;
+                            p.player = true;
+                        }
                     }
                 }
                 p.scene = true;
@@ -535,6 +561,7 @@ impl Client {
                 match operation {
                     I::OpenChat { component } => {
                         self.if_anim_reset(component);
+                        self.clear_fullscreen_interfaces_377();
                         self.observe_main_modal_close();
                         if self.side_modal_id != -1 {
                             self.unload_interface_377(self.side_modal_id);
@@ -555,6 +582,14 @@ impl Client {
                         let com = self.iface_mut(component as usize).unwrap();
                         com.x = x;
                         com.y = y;
+                    }
+                    I::SetModel { component, model } => {
+                        // Java Client.java:7293-7300.
+                        let com = self
+                            .iface_mut(component as usize)
+                            .expect("validated component");
+                        com.model1_type = 1;
+                        com.model1_id = model;
                     }
                     I::SetNpcHead { component, npc } => {
                         if let Some(com) = self.iface_mut(component as usize) {
@@ -642,6 +677,7 @@ impl Client {
                         self.unload_interface_377(self.side_modal_id);
                         self.unload_interface_377(self.chat_modal_id);
                         self.unload_interface_377(self.main_modal_id);
+                        self.clear_fullscreen_interfaces_377();
                         self.apply_if_close();
                     }
                     I::SetTab { tab, component } => {
@@ -671,6 +707,7 @@ impl Client {
                     }
                     I::OpenMain { component } => {
                         self.if_anim_reset(component);
+                        self.clear_fullscreen_interfaces_377();
                         self.observe_main_modal_open();
                         self.unload_interface_377(self.side_modal_id);
                         self.unload_interface_377(self.chat_modal_id);
@@ -690,6 +727,7 @@ impl Client {
                     I::OpenMainSide { main, side } => {
                         // Java Client.java:7741-7775 keeps unchanged layers.
                         self.observe_main_modal_open();
+                        self.clear_fullscreen_interfaces_377();
                         self.unload_interface_377(self.chat_modal_id);
                         if self.chat_modal_id != -1 || self.dialog_input_open {
                             self.redraw_chat = true;
@@ -733,7 +771,72 @@ impl Client {
                             self.redraw_chat = true;
                         }
                     }
-                    _ => unreachable!("opcode cohort admits only captured interface operations"),
+                    I::OpenSide { component } => {
+                        // Java Client.java:8010-8044.
+                        self.if_anim_reset(component);
+                        self.observe_main_modal_close();
+                        self.unload_interface_377(self.chat_modal_id);
+                        if self.chat_modal_id != -1
+                            || self.dialog_input_open
+                            || self.name_dialog_open_377()
+                        {
+                            self.redraw_chat = true;
+                        }
+                        self.chat_modal_id = -1;
+                        self.clear_fullscreen_interfaces_377();
+                        self.unload_interface_377(self.main_modal_id);
+                        self.main_modal_id = -1;
+                        if self.side_modal_id != component {
+                            self.unload_interface_377(self.side_modal_id);
+                        }
+                        self.side_modal_id = component;
+                        self.clear_name_dialog_mode_377();
+                        self.dialog_input_open = false;
+                        self.redraw_side = true;
+                        self.redraw_icons = true;
+                        self.resumed_pause_button = false;
+                    }
+                    I::SetTabActive { tab } => {
+                        self.active_icon = tab;
+                        self.redraw_side = true;
+                        self.redraw_icons = true;
+                    }
+                    I::OpenFull { overlay, main } => {
+                        // Java Client.java:8467-8498, var177=overlay, var178=main.
+                        self.if_anim_reset(main);
+                        if overlay != -1 {
+                            self.if_anim_reset(overlay);
+                        }
+                        self.observe_main_modal_close();
+                        self.unload_interface_377(self.main_modal_id);
+                        self.main_modal_id = -1;
+                        self.unload_interface_377(self.side_modal_id);
+                        self.side_modal_id = -1;
+                        self.unload_interface_377(self.chat_modal_id);
+                        self.chat_modal_id = -1;
+                        if self.fullscreen_interface_id_0 != main {
+                            self.unload_interface_377(self.fullscreen_interface_id_0);
+                            self.fullscreen_interface_id_0 = main;
+                        }
+                        // Preserve Java's comparison against main, not overlay.
+                        if self.fullscreen_interface_id_1 != main {
+                            self.unload_interface_377(self.fullscreen_interface_id_1);
+                            self.fullscreen_interface_id_1 = overlay;
+                        }
+                        self.welcome_interface_id = if self
+                            .ifaces
+                            .iter()
+                            .flatten()
+                            .any(|com| com.layer_id == main && com.client_code == 660)
+                        {
+                            main
+                        } else {
+                            -1
+                        };
+                        self.clear_name_dialog_mode_377();
+                        self.dialog_input_open = false;
+                        self.resumed_pause_button = false;
+                    }
                 }
                 p.iface = true;
             }
@@ -839,6 +942,52 @@ impl Client {
                 self.apply_message_game_text_289(&text_377(bytes));
                 p.chat = self.chat_seq != before;
             }
+            O::LastLogin(info) => {
+                // Java Client.java:7626-7642 stores metadata, never opens a modal.
+                self.last_login_ip = info.last_address;
+                self.days_since_login = info.current_day - info.previous_login_day;
+                self.days_since_recovery_change = info.current_day - info.recovery_change_day;
+                self.last_login_message_count = info.unread_messages;
+                self.members_warning = info.members_days;
+                self.last_login_dns_display = None;
+                self.last_login_377 = Some(info);
+                p.iface = true;
+            }
+            O::Friend { name, world } => {
+                let before = self.chat_seq;
+                self.update_friend_377_289(name, world);
+                p.iface = true;
+                p.chat = self.chat_seq != before;
+            }
+            O::PrivateMessage {
+                from,
+                message_id,
+                staff_level,
+                packed_body,
+            } => {
+                // Java Client.java:7918-7959, staff 3 bypasses WordFilter.
+                let duplicate = self.private_message_ids.contains(&message_id);
+                let ignored = staff_level <= 1
+                    && self.ignore_userhash[..self.ignore_count as usize].contains(&from);
+                if !duplicate && !ignored && self.chat_disabled == 0 {
+                    self.private_message_ids[self.private_message_count as usize] = message_id;
+                    self.private_message_count = (self.private_message_count + 1) % 100;
+                    let text = WordPack::unpack_bytes(packed_body);
+                    let text = if staff_level == 3 {
+                        text
+                    } else {
+                        WordFilter::filter(&text)
+                    };
+                    let sender = JString::to_screen_name(&JString::to_raw_username(from));
+                    match staff_level {
+                        2 | 3 => self.add_chat(7, &text, &format!("@cr2@{sender}")),
+                        1 => self.add_chat(7, &text, &format!("@cr1@{sender}")),
+                        _ => self.add_chat(3, &text, &sender),
+                    }
+                    p.chat = true;
+                }
+            }
+            O::RebootTimer { ticks } => self.reboot_timer = ticks * 30,
             O::IgnoreList(names) => {
                 self.ignore_count = names.iter().len() as i32;
                 for (slot, hash) in self.ignore_userhash.iter_mut().zip(names.iter()) {
@@ -1025,7 +1174,6 @@ impl Client {
                 }
                 p.world = true;
             }
-            _ => unreachable!("operation outside captured 377 cohort"),
         }
         Some(p)
     }
@@ -1863,6 +2011,284 @@ mod tests {
     }
 
     #[test]
+    fn fullscreen_open_and_all_modal_replacements_preserve_java_layer_lifecycle() {
+        let mut client = client();
+        for id in 0..5 {
+            client.set_iface(id, IfType::default());
+        }
+        client.set_iface(
+            5,
+            IfType {
+                layer_id: 1,
+                client_code: 660,
+                ..Default::default()
+            },
+        );
+        for opcode in [29, 109, 159, 128, 246] {
+            client.main_modal_id = 2;
+            client.side_modal_id = 3;
+            client.chat_modal_id = 4;
+            client.dialog_input_open = true;
+            client.resumed_pause_button = true;
+            let generation = client.gens.iface;
+            client
+                .dispatch_packet_377(253, &mut Packet::new(vec![0, 0, 0, 129]))
+                .unwrap();
+            assert_eq!(
+                (
+                    client.fullscreen_interface_id_0,
+                    client.fullscreen_interface_id_1
+                ),
+                (1, 0)
+            );
+            assert_eq!(client.welcome_interface_id, 1);
+            assert_eq!(
+                (
+                    client.main_modal_id,
+                    client.side_modal_id,
+                    client.chat_modal_id
+                ),
+                (-1, -1, -1)
+            );
+            assert!(!client.dialog_input_open && !client.resumed_pause_button);
+            assert_eq!(client.gens.iface, generation + 1);
+            let bytes = match opcode {
+                29 => vec![],
+                109 => vec![0, 2],
+                128 => vec![0, 130, 131, 0],
+                _ => vec![130, 0],
+            };
+            client
+                .dispatch_packet_377(opcode, &mut Packet::new(bytes))
+                .unwrap();
+            assert_eq!(
+                (
+                    client.fullscreen_interface_id_0,
+                    client.fullscreen_interface_id_1
+                ),
+                (-1, -1)
+            );
+            assert!(client.redraw_frame);
+            match opcode {
+                109 => assert_eq!(client.chat_modal_id, 2),
+                159 | 128 => assert_eq!(client.main_modal_id, 2),
+                246 => assert_eq!(client.side_modal_id, 2),
+                _ => {}
+            }
+        }
+        client
+            .dispatch_packet_377(253, &mut Packet::new(vec![0, 0, 0, 129]))
+            .unwrap();
+        client.out.pos = 0;
+        client.close_interfaces_377();
+        assert_eq!(client.fullscreen_interface_id(), -1);
+        assert_eq!(client.out.data()[0], 110);
+    }
+
+    #[test]
+    fn login_metadata_does_not_open_a_modal_and_reboot_timer_uses_java_cycles() {
+        let mut client = client();
+        let bytes = vec![
+            2, 0, 131, 0, 0, 9, 0, 4, 232, 3, 0, 133, 3, 103, 0, 30, 4, 3, 2, 1, 132, 0, 127,
+        ];
+        client
+            .dispatch_packet_377(76, &mut Packet::new(bytes))
+            .unwrap();
+        let info = client.last_login_377.as_ref().unwrap();
+        assert_eq!(
+            (
+                info.days_since_password_change,
+                info.field371,
+                info.field504
+            ),
+            (2, 3, 4)
+        );
+        assert_eq!(
+            (
+                info.current_day,
+                info.previous_login_day,
+                info.recovery_change_day
+            ),
+            (1000, 999, 4)
+        );
+        assert_eq!(
+            (info.unread_messages, info.members_days, info.last_address),
+            (5, 30, 0x01020304)
+        );
+        assert_eq!(
+            (
+                client.last_login_ip,
+                client.days_since_login,
+                client.last_login_message_count
+            ),
+            (0x01020304, 1, 5)
+        );
+        assert_eq!(
+            (client.main_modal_id, client.fullscreen_interface_id()),
+            (-1, -1)
+        );
+        assert!(client.last_login_dns_display.is_none());
+        assert_eq!(client.out.pos, 0);
+        client
+            .dispatch_packet_377(190, &mut Packet::new(vec![10, 0]))
+            .unwrap();
+        assert_eq!(client.reboot_timer, 300);
+    }
+
+    #[test]
+    fn friend_and_private_message_packets_update_social_state_and_filter_duplicates() {
+        let mut client = client();
+        let alice = JString::to_userhash("alice") as i64;
+        for world in [0, 2] {
+            let mut bytes = alice.to_be_bytes().to_vec();
+            bytes.push(world);
+            client
+                .dispatch_packet_377(78, &mut Packet::new(bytes))
+                .unwrap();
+        }
+        assert_eq!(client.friend_count, 1);
+        assert_eq!(client.friend_node_id[0], 2);
+        assert_eq!(client.chat_text[0], "Alice has logged in.");
+        assert!(client.redraw_side);
+        let mut packed = Packet::new(vec![0; 100]);
+        WordPack::pack(&mut packed, "hello alice");
+        let body = packed.data()[..packed.pos].to_vec();
+        let send = |client: &mut Client, id: i32, staff: u8| {
+            let mut bytes = alice.to_be_bytes().to_vec();
+            bytes.extend(id.to_be_bytes());
+            bytes.push(staff);
+            bytes.extend(&body);
+            client
+                .dispatch_packet_377(135, &mut Packet::new(bytes))
+                .unwrap();
+        };
+        send(&mut client, 1, 0);
+        assert_eq!(client.chat_type[0], 3);
+        assert_eq!(client.chat_username[0], "Alice");
+        assert_eq!(client.chat_text[0].trim(), "Hello alice");
+        let generation = client.gens.chat;
+        send(&mut client, 1, 0);
+        assert_eq!(client.gens.chat, generation);
+        client.ignore_count = 1;
+        client.ignore_userhash[0] = alice;
+        send(&mut client, 2, 1);
+        assert_eq!(client.gens.chat, generation);
+        send(&mut client, 3, 3);
+        assert_eq!(client.chat_username[0], "@cr2@Alice");
+        assert_eq!(client.chat_type[0], 7);
+        client.chat_disabled = 1;
+        send(&mut client, 4, 2);
+        assert_eq!(client.private_message_count, 2);
+    }
+
+    #[test]
+    fn active_tab_and_model_apply_to_the_component() {
+        let mut client = client();
+        client.set_iface(1, IfType::default());
+        client.on_demand = Some(stopped_ondemand());
+        let mut packet = Packet::new(vec![128, 0, 129, 0]);
+        client.dispatch_packet_377(216, &mut packet).unwrap();
+        let com = client.if_(1).unwrap();
+        assert_eq!((com.model1_type, com.model1_id), (1, 0));
+        client.redraw_side = false;
+        client.redraw_icons = false;
+        client
+            .dispatch_packet_377(252, &mut Packet::new(vec![253]))
+            .unwrap();
+        assert_eq!(client.active_icon, 3);
+        assert!(client.redraw_side && client.redraw_icons);
+    }
+
+    #[test]
+    fn area_sound_respects_radius_mute_lowmem_and_capacity() {
+        let mut client = client();
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        client.local_player = Some(ClientPlayer::at(10, 19));
+        Arc::make_mut(&mut client.jagfx.delays)[0] = 7;
+        for (muted, lowmem, x, count, expected) in [
+            (false, false, 11, 0, 1),
+            (false, false, 12, 0, 0),
+            (true, false, 10, 0, 0),
+            (false, true, 10, 0, 0),
+            (false, false, 10, 50, 50),
+        ] {
+            client.wave_enabled = !muted;
+            client.config.lowmem = lowmem;
+            client.wave_count = count;
+            client.local_player.as_mut().unwrap().route_x[0] = x;
+            client
+                .dispatch_packet_377(41, &mut Packet::new(vec![0x23, 0, 0, 0x12]))
+                .unwrap();
+            assert_eq!(client.wave_count, expected);
+            if expected == 1 {
+                assert_eq!(
+                    (
+                        client.wave_ids[0],
+                        client.wave_loops[0],
+                        client.wave_delay[0]
+                    ),
+                    (0, 2, 7)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loc_merge_attaches_to_target_and_schedules_java_start_and_stop_cycles() {
+        crate::dash3d::Model::unpack(4094, Some(&[0; 18]));
+        let mut cache = Cache::default();
+        cache.locs.push(crate::config::LocType {
+            id: 0,
+            model: Some(vec![4094]),
+            width: 2,
+            length: 3,
+            ..Default::default()
+        });
+        let mut client = client_with_cache(cache);
+        client.self_slot = 5;
+        client.players[6] = Some(Box::new(ClientPlayer::at(10, 19)));
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        client.loop_cycle = 50;
+        for slot in [5, 6] {
+            let bytes = vec![0, 0, 41, 253, 163, 127, 0, 136, slot, 0, 2, 126, 0, 2];
+            let generation = client.gens.player;
+            client
+                .dispatch_packet_377(203, &mut Packet::new(bytes))
+                .unwrap();
+            let player = if slot == 5 {
+                client.local_player.as_ref().unwrap()
+            } else {
+                client.players[6].as_ref().unwrap()
+            };
+            assert!(player.loc_model.is_some());
+            assert_eq!((player.loc_start_cycle, player.loc_stop_cycle), (52, 58));
+            assert_eq!((player.loc_offset_x, player.loc_offset_z), (1472, 2560));
+            assert_eq!(
+                (
+                    player.min_tile_x,
+                    player.max_tile_x,
+                    player.min_tile_z,
+                    player.max_tile_z
+                ),
+                (9, 13, 17, 21)
+            );
+            assert_eq!(client.gens.player, generation + 1);
+            let change = client.loc_changes.head().unwrap();
+            assert_eq!((change.start_time, change.end_time), (3, 9));
+        }
+        client.zone_update_x = 104;
+        client
+            .dispatch_packet_377(
+                203,
+                &mut Packet::new(vec![0, 0, 41, 253, 163, 127, 0, 136, 5, 0, 2, 126, 0, 2]),
+            )
+            .unwrap();
+        assert_eq!(client.local_player.as_ref().unwrap().loc_start_cycle, 52);
+    }
+
+    #[test]
     fn local_player_teleport_watermark_tracks_only_local_teleport_events() {
         let mut client = client();
         let local = LOCAL_PLAYER_INDEX as usize;
@@ -2017,11 +2443,11 @@ mod tests {
         assert_eq!(client.chat_public_mode, 7);
         assert!(client.ingame);
         assert_eq!(short.pos, 0);
-        let mut valid_but_outside_cohort = Packet::new(vec![]);
+        let mut unknown = Packet::new(vec![]);
         assert!(client
-            .dispatch_packet_377(60, &mut valid_but_outside_cohort)
+            .dispatch_packet_377(60, &mut unknown)
             .unwrap_err()
-            .contains("outside captured"));
+            .contains("UnknownOpcode"));
     }
 
     #[test]
@@ -2641,13 +3067,13 @@ mod tests {
     }
 
     #[test]
-    fn enclosed_firemaking_batch_rejects_late_invalid_and_unsupported_children() {
+    fn enclosed_firemaking_batch_rejects_late_invalid_and_unknown_children() {
         let mut cache = Cache::default();
         cache.objs.push(Default::default());
         let mut client = client_with_cache(cache);
         for suffix in [
             vec![107, 0, 1, 221, 0, 129], // invalid second object
-            vec![41, 35, 0, 0, 0x11],     // valid sound resource, outside accepted apply cohort
+            vec![60],                     // unknown enclosed opcode
         ] {
             let mut batch = vec![8, 144, 107, 0, 0, 221, 0, 129];
             batch.extend(suffix);
@@ -3011,8 +3437,7 @@ mod tests {
         assert!(client.redraw_side);
     }
 
-    #[test]
-    fn quest_jingle_validates_then_obeys_java_lowmem_and_mute_guards() {
+    fn stopped_ondemand() -> OnDemand {
         use std::io::Write;
         // A whole-compressed versionlist keeps the actual OnDemand reference
         // validator in the packet path without a cache or network dependency.
@@ -3055,8 +3480,13 @@ mod tests {
         )
         .unwrap();
         od.stop(); // Retain tables and the client queue, without a worker.
+        od
+    }
+
+    #[test]
+    fn quest_jingle_validates_then_obeys_java_lowmem_and_mute_guards() {
         let mut client = client();
-        client.on_demand = Some(od);
+        client.on_demand = Some(stopped_ondemand());
         client.midi_song = 7;
         client.next_midi_song = 8;
         client.next_music_delay = 9;

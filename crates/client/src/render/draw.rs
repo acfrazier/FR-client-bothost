@@ -713,10 +713,14 @@ impl Renderer {
             let width = width + 8;
             if width != client.menu_width {
                 client.menu_width = width;
-                let (origin, max) = match client.menu_area {
-                    0 => (4, 512),
-                    1 => (553, 190),
-                    _ => (17, 479),
+                let (origin, max) = if client.fullscreen_interface_id_0 != -1 {
+                    (0, 765)
+                } else {
+                    match client.menu_area {
+                        0 => (4, 512),
+                        1 => (553, 190),
+                        _ => (17, 479),
+                    }
                 };
                 let click_x = client.shell.mouse_click_x;
                 let mut x = click_x - (width / 2) - origin;
@@ -741,7 +745,9 @@ impl Renderer {
 
         let mut mouse_x = client.shell.mouse_x;
         let mut mouse_y = client.shell.mouse_y;
-        if client.menu_area == 0 {
+        if client.fullscreen_interface_id_0 != -1 {
+            // Fullscreen menus use canvas coordinates.
+        } else if client.menu_area == 0 {
             mouse_x -= 4;
             mouse_y -= 4;
         } else if client.menu_area == 1 {
@@ -783,6 +789,15 @@ impl Renderer {
     /// last menu option, or the Use/Target hint — into `area_game` at
     /// (4, 15) via `b12` anti-macro. Drawn when no menu is open.
     fn draw_feedback(&mut self, client: &mut Client) {
+        let mut game = self.area_game.take();
+        if let Some(game) = game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            self.draw_feedback_surface(client, &mut surface);
+        }
+        self.area_game = game;
+    }
+
+    fn draw_feedback_surface(&self, client: &Client, surface: &mut Pix2D) {
         if client.menu_num_entries < 2 && client.use_mode == 0 && client.target_mode == 0 {
             return;
         }
@@ -805,22 +820,54 @@ impl Renderer {
             tooltip
         };
 
-        let mut game = self.area_game.take();
-        if let Some(game) = game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
-            if let Some(b12) = &self.media.b12 {
-                b12.draw_string_anti_macro(
-                    &mut surface,
-                    &tooltip,
-                    4,
-                    15,
-                    Colour::WHITE,
-                    true,
-                    client.loop_cycle / 1000,
-                );
+        if let Some(b12) = &self.media.b12 {
+            b12.draw_string_anti_macro(
+                surface,
+                &tooltip,
+                4,
+                15,
+                Colour::WHITE,
+                true,
+                client.loop_cycle / 1000,
+            );
+        }
+    }
+
+    /// Java 377 Client.java:5683-5717: both layers share the full canvas.
+    pub(crate) fn draw_fullscreen_377(&mut self, client: &mut Client) {
+        if client.scene_state != 2 {
+            return;
+        }
+        let layers = [
+            client.fullscreen_interface_id_0,
+            client.fullscreen_interface_id_1,
+        ];
+        if !client.hosted_animation_cycles {
+            for id in layers {
+                if id != -1 {
+                    Self::animate_interface(client, id, client.world_update_num);
+                }
             }
         }
-        self.area_game = game;
+        client.world_update_num = 0;
+        client.redraw_frame = true;
+        let mut pixels = std::mem::take(&mut self.draw_area.pixels);
+        let mut surface =
+            Pix2D::with_pixels(&mut pixels, self.draw_area.width, self.draw_area.height);
+        surface.cls();
+        self.pix3d.set_clipping(surface.width, surface.height);
+        for id in layers {
+            if id != -1 {
+                self.draw_interface(client, id, 0, 0, 0, &mut surface);
+            }
+        }
+        if client.is_menu_open {
+            self.draw_minimenu(client, &mut surface);
+        } else {
+            client.build_minimenu();
+            self.draw_feedback_surface(client, &mut surface);
+        }
+        self.draw_area.pixels = pixels;
     }
 
     /// `addPlayers` from client-ts (4260): add the local player (or every
@@ -2247,8 +2294,7 @@ impl Renderer {
         };
         let child_x = com.child_x.clone().unwrap_or_default();
         let child_y = com.child_y.clone().unwrap_or_default();
-        let width = com.width;
-        let height = com.height;
+        let (width, height) = client.interface_layer_size(com_id, com.width, com.height);
         // The dragged icon autoscrolls the layer holding the TYPE_INV
         // (TS 9990-10017); track the live scroll here and write it back
         // after the children loop (the `com` borrow must end first).
@@ -4699,7 +4745,12 @@ impl Client {
         if recovered_cycle && self.scene_state == 2 && self.cinema_cam {
             self.cinema_camera();
         }
-        for id in [self.main_overlay_id, self.main_modal_id] {
+        for id in [
+            self.main_overlay_id,
+            self.main_modal_id,
+            self.fullscreen_interface_id_0,
+            self.fullscreen_interface_id_1,
+        ] {
             if id != -1 {
                 Renderer::animate_interface(self, id, 1);
             }
